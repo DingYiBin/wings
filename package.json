@@ -1,0 +1,24 @@
+{
+  "name": "wings",
+  "version": "0.1.0",
+  "description": "Multi-model AI agent system — each model is a wing",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun --watch run src/entrypoints/cli.ts",
+    "start": "bun run src/entrypoints/cli.ts",
+    "typecheck": "bun x tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "openai": "^4.73.0",
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "commander": "^13.1.0",
+    "zod": "^4.0.0",
+    "chalk": "^5.4.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
