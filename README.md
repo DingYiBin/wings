@@ -24,7 +24,7 @@ A multi-model agent system — connect to multiple model APIs and let their capa
 | [claude-code](https://github.com/anthropics/claude-code) | TypeScript | Tool/Command interface, permission pipeline, two-tier state, Skill-Command unification |
 | [opensquilla](https://github.com/opensquilla/opensquilla) | Python | Protocol-driven DI, StageOutcome, TurnRunner stage decomposition, Memory/Dream system |
 
-Detailed architecture analysis in [`docs/`](docs/).
+Design docs in [`docs/design/`](docs/design/). Reference architecture analysis in [`docs/reference/`](docs/reference/).
 
 ## Project Structure
 

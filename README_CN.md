@@ -24,7 +24,7 @@
 | [claude-code](https://github.com/anthropics/claude-code) | TypeScript | Tool/Command 接口、权限管道、双层状态、Skill-Command 统一系统 |
 | [opensquilla](https://github.com/opensquilla/opensquilla) | Python | Protocol 驱动 DI、StageOutcome、TurnRunner 阶段分解、记忆/Dream 系统 |
 
-详细架构分析见 [`docs/`](docs/)。
+设计文档在 [`docs/design/`](docs/design/)。参考架构分析在 [`docs/reference/`](docs/reference/)。
 
 ## 项目结构
 
