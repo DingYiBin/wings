@@ -1,3 +1,6 @@
 [submodule "reference/claude-code"]
 	path = reference/claude-code
 	url = https://github.com/tanbiralam/claude-code.git
+[submodule "reference/opensquilla"]
+	path = reference/opensquilla
+	url = https://github.com/opensquilla/opensquilla.git
