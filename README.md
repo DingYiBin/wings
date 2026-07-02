@@ -50,7 +50,7 @@ src/wings/
 
 | Phase | Module | Description |
 |-------|--------|-------------|
-| 1 | messages | Message types + Anthropic/OpenAI format conversion |
+| 1 | messages | ✅ Message types + Anthropic/OpenAI format conversion |
 | 2 | models | ModelProvider protocol + API adapters |
 | 3 | tools | Tool protocol + registry + built-in tools |
 | 4 | query | LLM API calls (retry, fallback) |

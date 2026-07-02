@@ -50,7 +50,7 @@ src/wings/
 
 | 阶段 | 模块 | 说明 |
 |------|------|------|
-| 1 | messages | 消息类型 + Anthropic/OpenAI 格式转换 |
+| 1 | messages | ✅ 消息类型 + Anthropic/OpenAI 格式转换 |
 | 2 | models | ModelProvider 协议 + 各 API 适配器 |
 | 3 | tools | Tool 协议 + 注册表 + 内置工具 |
 | 4 | query | LLM API 调用 (retry, fallback) |

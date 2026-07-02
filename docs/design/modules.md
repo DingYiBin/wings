@@ -1,6 +1,6 @@
 # 模块详细设计 (Python)
 
-## 1. messages — 消息类型系统
+## 1. messages — 消息类型系统 ✅
 
 **位置**: `src/wings/messages/`
 **依赖**: 无
@@ -741,7 +741,7 @@ class Environment(BaseModel):
 
 | 阶段 | 模块 | 关键文件 | 可验证 |
 |------|------|----------|--------|
-| 1 | messages | `types.py`, `normalize.py` | 单元测试: Anthropic/OpenAI 消息转换 |
+| 1 | messages | `types.py`, `normalize.py` | ✅ 单元测试: Anthropic/OpenAI 消息转换 |
 | 2 | models | `protocol.py`, `registry.py`, `capabilities.py`, `anthropic.py`, `openai.py` | 单元测试: mock API |
 | 3 | tools | `base.py`, `registry.py`, `decorator.py`, `builtin/read.py`, `builtin/write.py`, `builtin/bash.py` | 单元测试: 工具执行 |
 | 4 | query | `engine.py`, `token_budget.py` | 集成测试: model + messages + tools |

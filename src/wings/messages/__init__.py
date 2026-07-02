@@ -1,3 +1,10 @@
+from wings.messages.normalize import (
+    from_anthropic,
+    from_openai,
+    to_anthropic,
+    to_openai,
+    to_openai_messages,
+)
 from wings.messages.types import (
     Message,
     MessageContent,
@@ -24,4 +31,10 @@ __all__ = [
     "ToolResultBlock",
     "ToolUseBlock",
     "ToolUseDelta",
+    # normalize
+    "from_anthropic",
+    "from_openai",
+    "to_anthropic",
+    "to_openai",
+    "to_openai_messages",
 ]
