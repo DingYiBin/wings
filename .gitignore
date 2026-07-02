@@ -1,4 +1,13 @@
-node_modules/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
 dist/
+build/
 .env
-*.tsbuildinfo
+.venv/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+uv.lock

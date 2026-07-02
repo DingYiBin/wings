@@ -4,15 +4,16 @@
 
 ## 技术栈
 
-- **运行时**: [Bun](https://bun.sh) (快速启动，原生 TS 支持)
-- **语言**: TypeScript (strict mode)
-- **架构**: 参考 [claude-code](https://github.com/anthropics/claude-code)
+- **运行时**: [Python 3.12+](https://www.python.org/)
+- **语言**: Python (Pydantic v2 类型校验)
+- **架构**: 参考 [claude-code](https://github.com/anthropics/claude-code) 和 [opensquilla](https://github.com/opensquilla/opensquilla)
+- **包管理**: [uv](https://docs.astral.sh/uv/)
 
 ## 快速开始
 
 ```bash
-bun install
-bun run dev
+uv sync
+uv run wings --help
 ```
 
 ## 项目结构

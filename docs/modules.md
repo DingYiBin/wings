@@ -1,4 +1,4 @@
-# 模块详细设计 (TypeScript)
+# 模块详细设计 (Python)
 
 ## 1. messages — 消息类型系统
 
@@ -11,58 +11,61 @@
 
 ### 消息类型
 
-```typescript
-// types.ts
+```python
+# types.py
+from pydantic import BaseModel
+from typing import Literal, Any
+from enum import Enum
 
-type Role = "user" | "assistant" | "system";
+class Role(str, Enum):
+    USER = "user"
+    ASSISTANT = "assistant"
+    SYSTEM = "system"
 
-type MessageContent = TextBlock | ToolUseBlock | ToolResultBlock;
+class TextBlock(BaseModel):
+    type: Literal["text"] = "text"
+    text: str
 
-interface TextBlock {
-  type: "text";
-  text: string;
-}
+class ToolUseBlock(BaseModel):
+    type: Literal["tool_use"] = "tool_use"
+    id: str
+    name: str
+    input: dict[str, Any]
 
-interface ToolUseBlock {
-  type: "tool_use";
-  id: string;
-  name: string;
-  input: Record<string, unknown>;
-}
+class ToolResultBlock(BaseModel):
+    type: Literal["tool_result"] = "tool_result"
+    tool_use_id: str
+    content: str
+    is_error: bool = False
 
-interface ToolResultBlock {
-  type: "tool_result";
-  toolUseId: string;
-  content: string;
-  isError?: boolean;
-}
+MessageContent = TextBlock | ToolUseBlock | ToolResultBlock
 
-interface Message {
-  role: Role;
-  content: MessageContent[];
-}
+class Message(BaseModel):
+    role: Role
+    content: list[MessageContent]
 
-// 流式事件
-type StreamEvent = TextDelta | ToolUseDelta | ThinkingDelta;
+# 流式事件
+class TextDelta(BaseModel):
+    type: Literal["text_delta"] = "text_delta"
+    text: str
 
-interface TextDelta {
-  type: "text_delta";
-  text: string;
-}
+class ToolUseDelta(BaseModel):
+    type: Literal["tool_use_delta"] = "tool_use_delta"
+    id: str
+    name: str | None = None       # 只在首个 delta 中提供
+    input_delta: dict[str, Any]   # 增量 JSON
 
-interface ToolUseDelta {
-  type: "tool_use_delta";
-  id: string;
-  name?: string;        // 只在首个 delta 中提供
-  inputDelta: Record<string, unknown>;  // 增量 JSON
-}
+class ThinkingDelta(BaseModel):
+    type: Literal["thinking_delta"] = "thinking_delta"
+    text: str
 
-interface ThinkingDelta {
-  type: "thinking_delta";
-  text: string;
-}
+StreamEvent = TextDelta | ToolUseDelta | ThinkingDelta
 
-type StopReason = "end_turn" | "max_tokens" | "tool_use" | "stop_sequence";
+class StopReason(str, Enum):
+    END_TURN = "end_turn"
+    MAX_TOKENS = "max_tokens"
+    TOOL_USE = "tool_use"
+    STOP_SEQUENCE = "stop_sequence"
 ```
 
 ### 跨模型转换 (MessageNormalizer)
@@ -76,22 +79,25 @@ type StopReason = "end_turn" | "max_tokens" | "tool_use" | "stop_sequence";
 | text | `content[type="text"]` | `content` (string) | `parts[text]` |
 | image | `content[type="image"]` | `content[type="image_url"]` | `parts[inlineData]` |
 
-```typescript
-// normalize.ts
-interface MessageNormalizer {
-  /** 将 SDK 原始消息转为内部 Message[] */
-  toInternal(provider: string, rawMessages: unknown[]): Message[];
-  /** 将内部 Message[] 转为目标模型的 API 格式 */
-  toProvider(provider: string, messages: Message[]): unknown[];
-  /** 将内部 ToolSchema[] 转为目标模型的 tools 格式 */
-  toolsToProvider(provider: string, tools: ToolSchema[]): unknown[];
-}
+```python
+# normalize.py
+from typing import Protocol, Any
+
+class MessageNormalizer(Protocol):
+    """将 SDK 原始消息转为内部 Message[]"""
+    def to_internal(self, provider: str, raw_messages: list[dict]) -> list[Message]: ...
+
+    """将内部 Message[] 转为目标模型的 API 格式"""
+    def to_provider(self, provider: str, messages: list[Message]) -> list[dict]: ...
+
+    """将内部 ToolSchema[] 转为目标模型的 tools 格式"""
+    def tools_to_provider(self, provider: str, tools: list[dict]) -> list[dict]: ...
 ```
 
 ### 关键文件
 
-- `types.ts` — 消息类型定义
-- `normalize.ts` — `MessageNormalizer` 实现，每种 provider 一个转换函数
+- `types.py` — 消息类型定义（Pydantic models）
+- `normalize.py` — `MessageNormalizer` 实现，每种 provider 一个转换函数
 
 ---
 
@@ -100,89 +106,97 @@ interface MessageNormalizer {
 **位置**: `src/wings/models/`
 **依赖**: messages
 
-### ModelProvider 接口
+### ModelProvider 协议
 
-```typescript
-// models/index.ts
-interface ModelProvider {
-  readonly providerName: string;
+```python
+# models/protocol.py
+from typing import Protocol, AsyncIterator, Any
+from wings.messages.types import Message, StreamEvent, StopReason
+from pydantic import BaseModel, Field
 
-  chat(
-    messages: Message[],
-    tools: ToolSchema[] | undefined,
-    config: ModelConfig,
-  ): Promise<ModelResponse>;
+class ModelConfig(BaseModel):
+    model: str
+    temperature: float = 0.7
+    max_tokens: int = 4096
+    top_p: float | None = None
+    thinking: bool = False
+    api_key: str
+    base_url: str | None = None
 
-  stream(
-    messages: Message[],
-    tools: ToolSchema[] | undefined,
-    config: ModelConfig,
-  ): AsyncGenerator<StreamEvent>;
-}
+class TokenUsage(BaseModel):
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
 
-interface ModelResponse {
-  content: MessageContent[];
-  stopReason: StopReason;
-  usage: TokenUsage;
-}
+class ModelResponse(BaseModel):
+    content: list[MessageContent]
+    stop_reason: StopReason
+    usage: TokenUsage
 
-interface ModelConfig {
-  model: string;
-  temperature?: number;
-  maxTokens: number;
-  topP?: number;
-  thinking: boolean;
-  apiKey: string;
-  baseUrl?: string;
-}
+class ModelProvider(Protocol):
+    provider_name: str
 
-interface TokenUsage {
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens?: number;
-  cacheWriteTokens?: number;
-}
+    async def chat(
+        self,
+        messages: list[Message],
+        tools: list[dict[str, Any]] | None,
+        config: ModelConfig,
+    ) -> ModelResponse: ...
+
+    async def stream(
+        self,
+        messages: list[Message],
+        tools: list[dict[str, Any]] | None,
+        config: ModelConfig,
+    ) -> AsyncIterator[StreamEvent]: ...
 ```
 
 ### Registry
 
-```typescript
-// registry.ts
-class ModelRegistry {
-  private providers = new Map<string, ModelProvider>();
+```python
+# registry.py
+from collections.abc import Iterator
 
-  register(name: string, provider: ModelProvider): void;
-  get(name: string): ModelProvider;
-  list(): string[];
-  resolveAlias(alias: string): string;  // e.g. "opus" -> "claude-opus-4-6"
-  route(task: TaskRequirements): string; // 智能路由
-}
+class ModelRegistry:
+    def __init__(self):
+        self._providers: dict[str, ModelProvider] = {}
+        self._aliases: dict[str, str] = {}  # 别名 -> 标准名
+
+    def register(self, name: str, provider: ModelProvider) -> None: ...
+    def alias(self, alias: str, target: str) -> None:        # e.g. "opus" -> "claude-opus-4-6"
+    def get(self, name: str) -> ModelProvider: ...
+    def list(self) -> Iterator[str]: ...
+    def route(self, task: "TaskRequirements") -> str: ...     # 智能路由
 ```
 
 ### 首批适配器
 
 | 文件 | 模型 | SDK |
 |------|------|-----|
-| `anthropic.ts` | Claude (Opus, Sonnet, Haiku) | `@anthropic-ai/sdk` |
-| `openai.ts` | GPT-4o, o4-mini, o-series | `openai` |
-| `google.ts` | Gemini 2.5 Pro/Flash | `@google/generative-ai` |
-| `openrouter.ts` | 统一网关 | OpenAI-compatible SDK |
+| `anthropic.py` | Claude (Opus, Sonnet, Haiku) | `anthropic` |
+| `openai.py` | GPT-4o, o4-mini, o-series | `openai` |
+| `google.py` | Gemini 2.5 Pro/Flash | `google-generative-ai` |
+| `openrouter.py` | 统一网关 | OpenAI-compatible SDK |
 
-### capabilities.ts
+### capabilities.py
 
-```typescript
-interface ModelCapabilities {
-  contextWindow: number;        // 最大上下文 (tokens)
-  maxOutputTokens: number;      // 最大输出
-  supportsVision: boolean;      // 图片理解
-  supportsThinking: boolean;    // extended thinking
-  supportsTools: boolean;       // function calling
-  supportsStreaming: boolean;   // 流式输出
-  supportsParallelTools: boolean; // 并行 tool calls
-  speedTier: "fast" | "normal" | "slow";
-  costPerMInput: number;
-  costPerMOutput: number;
-}
+```python
+# capabilities.py
+from pydantic import BaseModel
+from typing import Literal
+
+class ModelCapabilities(BaseModel):
+    context_window: int           # 最大上下文 (tokens)
+    max_output_tokens: int        # 最大输出
+    supports_vision: bool         # 图片理解
+    supports_thinking: bool       # extended thinking
+    supports_tools: bool          # function calling
+    supports_streaming: bool      # 流式输出
+    supports_parallel_tools: bool # 并行 tool calls
+    speed_tier: Literal["fast", "normal", "slow"]
+    cost_per_m_input: float       # $/百万 token (输入)
+    cost_per_m_output: float      # $/百万 token (输出)
 ```
 
 ---
@@ -192,85 +206,135 @@ interface ModelCapabilities {
 **位置**: `src/wings/tools/`
 **依赖**: 无（独立模块）
 
-### Tool 接口（泛型）
+### Tool 协议
 
-```typescript
-// base.ts
-interface Tool<I = any, O = any> {
-  /** 唯一标识符，对应 LLM tool_use 的 name */
-  name: string;
-  /** 给 LLM 看的自然语言描述 */
-  description: string;
-  /** Zod schema 用于校验 LLM 传来的 input */
-  inputSchema: z.ZodType<I>;
-  /** 一句话能力描述，用于 ToolSearch 关键词匹配 */
-  searchHint: string;
+```python
+# base.py
+from typing import Protocol, Any
+from pydantic import BaseModel
+from collections.abc import Callable
 
-  /** 执行工具 */
-  call(input: I, context: ToolContext): Promise<ToolResult<O>>;
+class ToolResult(BaseModel):
+    output: str
+    error: str | None = None
+    metadata: dict[str, Any] = {}
+    max_result_size_chars: int | None = None  # 超此值写文件
 
-  /** 环境是否可用 */
-  isEnabled(): boolean;
-  /** 是否只读 */
-  isReadOnly(input: I): boolean;
-  /** 是否不可逆 */
-  isDestructive(input: I): boolean;
+class ToolContext(BaseModel):
+    working_dir: str
+    env: dict[str, str]
+    session_id: str
 
-  /** 结果渲染 */
-  renderResult(result: ToolResult<O>): string;
-  /** spinner 文案 */
-  getActivityDescription(input: I): string;
-}
+class Tool(Protocol):
+    """所有工具需实现的协议"""
+    name: str
+    description: str
+    search_hint: str
 
-interface ToolContext {
-  workingDir: string;
-  env: Record<string, string>;
-  sessionId: string;
-  signal: AbortSignal;
-}
+    def input_schema(self) -> dict[str, Any]: ...  # JSON Schema
 
-interface ToolResult<O = any> {
-  output: string;
-  error?: string;
-  metadata: O;
-  /** 结果超过此值则写文件而不是放消息里 */
-  maxResultSizeChars?: number;
-}
+    async def call(self, input: Any, context: ToolContext) -> ToolResult: ...
+
+    def is_enabled(self) -> bool: ...
+    def is_read_only(self, input: Any) -> bool: ...
+    def is_destructive(self, input: Any) -> bool: ...
+
+    def render_result(self, result: ToolResult) -> str: ...
+    def activity_description(self, input: Any) -> str: ...  # spinner 文案
+```
+
+### @tool 装饰器
+
+参考 opensquilla 的装饰器模式：
+
+```python
+# decorator.py
+import functools
+from typing import Type, get_type_hints
+from pydantic import BaseModel
+
+def tool(
+    *,
+    name: str,
+    description: str,
+    search_hint: str,
+    read_only: bool = False,
+    destructive: bool = False,
+):
+    """将 async 函数注册为 Tool"""
+    def decorator(fn):
+        hints = get_type_hints(fn)
+        # 第一个参数（input 之外）是 Pydantic model → input_schema
+        input_type = next(
+            (t for n, t in hints.items() if n != "return" and issubclass(t, BaseModel)),
+            None,
+        )
+
+        @functools.wraps(fn)
+        class _ToolAdapter:
+            name = name
+            description = description
+            search_hint = search_hint
+
+            def input_schema(self) -> dict:
+                return input_type.model_json_schema() if input_type else {}
+
+            async def call(self, input, context):
+                result = await fn(input, context)
+                return ToolResult(output=str(result))
+
+            def is_enabled(self) -> bool:
+                return True
+
+            def is_read_only(self, input=None) -> bool:
+                return read_only
+
+            def is_destructive(self, input=None) -> bool:
+                return destructive
+
+            def render_result(self, result: ToolResult) -> str:
+                return result.output
+
+            def activity_description(self, input=None) -> str:
+                return f"{name}..."
+
+        return _ToolAdapter()
+    return decorator
 ```
 
 ### Registry
 
-```typescript
-// registry.ts
-class ToolRegistry {
-  private tools = new Map<string, Tool>();
+```python
+# registry.py
+class ToolRegistry:
+    def __init__(self):
+        self._tools: dict[str, Tool] = {}
 
-  register(tool: Tool): void;
-  get(name: string): Tool | undefined;
-  listAll(): Tool[];
-  listEnabled(): Tool[];
-  getSchemas(): ToolSchema[];  // 生成给 LLM 的 tool schemas
-  filterDenied(denyList: string[]): void;
-}
+    def register(self, tool: Tool) -> None: ...
+    def get(self, name: str) -> Tool | None: ...
+    def list_all(self) -> list[Tool]: ...
+    def list_enabled(self) -> list[Tool]: ...
+    def get_schemas(self) -> list[dict[str, Any]]: ...  # 生成给 LLM 的 tool schemas
+    def filter_denied(self, deny_list: list[str]) -> None: ...
 ```
 
 ### 首批内置工具
 
 | 工具 | 文件 | 优先级 | 说明 |
 |------|------|--------|------|
-| `read` | `builtin/read.ts` | P0 | 读取文件 |
-| `write` | `builtin/write.ts` | P0 | 创建/覆盖文件 |
-| `edit` | `builtin/edit.ts` | P0 | 精确字符串替换 |
-| `bash` | `builtin/bash.ts` | P0 | shell 命令 |
-| `glob` | `builtin/glob.ts` | P1 | 文件名模式匹配 |
-| `grep` | `builtin/grep.ts` | P1 | 内容正则搜索 |
-| `web_fetch` | `builtin/web_fetch.ts` | P1 | 网页内容抓取 |
-| `web_search` | `builtin/web_search.ts` | P1 | 网络搜索 |
-| `agent_tool` | `builtin/agent_tool.ts` | P1 | 生成子 agent |
+| `read` | `builtin/read.py` | P0 | 读取文件 |
+| `write` | `builtin/write.py` | P0 | 创建/覆盖文件 |
+| `edit` | `builtin/edit.py` | P0 | 精确字符串替换 |
+| `bash` | `builtin/bash.py` | P0 | shell 命令 |
+| `glob` | `builtin/glob.py` | P1 | 文件名模式匹配 |
+| `grep` | `builtin/grep.py` | P1 | 内容正则搜索 |
+| `web_fetch` | `builtin/web_fetch.py` | P1 | 网页内容抓取 |
+| `web_search` | `builtin/web_search.py` | P1 | 网络搜索 |
+| `agent_tool` | `builtin/agent_tool.py` | P1 | 生成子 agent |
 
 ### MCP 工具加载
 
-`tools/mcp/loader.ts` — 从 MCP 服务器加载工具，命名格式 `mcp__serverName__toolName`，支持可选 prefix 剥离。
+`tools/mcp/loader.py` — 从 MCP 服务器加载工具，命名格式 `mcp__server__tool_name`，支持可选 prefix 剥离。
 
 ---
 
@@ -279,64 +343,68 @@ class ToolRegistry {
 **位置**: `src/wings/query/`
 **依赖**: models, messages, tools
 
-### engine.ts
+### engine.py
 
-```typescript
-// engine.ts
-class QueryEngine {
-  constructor(
-    private normalizer: MessageNormalizer,
-    private registry: ModelRegistry,
-  ) {}
+```python
+# engine.py
+from typing import AsyncIterator
+from wings.messages.types import Message, StreamEvent
+from wings.messages.normalize import MessageNormalizer
+from wings.models.protocol import ModelProvider, ModelConfig, ModelResponse
+from wings.models.registry import ModelRegistry
 
-  /** 流式查询 — 返回 AsyncGenerator */
-  async *stream(
-    messages: Message[],
-    model: string,
-    tools: ToolSchema[],
-    config: ModelConfig,
-  ): AsyncGenerator<StreamEvent | Message> {
-    const provider = this.registry.get(model);
-    const providerMessages = this.normalizer.toProvider(provider.providerName, messages);
-    const providerTools = this.normalizer.toolsToProvider(provider.providerName, tools);
+class QueryEngine:
+    def __init__(
+        self,
+        normalizer: MessageNormalizer,
+        registry: ModelRegistry,
+    ): ...
 
-    for await (const event of provider.stream(providerMessages, providerTools, config)) {
-      yield this.normalizer.toInternalEvent(event);
-    }
-  }
+    async def stream(
+        self,
+        messages: list[Message],
+        model: str,
+        tools: list[dict],
+        config: ModelConfig,
+    ) -> AsyncIterator[StreamEvent]:
+        """流式查询 — 返回 AsyncIterator"""
+        provider = self._registry.get(model)
+        provider_messages = self._normalizer.to_provider(provider.provider_name, messages)
+        provider_tools = self._normalizer.tools_to_provider(provider.provider_name, tools)
 
-  /** 非流式查询 */
-  async chat(
-    messages: Message[],
-    model: string,
-    tools: ToolSchema[],
-    config: ModelConfig,
-  ): Promise<ModelResponse>;
-}
+        async for event in provider.stream(provider_messages, provider_tools, config):
+            yield event  # 各 provider 已在 adapter 中转为内部格式
+
+    async def chat(
+        self,
+        messages: list[Message],
+        model: str,
+        tools: list[dict] | None,
+        config: ModelConfig,
+    ) -> ModelResponse: ...
 ```
 
 职责：
 - 通过 normalizer 转换消息格式
 - 调用 model provider 的 `stream()` / `chat()`
-- 将响应转回内部格式
 - 处理 API 错误，重试 + 降级 fallback 模型
 - Token 计数
 
-### token_budget.ts
+### token_budget.py
 
-```typescript
-// token_budget.ts
-class TokenBudget {
-  constructor(
-    private contextWindow: number,
-    private reservedForOutput: number,  // 留给输出的配额
-    private systemPromptTokens: number,
-  ) {}
+```python
+# token_budget.py
+class TokenBudget:
+    def __init__(
+        self,
+        context_window: int,
+        reserved_for_output: int,    # 留给输出的配额
+        system_prompt_tokens: int,
+    ): ...
 
-  remaining(messages: Message[]): number;
-  needsCompact(messages: Message[]): boolean;
-  estimateTokens(text: string): number;
-}
+    def remaining(self, messages: list[Message]) -> int: ...
+    def needs_compact(self, messages: list[Message]) -> bool: ...
+    def estimate_tokens(self, text: str) -> int: ...
 ```
 
 ---
@@ -346,61 +414,89 @@ class TokenBudget {
 **位置**: `src/wings/agent/`
 **依赖**: query, tools, messages, permissions
 
-### loop.ts
+### loop.py
 
-```typescript
-// loop.ts
-class AgentLoop {
-  async *run(
-    userInput: string,
-    context: AgentContext,
-  ): AsyncGenerator<AgentEvent> {
-    const messages = this.assembleMessages(userInput, context);
-    const model = this.selectModel(context);
+```python
+# loop.py
+from typing import AsyncIterator
+from wings.messages.types import Message, StreamEvent, Role
+from wings.tools.base import Tool, ToolContext, ToolResult
+from wings.query.engine import QueryEngine
+from wings.models.protocol import ModelConfig
+from wings.permissions.pipeline import PermissionPipeline
 
-    while (true) {
-      let hadToolUse = false;
+class AgentLoop:
+    def __init__(
+        self,
+        query_engine: QueryEngine,
+        tool_registry: ToolRegistry,
+        permission_pipeline: PermissionPipeline,
+    ): ...
 
-      for await (const event of this.queryEngine.stream(messages, model, tools, config)) {
-        if (event.type === "tool_use") {
-          // 权限检查
-          const decision = await this.permissionPipeline.check(event.name, event.input, toolContext);
-          if (decision === "deny") {
-            messages.push(this.injectError(event.id, "Permission denied"));
-            hadToolUse = true;
-            break;
-          }
-          // 执行工具
-          const tool = this.toolRegistry.get(event.name);
-          const result = await tool!.call(event.input, toolContext);
-          messages.push({ role: "user", content: [{ type: "tool_result", toolUseId: event.id, content: result.output }] });
-          hadToolUse = true;
-          break;
-        }
-        yield event; // 文本、thinking 等直接输出
-      }
+    async def run(
+        self,
+        user_input: str,
+        context: AgentContext,
+    ) -> AsyncIterator[StreamEvent]:
+        messages = self._assemble_messages(user_input, context)
+        model = self._select_model(context)
+        config = self._build_config(model)
+        tools = self._tool_registry.get_schemas()
 
-      if (!hadToolUse) return; // end_turn
-    }
-  }
-}
+        while True:
+            had_tool_use = False
+
+            async for event in self._query_engine.stream(
+                messages, model, tools, config,
+            ):
+                if event.type == "tool_use":
+                    tool = self._tool_registry.get(event.name)
+                    if tool:
+                        decision = await self._permission_pipeline.check(
+                            tool, event.input, self._tool_context,
+                        )
+                        if decision == "deny":
+                            messages.append(self._inject_error(event.id, "Permission denied"))
+                            had_tool_use = True
+                            break
+
+                        result = await tool.call(event.input, self._tool_context)
+                        messages.append(ToolResultMessage(
+                            role=Role.USER,
+                            content=[ToolResultBlock(
+                                tool_use_id=event.id,
+                                content=result.output,
+                                is_error=result.error is not None,
+                            )],
+                        ))
+                        had_tool_use = True
+                        break
+
+                yield event  # 文本、thinking 直接输出
+
+            if not had_tool_use:
+                return  # end_turn
+
+    def _assemble_messages(self, user_input: str, context: AgentContext) -> list[Message]: ...
+    def _select_model(self, context: AgentContext) -> str: ...
+    def _inject_error(self, tool_use_id: str, error: str) -> Message: ...
 ```
 
-### subagent.ts
+### subagent.py
 
 子 agent 生成：
 - 独立 AgentLoop 实例，受限工具集（只读为主）
 - fork 语义：继承父 agent 的部分上下文
-- `builtin/agent_tool.ts` 调用此逻辑
+- `builtin/agent_tool.py` 调用此逻辑
 
-### coordinator.ts
+### coordinator.py
 
 多 agent 协调器：
 - 复杂任务分解
 - 分配给不同子 agent（可用不同模型）
 - 结果汇总
 
-### resume.ts
+### resume.py
 
 从持久化 transcript 恢复会话：
 - 重建 Message[] 历史
@@ -413,47 +509,70 @@ class AgentLoop {
 **位置**: `src/wings/permissions/`
 **依赖**: tools
 
-### pipeline.ts
+### pipeline.py
 
-```typescript
-type PermissionResult = "allow" | "deny" | "ask";
+```python
+# pipeline.py
+from typing import Literal
+from wings.tools.base import Tool, ToolContext
 
-class PermissionPipeline {
-  async check(
-    toolName: string,
-    toolInput: unknown,
-    context: ToolContext,
-  ): Promise<PermissionResult> {
-    // Stage 1: 静态规则
-    const staticResult = this.rules.match(toolName);
-    if (staticResult !== "ask") return staticResult;
+PermissionResult = Literal["allow", "deny", "ask"]
 
-    // Stage 2: 自动分类（只读操作自动放行）
-    const tool = this.toolRegistry.get(toolName);
-    if (tool?.isReadOnly(toolInput)) return "allow";
+class PermissionPipeline:
+    def __init__(
+        self,
+        rules: "PermissionRules",
+        hook_runner: "HookRunner | None" = None,
+    ): ...
 
-    // Stage 3: hooks
-    const hookResult = await this.hookRunner.runPreToolUse(toolName, toolInput);
-    if (hookResult) return hookResult;
+    async def check(
+        self,
+        tool: Tool,
+        tool_input: object,
+        context: ToolContext,
+    ) -> PermissionResult:
+        # Stage 1: 静态规则
+        static_result = self._rules.match(tool.name)
+        if static_result != "ask":
+            return static_result
 
-    // Stage 4: 交互式审批
-    return "ask"; // 交给 UI 处理
-  }
-}
+        # Stage 2: 自动分类（只读操作自动放行）
+        if tool.is_read_only(tool_input):
+            return "allow"
+
+        # Stage 3: hooks
+        if self._hook_runner:
+            hook_result = await self._hook_runner.run_pre_tool_use(
+                tool.name, tool_input,
+            )
+            if hook_result is not None:
+                return hook_result
+
+        # Stage 4: 交互式审批（交给 UI）
+        return "ask"
 ```
 
-### rules.ts
+### rules.py
 
-```typescript
-class PermissionRules {
-  allowlist: Set<string>;   // 始终允许
-  denylist: Set<string>;    // 始终拒绝
-  asklist: Set<string>;     // 每次询问
+```python
+# rules.py
+class PermissionRules:
+    allowlist: set[str]     # 始终允许
+    denylist: set[str]      # 始终拒绝
+    asklist: set[str]       # 每次询问
 
-  match(toolName: string): "allow" | "deny" | "ask";
-  addAllow(toolName: string): void;
-  addDeny(toolName: string): void;
-}
+    @classmethod
+    def from_config(cls, config: dict) -> "PermissionRules": ...
+
+    def match(self, tool_name: str) -> PermissionResult:
+        if tool_name in self.denylist:
+            return "deny"
+        if tool_name in self.allowlist:
+            return "allow"
+        return "ask"
+
+    def add_allow(self, tool_name: str) -> None: ...
+    def add_deny(self, tool_name: str) -> None: ...
 ```
 
 ---
@@ -463,34 +582,35 @@ class PermissionRules {
 **位置**: `src/wings/hooks/`
 **依赖**: 无
 
-### types.ts
+### types.py
 
-```typescript
-enum HookEvent {
-  PreToolUse = "pre_tool_use",
-  PostToolUse = "post_tool_use",
-  UserPromptSubmit = "user_prompt_submit",
-  SessionStart = "session_start",
-  Stop = "stop",
-  PreCompact = "pre_compact",
-  Notification = "notification",
-}
+```python
+# types.py
+from enum import Enum
 
-interface HookConfig {
-  event: HookEvent;
-  command: string;           // shell 命令或脚本路径
-  matcher?: string;          // 可选：仅匹配特定工具名的正则
-}
+class HookEvent(str, Enum):
+    PRE_TOOL_USE = "pre_tool_use"
+    POST_TOOL_USE = "post_tool_use"
+    USER_PROMPT_SUBMIT = "user_prompt_submit"
+    SESSION_START = "session_start"
+    STOP = "stop"
+    PRE_COMPACT = "pre_compact"
+    NOTIFICATION = "notification"
+
+class HookConfig(BaseModel):
+    event: HookEvent
+    command: str              # shell 命令或脚本路径
+    matcher: str | None = None  # 可选：仅匹配特定工具名的正则
 ```
 
-### runner.ts
+### runner.py
 
 钩子可以：
-- `updatedInput` — 修改工具输入
+- `updated_input` — 修改工具输入
 - `decision: "block"` — 阻止操作
-- `additionalContext` — 向模型注入额外上下文
-- `systemMessage` — 向用户显示系统消息
-- `suppressOutput` — 隐藏工具输出
+- `additional_context` — 向模型注入额外上下文
+- `system_message` — 向用户显示系统消息
+- `suppress_output` — 隐藏工具输出
 
 ---
 
@@ -502,65 +622,85 @@ interface HookConfig {
 ### 分层配置（优先级从高到低）
 
 ```
-CLI 参数 > 环境变量 > 项目配置 (.wings.toml) > 全局配置 (~/.wings/config.json) > 内置默认
+CLI 参数 > 环境变量 > 项目配置 (wings.toml) > 全局配置 (~/.wings/config.toml) > 内置默认
 ```
 
-### global_config.ts
+参考 opensquilla 的 Pydantic Settings 模式：
 
-```typescript
-interface GlobalConfig {
-  defaultModel: string;         // 默认模型，如 "claude-sonnet-4-6"
-  apiKeys: Record<string, string>; // { anthropic: "sk-...", openai: "sk-..." }
-  theme: "dark" | "light";
-  autoCompact: boolean;
-  customEndpoints: Record<string, string>; // 自定义 API endpoint
-}
+### settings.py
 
-function loadGlobalConfig(): GlobalConfig;
-function saveGlobalConfig(config: GlobalConfig): void;
+```python
+# settings.py
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pathlib import Path
+
+class LLMConfig(BaseModel):
+    provider: str = "anthropic"
+    model: str = "claude-sonnet-4-6"
+    api_key: str = ""
+    base_url: str | None = None
+
+class GlobalSettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="WINGS_",
+        env_nested_delimiter="__",
+        toml_file=Path.home() / ".wings" / "config.toml",
+    )
+
+    default_model: str = "claude-sonnet-4-6"
+    llm: dict[str, LLMConfig] = {}
+    theme: Literal["dark", "light"] = "dark"
+    auto_compact: bool = True
+
+class ProjectSettings(BaseModel):
+    allowed_tools: list[str] = []
+    denied_tools: list[str] = []
+    model: str | None = None        # 项目级模型覆盖
+    mcp_servers: list[str] = []
+    hooks: dict[str, list[str]] = {}  # 项目级 hooks
+    personality: str | None = None    # 追加到 system prompt
+
+    @classmethod
+    def from_directory(cls, dir_path: Path) -> "ProjectSettings":
+        toml_file = dir_path / "wings.toml"
+        if toml_file.exists():
+            import tomllib
+            return cls(**tomllib.loads(toml_file.read_text()))
+        return cls()
 ```
-
-### project_config.ts
-
-```typescript
-interface ProjectConfig {
-  allowedTools: string[];         // 工具白名单
-  deniedTools: string[];          // 工具黑名单
-  model: string | null;           // 项目级模型覆盖
-  mcpServers: string[];           // 启用的 MCP 服务器
-  hooks: Record<string, string[]>; // 项目级 hooks
-  personality: string | null;     // 追加到 system prompt
-}
-
-function loadProjectConfig(dir: string): ProjectConfig;
-```
-
-### settings.ts
-
-多层设置合并，通过 `getSetting(key, sources)` API 按优先级 fallback。
 
 ---
 
 ## 9. context — 上下文收集
 
-### system_prompt.ts
+**位置**: `src/wings/context/`
+
+### system_prompt.py
 
 组装系统提示词，包含：
-- 工具列表描述（从 ToolRegistry.getSchemas() 生成）
+- 工具列表描述（从 ToolRegistry.get_schemas() 生成）
 - 环境信息（OS, shell, date, git status）
-- 行为指引（"一切皆工具"、"先读再改"、"简洁回复" 等）
+- 行为指引（"一切皆工具"、"先读再改"、"简洁回复"等）
 
-### environment.ts
+参考 opensquilla 的 `identity/templates/bootstrap/` 多文件注入模式（AGENTS.md, TOOLS.md, SOUL.md 分开管理）。
 
-```typescript
-interface Environment {
-  os: string;
-  shell: string;
-  workingDir: string;
-  date: string;
-  gitBranch?: string;
-  gitStatus?: string;
-}
+### environment.py
+
+```python
+# environment.py
+from pydantic import BaseModel
+from datetime import datetime
+
+class Environment(BaseModel):
+    os: str
+    shell: str
+    working_dir: str
+    date: str = datetime.now().strftime("%Y-%m-%d")
+    git_branch: str | None = None
+    git_status: str | None = None
+
+    @classmethod
+    def detect(cls) -> "Environment": ...
 ```
 
 ---
@@ -568,21 +708,23 @@ interface Environment {
 ## 10. 其他模块
 
 ### memory — 持久化记忆
-- `memory/store.ts` — 文件系统存储，按类型分文件（user, project, feedback, reference）
-- 格式：markdown + frontmatter
+- `memory/store.py` — 文件系统存储，按类型分文件（user, project, feedback, reference）
+- 格式：markdown + YAML frontmatter（参考 opensquilla 的 MEMORY.md 模式）
+- Phase 2 参考 opensquilla `memory/dream/` 做离线记忆巩固
 
 ### skills — 可复用技能
-- `skills/loader.ts` — 从 `~/.wings/skills/` 等目录加载 `.md` 技能定义
+- `skills/loader.py` — 从 `~/.wings/skills/` 等目录加载 `.md` 技能定义
 - 技能 = 预定义 prompt + 可选工具组合
+- 参考 opensquilla 的 6 层加载（Extra < Bundled < Managed < Personal < Project < Workspace）
 
 ### plugins — 插件系统
-- `plugins/loader.ts` — 从 npm 包或本地路径加载插件
+- `plugins/loader.py` — 从 PyPI 包或本地路径加载插件
 - 插件可提供：tools、模型适配器、hooks
+- 参考 opensquilla 的 `channels/registry.py` 的 pkgutil 自动发现模式
 
 ### services — 外部服务
-- `services/api/` — HTTP 客户端（重试、超时、代理）
+- `services/api/` — HTTP 客户端（httpx：重试、超时、代理）
 - `services/mcp/` — MCP client/server 实现
-- `services/analytics/` — 用量统计
 
 ---
 
@@ -590,12 +732,12 @@ interface Environment {
 
 | 阶段 | 模块 | 关键文件 | 可验证 |
 |------|------|----------|--------|
-| 1 | messages | `types.ts`, `normalize.ts` | 单元测试：Anthropic/OpenAI 消息转换 |
-| 2 | models | `index.ts`, `anthropic.ts`, `openai.ts`, `registry.ts`, `capabilities.ts` | 单元测试：mock API |
-| 3 | tools | `base.ts`, `registry.ts`, `builtin/read.ts`, `builtin/write.ts`, `builtin/bash.ts` | 单元测试：工具执行 |
-| 4 | query | `engine.ts`, `token_budget.ts` | 集成测试：model + messages + tools |
-| 5 | permissions | `pipeline.ts`, `rules.ts` | 单元测试：权限判断 |
-| 6 | agent | `loop.ts`, `subagent.ts` | E2E：完整 agent 运行 |
-| 7 | config | `global_config.ts`, `project_config.ts`, `settings.ts` | 单元测试：配置读取 |
-| 8 | cli | `main.ts`, `bootstrap.ts`, `repl.ts` | 手动：`wings "hello"` |
+| 1 | messages | `types.py`, `normalize.py` | 单元测试: Anthropic/OpenAI 消息转换 |
+| 2 | models | `protocol.py`, `registry.py`, `capabilities.py`, `anthropic.py`, `openai.py` | 单元测试: mock API |
+| 3 | tools | `base.py`, `registry.py`, `decorator.py`, `builtin/read.py`, `builtin/write.py`, `builtin/bash.py` | 单元测试: 工具执行 |
+| 4 | query | `engine.py`, `token_budget.py` | 集成测试: model + messages + tools |
+| 5 | permissions | `pipeline.py`, `rules.py` | 单元测试: 权限判断 |
+| 6 | agent | `loop.py`, `subagent.py` | E2E: 完整 agent 运行 |
+| 7 | config | `settings.py` (GlobalSettings + ProjectSettings) | 单元测试: 配置读取/分层 |
+| 8 | cli | `main.py` (Typer), `bootstrap.py`, `repl.py` (Rich) | 手动: `wings "hello"` |
 | 9+ | hooks, memory, skills, plugins, MCP | 各模块 | 后续迭代 |
