@@ -257,18 +257,57 @@ async def run_loop(
 
 ## 模型路由
 
+**默认随机选择**。不做任务分析、不做难度评估——承认"我们不知道哪个模型最好"。
+
 ```
-任务请求
+每个 turn:
   │
   ▼
-registry.route(task_requirements)
+当前模型 = 用户指定的模型 (/model) 或随机选择
   │
-  ├── "需要长上下文" → Claude (200K context)
-  ├── "需要代码生成" → Claude / o4-mini
-  ├── "需要快速响应" → Gemini Flash / Haiku
-  ├── "需要视觉理解" → GPT-4o / Claude Vision
-  └── "默认" → 用户配置的默认模型
+  ▼
+调用该模型 API
 ```
+
+### 为什么默认随机？
+
+1. **诚实** — 不存在万能默认模型，随机 = 承认不知道
+2. **探索** — 用户跑 100 个 turn 后自然知道"这类问题 A 模型更好"
+3. **简单** — 相比 opensquilla 的 SquillaRouter (ONNX + LightGBM + 5 阶段后处理)，随机选择零复杂度
+
+### 用户覆盖：`/model` 命令
+
+参考 claude-code 的 `/model` 命令，用户随时指定模型：
+
+```
+/model claude-opus-4-6    → 切换到 Claude Opus
+/model gpt-4o             → 切换到 GPT-4o
+/model                    → 查看当前模型 + 可用列表
+/model random             → 恢复随机模式
+```
+
+实现上就是一个字符串覆盖：有值时用它，无值时随机。
+
+```python
+import random
+
+def select_model(override: str | None, available: list[str]) -> str:
+    """选择模型：用户指定 > 随机。"""
+    if override and override != "random":
+        return override
+    return random.choice(available)
+```
+
+### 为什么不像 opensquilla 做 ML 路由
+
+opensquilla 的 SquillaRouter 目标是**省成本**——把琐碎问题路由到便宜模型。这是单个 provider 内部的升降级逻辑。wings 的目标是**能力互补**——不同 provider 的不同模型各有长处。这两种需求不同：
+
+| | opensquilla | wings |
+|---|---|---|
+| 路由目标 | 省成本 | 发现能力 |
+| 模型关系 | 好 ↔ 差 (同 provider) | 不同擅长领域 (跨 provider) |
+| 技术 | ONNX 本地推理 | 不需要 |
+| 复杂度 | 高 (ML + 后处理链) | 零 |
 
 ## 扩展性
 

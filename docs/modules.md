@@ -156,6 +156,7 @@ class ModelProvider(Protocol):
 
 ```python
 # registry.py
+import random
 from collections.abc import Iterator
 
 class ModelRegistry:
@@ -166,8 +167,16 @@ class ModelRegistry:
     def register(self, name: str, provider: ModelProvider) -> None: ...
     def alias(self, alias: str, target: str) -> None:        # e.g. "opus" -> "claude-opus-4-6"
     def get(self, name: str) -> ModelProvider: ...
-    def list(self) -> Iterator[str]: ...
-    def route(self, task: "TaskRequirements") -> str: ...     # 智能路由
+    def list(self) -> list[str]: ...
+
+    def select(self, override: str | None = None) -> str:
+        """选择模型：用户指定 > 随机。
+
+        不做任务分析，不做难度评估。承认"不知道哪个最好"。
+        """
+        if override and override in self._providers:
+            return override
+        return random.choice(list(self._providers.keys()))
 ```
 
 ### 首批适配器
