@@ -156,27 +156,26 @@ class ModelProvider(Protocol):
 
 ```python
 # registry.py
-import random
-from collections.abc import Iterator
+from wings.routing.pool import APIPoolManager
 
 class ModelRegistry:
-    def __init__(self):
+    def __init__(self, pool_manager: APIPoolManager):
         self._providers: dict[str, ModelProvider] = {}
         self._aliases: dict[str, str] = {}  # 别名 -> 标准名
+        self._pool_manager = pool_manager
 
-    def register(self, name: str, provider: ModelProvider) -> None: ...
+    def register(self, name: str, provider: ModelProvider) -> None:
+        """注册新 API，同时添加进所有任务候选池（默认行为）。"""
+        self._providers[name] = provider
+        self._pool_manager.register_api(name)
+
     def alias(self, alias: str, target: str) -> None:        # e.g. "opus" -> "claude-opus-4-6"
     def get(self, name: str) -> ModelProvider: ...
     def list(self) -> list[str]: ...
 
-    def select(self, override: str | None = None) -> str:
-        """选择模型：用户指定 > 随机。
-
-        不做任务分析，不做难度评估。承认"不知道哪个最好"。
-        """
-        if override and override in self._providers:
-            return override
-        return random.choice(list(self._providers.keys()))
+    def select(self, task_type: str, override: str | None = None) -> str:
+        """从任务候选池中选择 API：用户指定 > 加权随机。"""
+        return self._pool_manager.select(task_type, override)
 ```
 
 ### 首批适配器
@@ -207,6 +206,158 @@ class ModelCapabilities(BaseModel):
     cost_per_m_input: float       # $/百万 token (输入)
     cost_per_m_output: float      # $/百万 token (输出)
 ```
+
+---
+
+## 2b. routing — API 候选池
+
+**位置**: `src/wings/routing/`
+**依赖**: 无（纯数据结构 + 随机算法）
+
+### 设计目标
+
+wings 的核心差异点：每次模型调用都从当前任务的 API 候选池中加权随机选择一个 API。用户通过打分和设置调整各任务类型的候选池。
+
+### 数据结构
+
+```python
+# pool.py
+from pydantic import BaseModel
+from typing import Any
+
+class PoolEntry(BaseModel):
+    """候选池中的单个 API 条目"""
+    api_id: str              # API 唯一标识，如 "anthropic/claude-opus-4-6"
+    weight: float = 1.0      # 相对概率权重
+    enabled: bool = True     # False = 不参与选择（已从池中移除）
+
+class TaskPool(BaseModel):
+    """某个任务类型的 API 候选池"""
+    task_type: str
+    entries: list[PoolEntry]
+    inherit_from: str | None = None  # 如 subagent/explore 继承 subagent 的配置
+
+class PoolConfig(BaseModel):
+    """候选池持久化配置"""
+    default_weight: float = 1.0  # 新 API 加入时的默认权重
+    pools: dict[str, list[PoolEntry]]  # task_type -> entries
+```
+
+### APIPoolManager
+
+```python
+class APIPoolManager:
+    """管理所有任务类型的 API 候选池。
+
+    全局单例，由 ModelRegistry 持有引用。
+    """
+
+    def __init__(self, config: PoolConfig | None = None): ...
+
+    # --- 选择 ---
+
+    def select(self, task_type: str, override: str | None = None) -> str:
+        """从任务候选池中按权重随机选择一个 API。
+
+        用户 override 优先。
+        子任务类型（如 subagent/explore）若无独立配置，自动 fallback 到父类型（subagent）。
+        池为空时抛出 NoAPIAvailable 错误。
+        """
+
+    def resolve_pool(self, task_type: str) -> TaskPool:
+        """解析任务类型对应的池，处理继承链。"""
+
+    # --- 注册 ---
+
+    def register_api(
+        self,
+        api_id: str,
+        add_to: list[str] | None = None,      # 只加入这些池
+        exclude_from: list[str] | None = None,  # 不加入这些池
+    ) -> None:
+        """注册新 API。默认加入所有已知任务类型的池。
+
+        add_to 和 exclude_from 互斥。
+        """
+
+    def unregister_api(self, api_id: str) -> None:
+        """从所有池中移除该 API。"""
+
+    # --- 用户调整 ---
+
+    def adjust_weight(self, task_type: str, api_id: str, weight: float) -> None:
+        """直接设置某 API 在某任务池中的权重。weight >= 0。"""
+
+    def upvote(self, task_type: str, api_id: str, delta: float = 0.5) -> None:
+        """调高某 API 的权重。"""
+
+    def downvote(self, task_type: str, api_id: str, delta: float = 0.5) -> None:
+        """调低某 API 的权重。最低为 0（不参与选择但仍在池中）。"""
+
+    def disable(self, task_type: str, api_id: str) -> None:
+        """从该任务池中移除（enabled = False，保留条目）。"""
+
+    def enable(self, task_type: str, api_id: str) -> None:
+        """恢复到该任务池中（enabled = True）。"""
+
+    def remove(self, task_type: str, api_id: str) -> None:
+        """永久从该任务池中删除该条目。"""
+
+    # --- 查询 ---
+
+    def get_pool(self, task_type: str) -> TaskPool: ...
+    def list_task_types(self) -> list[str]: ...
+    def list_apis(self, task_type: str) -> list[PoolEntry]: ...
+
+    # --- 持久化 ---
+
+    def to_config(self) -> PoolConfig: ...
+    @classmethod
+    def from_config(cls, config: PoolConfig) -> "APIPoolManager": ...
+```
+
+### 加权随机算法
+
+```python
+import random
+
+def _weighted_select(entries: list[PoolEntry]) -> str:
+    """按权重随机选择。
+
+    权重为 0 或 disabled 的条目不参与选择。
+    """
+    active = [e for e in entries if e.enabled and e.weight > 0]
+    if not active:
+        raise NoAPIAvailable("no active API in pool")
+
+    total = sum(e.weight for e in active)
+    r = random.uniform(0, total)
+    cumulative = 0.0
+    for e in active:
+        cumulative += e.weight
+        if r <= cumulative:
+            return e.api_id
+    return active[-1].api_id
+```
+
+### 任务类型继承
+
+```python
+TASK_HIERARCHY = {
+    "main": None,                    # 根任务类型
+    "subagent": None,                # 根任务类型
+    "subagent/explore": "subagent",  # 继承 subagent 的池
+    "subagent/plan": "subagent",
+    "continuous": None,              # 根任务类型
+}
+```
+
+子任务类型如果没有独立配置，自动使用父任务类型的池。用户可以用 `/pool` 为子任务类型创建独立池（从父池 fork）。如果子任务类型有独立池（entries 非空），则使用独立池。
+
+### 关键文件
+
+- `pool.py` — 所有数据结构 + `APIPoolManager` + 加权随机算法
+- `tasks.py` — 任务类型定义 + 继承关系
 
 ---
 
@@ -372,7 +523,7 @@ class QueryEngine:
     async def stream(
         self,
         messages: list[Message],
-        model: str,
+        model: str,              # 已选定的 API id（由 APIPoolManager.select 产生）
         tools: list[dict],
         config: ModelConfig,
     ) -> AsyncIterator[StreamEvent]:
@@ -421,9 +572,115 @@ class TokenBudget:
 ## 5. agent — Agent 核心循环
 
 **位置**: `src/wings/agent/`
-**依赖**: query, tools, messages, permissions
+**依赖**: query, tools, messages, permissions, routing
 
-### loop.py
+### 关键文件
+
+- `loop.py` — AgentLoop 主循环
+- `handoff.py` — HandoffDetector, TurnRecord（模型转交检测）
+- `subagent.py` — 子 agent 生成
+- `coordinator.py` — 多 agent 协调器
+- `resume.py` — 从 transcript 恢复会话
+
+### 模型转交 (Model Handoff)
+
+主对话中，候选池可能在同一会话的不同 turn 选出不同的模型。当同一模型的两次调用之间有其他模型被调用时，需要注入转交提示，让当前模型了解中间发生了什么，并审查是否需要修正。
+
+**触发条件**：模型 A 被调用 → 中间有其他模型被调用 → 模型 A 再次被调用。
+
+**注入的提示包含**：
+1. 说明中间任务已转交给其他模型处理
+2. 要求模型在进行当前任务之外，分析最近行为中是否有需要修正但尚未修正的问题
+
+```python
+# handoff.py
+from datetime import datetime
+from pydantic import BaseModel
+
+class TurnRecord(BaseModel):
+    """记录每个 turn 的模型调用情况"""
+    turn_id: int
+    model_id: str                                  # 使用的 API id
+    timestamp: datetime
+    user_input_summary: str                        # 用户输入摘要（一句话）
+    tool_calls: list[str]                          # 该 turn 中调用的工具名
+    summary: str = ""                              # 该 turn 做了什么（一句话）
+
+class HandoffDetector:
+    """检测模型转交，生成转交提示。
+
+    在主对话的 AgentLoop 中维护一个 TurnRecord 列表。
+    """
+
+    def detect(
+        self,
+        current_model: str,
+        turn_history: list[TurnRecord],
+    ) -> str | None:
+        """检测是否需要注入转交提示。
+
+        返回转交提示文本，或 None（不需要）。
+        """
+        if len(turn_history) < 2:
+            return None
+
+        # 找到当前模型上一次出现的 turn
+        previous_same_model = None
+        has_other_between = False
+        for turn in reversed(turn_history):
+            if turn.model_id == current_model:
+                previous_same_model = turn
+                break
+
+        if previous_same_model is None:
+            return None  # 该模型首次出现，无需转交
+
+        # 检查中间是否有其他模型
+        saw_self = False
+        intermediate_turns: list[TurnRecord] = []
+        for turn in reversed(turn_history):
+            if turn is previous_same_model:
+                saw_self = True
+            elif saw_self and turn.model_id != current_model:
+                intermediate_turns.append(turn)
+
+        if not intermediate_turns:
+            return None  # 中间没有其他模型
+
+        return self._build_handoff_prompt(
+            current_model=current_model,
+            previous_turn=previous_same_model,
+            intermediate_turns=intermediate_turns,
+        )
+
+    def _build_handoff_prompt(
+        self,
+        current_model: str,
+        previous_turn: TurnRecord,
+        intermediate_turns: list[TurnRecord],
+    ) -> str:
+        """构建转交提示。"""
+        other_models = sorted({t.model_id for t in intermediate_turns})
+        turns_desc = "\n".join(
+            f"  - [{t.model_id}] {t.summary or t.user_input_summary}"
+            for t in reversed(intermediate_turns)
+        )
+
+        return f"""\
+[系统提示] 自你上次参与此对话（turn #{previous_turn.turn_id}）以来，共有 \
+{len(intermediate_turns)} 个 turn 转交给了其他模型处理：{', '.join(other_models)}。
+
+中间发生的工作:
+{turns_desc}
+
+在进行当前任务之前，请：
+1. 审查这些中间 turn 的行为是否有需要修正但尚未修正的问题（如不一致的代码风格、
+   冲突的决策、遗漏的边界条件等）
+2. 如果发现问题，优先修正后再进行当前任务
+3. 如果没有需要修正的问题，直接进行当前任务"""
+```
+
+### loop.py（含转交检测）
 
 ```python
 # loop.py
@@ -433,6 +690,7 @@ from wings.tools.base import Tool, ToolContext, ToolResult
 from wings.query.engine import QueryEngine
 from wings.models.protocol import ModelConfig
 from wings.permissions.pipeline import PermissionPipeline
+from wings.routing.pool import APIPoolManager
 
 class AgentLoop:
     def __init__(
@@ -440,7 +698,10 @@ class AgentLoop:
         query_engine: QueryEngine,
         tool_registry: ToolRegistry,
         permission_pipeline: PermissionPipeline,
-    ): ...
+        pool_manager: APIPoolManager,
+    ):
+        self._turn_history: list[TurnRecord] = []
+        self._handoff_detector = HandoffDetector()
 
     async def run(
         self,
@@ -448,9 +709,27 @@ class AgentLoop:
         context: AgentContext,
     ) -> AsyncIterator[StreamEvent]:
         messages = self._assemble_messages(user_input, context)
-        model = self._select_model(context)
+        model = self._select_model(context)  # from pool by task_type
         config = self._build_config(model)
         tools = self._tool_registry.get_schemas()
+
+        # --- 模型转交检测 ---
+        if context.task_type == "main":
+            handoff_prompt = self._handoff_detector.detect(
+                model, self._turn_history,
+            )
+            if handoff_prompt:
+                # 作为 system 消息注入到消息列表
+                messages.append(Message(role=Role.USER, content=[TextBlock(text=handoff_prompt)]))
+
+        # 记录当前 turn
+        self._turn_history.append(TurnRecord(
+            turn_id=len(self._turn_history),
+            model_id=model,
+            timestamp=datetime.now(),
+            user_input_summary=user_input[:200],
+            tool_calls=[],
+        ))
 
         while True:
             had_tool_use = False
@@ -469,6 +748,9 @@ class AgentLoop:
                             had_tool_use = True
                             break
 
+                        # 记录工具调用
+                        self._turn_history[-1].tool_calls.append(event.name)
+
                         result = await tool.call(event.input, self._tool_context)
                         messages.append(ToolResultMessage(
                             role=Role.USER,
@@ -484,11 +766,20 @@ class AgentLoop:
                 yield event  # 文本、thinking 直接输出
 
             if not had_tool_use:
+                # 更新 turn 摘要
+                self._turn_history[-1].summary = self._extract_summary(messages)
                 return  # end_turn
 
     def _assemble_messages(self, user_input: str, context: AgentContext) -> list[Message]: ...
-    def _select_model(self, context: AgentContext) -> str: ...
+    def _select_model(self, context: AgentContext) -> str:
+        """从当前任务类型的 API 候选池中选择模型。"""
+        return self._pool_manager.select(
+            task_type=context.task_type,
+            override=context.model_override,
+        )
     def _inject_error(self, tool_use_id: str, error: str) -> Message: ...
+    def _extract_summary(self, messages: list[Message]) -> str: ...
+```
 ```
 
 ### subagent.py
@@ -634,6 +925,43 @@ class HookConfig(BaseModel):
 CLI 参数 > 环境变量 > 项目配置 (wings.toml) > 全局配置 (~/.wings/config.toml) > 内置默认
 ```
 
+### 候选池配置示例 (`~/.wings/config.toml`)
+
+```toml
+[routing]
+default_weight = 1.0
+
+# 主对话池：偏好 Claude Opus
+[[routing.pools.main]]
+api_id = "anthropic/claude-opus-4-6"
+weight = 2.0
+
+[[routing.pools.main]]
+api_id = "openai/gpt-4o"
+weight = 1.0
+
+[[routing.pools.main]]
+api_id = "google/gemini-2.5-pro"
+weight = 0.5  # 不太偏好
+
+# 子 agent 池：偏好快速便宜的模型
+[[routing.pools.subagent]]
+api_id = "anthropic/claude-haiku-4-5"
+weight = 3.0
+
+[[routing.pools.subagent]]
+api_id = "openai/o4-mini"
+weight = 1.0
+
+# subagent/explore 继承 subagent 池，无需单独配置
+# subagent/plan 同样继承
+
+# 后台任务池：只需要便宜的
+[[routing.pools.continuous]]
+api_id = "anthropic/claude-haiku-4-5"
+weight = 1.0
+```
+
 参考 opensquilla 的 Pydantic Settings 模式：
 
 ### settings.py
@@ -658,6 +986,10 @@ class GlobalSettings(BaseSettings):
 
     default_model: str = "claude-sonnet-4-6"
     llm: dict[str, LLMConfig] = {}
+
+    # API 候选池配置
+    routing: PoolConfig = PoolConfig()
+
     theme: Literal["dark", "light"] = "dark"
     auto_compact: bool = True
 
@@ -742,11 +1074,12 @@ class Environment(BaseModel):
 | 阶段 | 模块 | 关键文件 | 可验证 |
 |------|------|----------|--------|
 | 1 | messages | `types.py`, `normalize.py` | ✅ 单元测试: Anthropic/OpenAI 消息转换 |
-| 2 | models | `protocol.py`, `registry.py`, `capabilities.py`, `anthropic.py`, `openai.py` | 单元测试: mock API |
+| 1b | routing | `pool.py`, `tasks.py` | 单元测试: 加权随机选择、继承、权重调整 |
+| 2 | models | `protocol.py`, `registry.py`, `capabilities.py`, `anthropic.py`, `openai.py` | 单元测试: mock API + 池集成 |
 | 3 | tools | `base.py`, `registry.py`, `decorator.py`, `builtin/read.py`, `builtin/write.py`, `builtin/bash.py` | 单元测试: 工具执行 |
 | 4 | query | `engine.py`, `token_budget.py` | 集成测试: model + messages + tools |
 | 5 | permissions | `pipeline.py`, `rules.py` | 单元测试: 权限判断 |
 | 6 | agent | `loop.py`, `subagent.py` | E2E: 完整 agent 运行 |
-| 7 | config | `settings.py` (GlobalSettings + ProjectSettings) | 单元测试: 配置读取/分层 |
-| 8 | cli | `main.py` (Typer), `bootstrap.py`, `repl.py` (Rich) | 手动: `wings "hello"` |
+| 7 | config | `settings.py` (GlobalSettings + ProjectSettings) | 单元测试: 配置读取/分层 + 池配置 |
+| 8 | cli | `main.py` (Typer), `bootstrap.py`, `repl.py` (Rich) | 手动: `wings "hello"` + `/pool` 命令 |
 | 9+ | hooks, memory, skills, plugins, MCP | 各模块 | 后续迭代 |

@@ -132,7 +132,7 @@ class StageOutcome(Generic[T]):
 ├──────────┬──────────┬──────────────────┤
 │  Query   │  Tools   │  Permissions     │  ← 核心能力层
 ├──────────┼──────────┼──────────────────┤
-│  Models  │ Messages │  Hooks           │  ← 抽象层
+│  Models  │ Messages │  Routing         │  ← 抽象层 (API候选池)
 ├──────────┴──────────┴──────────┬───────┤
 │           Services (API, MCP)  │ Config│ ← 基础设施
 └────────────────────────────────┴───────┘
@@ -157,7 +157,10 @@ class StageOutcome(Generic[T]):
 组装消息列表 (system prompt + history + new user message)
   │
   ▼
-选择模型 (根据任务类型、配置、可用性)
+选择模型 (从当前任务类型的 API 候选池加权随机选择)
+  │
+  ▼
+转交检测 (同一模型再次出现，但中间有其他模型 → 注入转交提示)
   │
   ▼
 query() ─── 调用 LLM API，流式返回 (AsyncIterator)
@@ -195,8 +198,20 @@ async def run_loop(
     model: ModelProvider,
     perms: PermissionPipeline,
     context: ToolContext,
+    pool_manager: APIPoolManager,
+    task_type: str,
 ) -> AsyncIterator[StreamEvent]:
     config = build_config()
+
+    # 从候选池选择模型
+    model_id = pool_manager.select(task_type, context.model_override)
+
+    # 转交检测：主对话中同一模型再次出现但中间有其他模型
+    if task_type == "main":
+        handoff = handoff_detector.detect(model_id, turn_history)
+        if handoff:
+            messages.append(handoff_message(handoff))
+
     while True:
         had_tool_use = False
         async for event in model.stream(messages, to_schemas(tools), config):
@@ -218,15 +233,16 @@ async def run_loop(
 | 模块 | 职责 | 核心依赖 |
 |------|------|----------|
 | `messages` | 消息类型 + 跨模型格式转换 | 无 |
-| `models` | ModelProvider 协议 + 各 API 适配器 | messages |
+| `routing` | API 候选池管理 + 加权随机选择 | 无 |
+| `models` | ModelProvider 协议 + 各 API 适配器 | messages, routing |
 | `tools` | Tool 协议 + 注册表 + 内置工具 | 无 |
 | `query` | LLM API 调用封装（retry, fallback） | models, messages, tools |
-| `agent` | 核心循环 + 子 agent + 协调器 | query, tools, permissions |
+| `agent` | 核心循环 + 子 agent + 协调器 | query, tools, permissions, routing |
 | `permissions` | 多阶段权限管道 | tools |
 | `hooks` | 生命周期钩子 | 无 |
-| `config` | 全局/项目配置 | 无 |
+| `config` | 全局/项目配置 | routing |
 | `context` | system prompt + 环境信息 | 无 |
-| `cli` | Typer 入口 + REPL | agent, config |
+| `cli` | Typer 入口 + REPL | agent, config, routing |
 | `memory` | 持久化记忆 | 无 |
 | `skills` | 可复用技能/工作流 | tools |
 | `plugins` | 插件加载 | tools |
@@ -255,59 +271,113 @@ async def run_loop(
 | — | `engine/turn_runner/` (8 阶段) | — (Phase 2) |
 | — | `squilla_router/` (ONNX 路由) | — (Phase 2) |
 
-## 模型路由
+## API 候选池
 
-**默认随机选择**。不做任务分析、不做难度评估——承认"我们不知道哪个模型最好"。
+**wings 与其他 agent 的核心差异点**：每次模型调用，都从当前任务的 API 候选池中加权随机选择一个 API 进行调用。
+
+其他 agent 通常固定使用一个模型（如 claude-code 默认用 Claude），而 wings 让用户为每类任务培育自己的 API 组合——用户通过打分、设置调整各任务的候选池权重，系统不做"该用什么模型"的猜测。
 
 ```
-每个 turn:
+每次 model call:
   │
   ▼
-当前模型 = 用户指定的模型 (/model) 或随机选择
+确定当前任务类型 (main / subagent / subagent/explore / subagent/plan / continuous / ...)
   │
   ▼
-调用该模型 API
+用户指定覆盖？──→ 是 ──→ 使用指定 API
+  │
+  ▼ 否
+从当前任务类型的 API 候选池中加权随机选择
+  │
+  ▼
+调用选中的 API
 ```
 
-### 为什么默认随机？
+### 设计理念
 
-1. **诚实** — 不存在万能默认模型，随机 = 承认不知道
-2. **探索** — 用户跑 100 个 turn 后自然知道"这类问题 A 模型更好"
-3. **简单** — 相比 opensquilla 的 SquillaRouter (ONNX + LightGBM + 5 阶段后处理)，随机选择零复杂度
+1. **用户主导** — 不由系统猜测"什么任务适合什么模型"，用户通过实际使用不断调整各任务的候选池
+2. **探索与收敛** — 初期所有 API 等权重参与；跑 100 个 turn 后用户自然知道"这类问题 A 模型更好"，并调整权重
+3. **每个任务都有自己的池** — 主对话、子 agent、代码探索、方案规划等，各自独立管理候选 API 和权重
+4. **诚实** — 承认"不知道哪个模型最好"，但提供了让用户自己发现和调整的机制
 
-### 用户覆盖：`/model` 命令
+### 任务类型
 
-参考 claude-code 的 `/model` 命令，用户随时指定模型：
+| 任务类型 | 触发场景 | 默认池 |
+|----------|----------|--------|
+| `main` | 主 session 与用户的对话 | 所有已注册 API |
+| `subagent` | 子 agent 调用（通用，未细分时回退到此） | 所有已注册 API |
+| `subagent/explore` | 代码库探索（继承自 subagent 设置） | 继承 subagent |
+| `subagent/plan` | 方案规划（继承自 subagent 设置） | 继承 subagent |
+| `continuous` | 后台持续任务（轮询、监控等） | 所有已注册 API |
 
-```
-/model claude-opus-4-6    → 切换到 Claude Opus
-/model gpt-4o             → 切换到 GPT-4o
-/model                    → 查看当前模型 + 可用列表
-/model random             → 恢复随机模式
-```
+用户可自定义新的任务类型。子任务类型（如 `subagent/explore`）如果没有独立配置，自动继承父任务类型（`subagent`）的池设置。
 
-实现上就是一个字符串覆盖：有值时用它，无值时随机。
+### 候选池操作
+
+用户通过以下方式调整候选池：
+
+| 操作 | 命令 | 效果 |
+|------|------|------|
+| 查看当前池 | `/pool` | 显示当前任务下各 API 的权重和状态 |
+| 调高概率 | `/pool up <api>` | 增加该 API 在当前任务中的权重（默认 +0.5） |
+| 调低概率 | `/pool down <api>` | 降低权重（默认 -0.5） |
+| 设置权重 | `/pool set <api> <weight>` | 直接设置权重值 |
+| 从池中移除 | `/pool remove <api>` | 从当前任务候选池中移除（不再被随机到） |
+| 恢复到池中 | `/pool add <api>` | 恢复该 API 到候选池 |
+| 全局配置 | `~/.wings/config.toml` | 直接编辑各任务池的权重配置 |
+
+`/model` 命令仍保留，用于临时指定模型（该次调用绕过候选池）。
+
+### 新 API 加入规则
+
+1. **默认全加入** — 添加新 API 时，自动加入所有已知任务类型的候选池，默认权重 `1.0`
+2. **指定任务** — `wings api add <name> --add-to main,subagent` 只加入特定任务的池
+3. **排除任务** — `wings api add <name> --exclude-from continuous` 加入除指定外的所有池
+
+### 加权随机选择
 
 ```python
 import random
 
-def select_model(override: str | None, available: list[str]) -> str:
-    """选择模型：用户指定 > 随机。"""
-    if override and override != "random":
+def weighted_select(entries: list[PoolEntry]) -> str:
+    """从候选池中按权重随机选择一个 API。
+
+    权重为 0 或 disabled 的条目不参与选择。
+    """
+    active = [e for e in entries if e.enabled and e.weight > 0]
+    total = sum(e.weight for e in active)
+    r = random.uniform(0, total)
+    cumulative = 0.0
+    for e in active:
+        cumulative += e.weight
+        if r <= cumulative:
+            return e.api_id
+    return active[-1].api_id  # fallback, 不应到达
+
+def select_api(
+    task_type: str,
+    pools: dict[str, TaskPool],
+    override: str | None = None,
+) -> str:
+    """从任务候选池中选择 API：用户指定 > 加权随机。"""
+    if override:
         return override
-    return random.choice(available)
+
+    pool = resolve_pool(task_type, pools)
+    return weighted_select(pool.entries)
 ```
 
-### 为什么不像 opensquilla 做 ML 路由
+### 为什么不自动路由
 
-opensquilla 的 SquillaRouter 目标是**省成本**——把琐碎问题路由到便宜模型。这是单个 provider 内部的升降级逻辑。wings 的目标是**能力互补**——不同 provider 的不同模型各有长处。这两种需求不同：
+opensquilla 的 SquillaRouter 目标是**省成本**——把琐碎问题路由到便宜模型。这是单个 provider 内部的升降级逻辑。wings 让用户自己选择，而不是用 ML 替用户做决定：
 
 | | opensquilla | wings |
 |---|---|---|
-| 路由目标 | 省成本 | 发现能力 |
+| 路由目标 | 省成本 | 用户发现和培育 |
+| 决策者 | ONNX 模型 | 用户 |
 | 模型关系 | 好 ↔ 差 (同 provider) | 不同擅长领域 (跨 provider) |
-| 技术 | ONNX 本地推理 | 不需要 |
-| 复杂度 | 高 (ML + 后处理链) | 零 |
+| 复杂度 | 高 (ML + 后处理链) | 低 (加权随机 + 用户配置) |
+| 核心差异 | 自动化 | 用户主导
 
 ## 扩展性
 
