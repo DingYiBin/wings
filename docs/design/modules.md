@@ -1261,12 +1261,24 @@ class Environment(BaseModel):
 | 阶段 | 模块 | 关键文件 | 可验证 |
 |------|------|----------|--------|
 | 1 | messages | `types.py`, `normalize.py` | ✅ 单元测试: Anthropic/OpenAI 消息转换 |
-| 1b | routing | `pool.py`, `tasks.py` | 单元测试: 加权随机选择、继承、权重调整 |
-| 2 | models | `protocol.py`, `registry.py`, `capabilities.py`, `anthropic.py`, `openai.py` | 单元测试: mock API + 池集成 |
-| 3 | tools | `base.py`, `registry.py`, `decorator.py`, `builtin/read.py`, `builtin/write.py`, `builtin/bash.py` | 单元测试: 工具执行 |
-| 4 | query | `engine.py`, `token_budget.py` | 集成测试: model + messages + tools |
-| 5 | permissions | `pipeline.py`, `rules.py` | 单元测试: 权限判断 |
-| 6 | agent | `loop.py`, `subagent.py` | E2E: 完整 agent 运行 |
-| 7 | config | `settings.py` (GlobalSettings + ProjectSettings) | 单元测试: 配置读取/分层 + 池配置 |
-| 8 | cli | `main.py` (Typer), `bootstrap.py`, `repl.py` (Rich) | 手动: `wings "hello"` + `/pool` 命令 |
-| 9+ | hooks, memory, skills, plugins, MCP | 各模块 | 后续迭代 |
+| 1b | routing | `pool.py` (PoolEntry, TaskPool, PoolConfig, APIPoolManager, weighted_select), `tasks.py` (TASK_HIERARCHY, resolve_parent, resolve_pool, 动态 skill/* 解析) | 单元测试: 加权随机、空池异常、继承链、skill动态解析、register_api add_to/exclude_from、upvote/downvote/disable/enable、PoolConfig 序列化/反序列化 |
+| 2 | models | `protocol.py`, `registry.py`, `capabilities.py`, `anthropic.py`, `openai.py`, `google.py` | 单元测试: mock API + 池集成（注册自动入池、select 走池） |
+| 3 | tools | `base.py`, `registry.py`, `decorator.py`, `builtin/read.py`, `builtin/write.py`, `builtin/edit.py`, `builtin/bash.py`, `builtin/glob.py`, `builtin/grep.py` | 单元测试: 工具注册、input_schema、mock 执行 |
+| 4 | query | `engine.py` (stream + chat), `token_budget.py` | 集成测试: model + messages + tools，retry/fallback |
+| 5 | permissions | `pipeline.py`, `rules.py` | 单元测试: 权限管道四阶段 |
+| 6a | agent/core | `loop.py` (AgentLoop + handoff 集成 + TurnRecord 追踪), `handoff.py` (HandoffDetector, TurnRecord) | 单元测试: 转交检测、TurnRecord 记录；集成测试: 单模型 agent 完整运行 |
+| 6b | agent/subagent | `subagent.py` (all 10+ subagent types, per-type tool sets, task_type 传递), `coordinator.py` (DAG 编排, 事件流合并), `resume.py` (恢复 TurnRecord) | 集成测试: explore/plan/general/compact/memory/skill/code 各类型子 agent；E2E: 多 agent 协调 |
+| 7 | config | `settings.py` (GlobalSettings + ProjectSettings + PoolConfig), `routing` 段 TOML 解析 | 单元测试: 配置分层、池配置序列化、skill 池配置 |
+| 8 | cli | `main.py` (Typer), `bootstrap.py`, `repl.py` (Rich), `/pool` 命令集 (list/up/down/set/remove/add/fork) | 手动: `wings "hello"` + `/pool` 全命令 |
+| 9 | skills | `loader.py` (6 层加载), `injector.py` (inline/fork), 注册时自动创建 `skill/<name>` 任务类型 | 单元测试: SKILL.md 解析、池注册、fork 模式使用独立池 |
+| 10+ | hooks, memory, plugins, MCP, channels | 各模块 | 后续迭代 |
+
+### 与设计的对照检查
+
+实施计划覆盖了当前设计中的所有关键组件：
+
+- **API 候选池**: Phase 1b 实现完整 APIPoolManager + 动态 skill 解析
+- **模型转交**: Phase 6a 实现 HandoffDetector + TurnRecord
+- **子 Agent 类型**: Phase 6b 实现 10+ 种 subagent 类型，各有独立工具集和池
+- **Skill 独立池**: Phase 9 skills 加载时自动注册 `skill/<name>` 任务类型
+- **用户池管理**: Phase 8 CLI `/pool` 完整命令集 + Phase 7 config 持久化
