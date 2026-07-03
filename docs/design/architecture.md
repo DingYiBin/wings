@@ -302,15 +302,28 @@ async def run_loop(
 
 ### 任务类型
 
-| 任务类型 | 触发场景 | 默认池 |
-|----------|----------|--------|
-| `main` | 主 session 与用户的对话 | 所有已注册 API |
-| `subagent` | 子 agent 调用（通用，未细分时回退到此） | 所有已注册 API |
-| `subagent/explore` | 代码库探索（继承自 subagent 设置） | 继承 subagent |
-| `subagent/plan` | 方案规划（继承自 subagent 设置） | 继承 subagent |
-| `continuous` | 后台持续任务（轮询、监控等） | 所有已注册 API |
+wings 将所有模型调用分为三大类任务，参考 claude-code 和 opensquilla 的子 agent 体系。每种任务类型对应独立的 API 候选池。
 
-用户可自定义新的任务类型。子任务类型（如 `subagent/explore`）如果没有独立配置，自动继承父任务类型（`subagent`）的池设置。
+| 任务类型 | 触发场景 | 默认池 | 参考来源 |
+|----------|----------|--------|----------|
+| `main` | 主 session 与用户的对话 | 所有已注册 API | 两个项目的主 REPL 循环 |
+| `subagent/explore` | 代码库探索、搜索、理解结构 | 继承 subagent | claude-code `exploreAgent` |
+| `subagent/plan` | 方案规划、架构设计 | 继承 subagent | claude-code `planAgent` |
+| `subagent/general` | 通用子任务委托 | 继承 subagent | claude-code `generalPurposeAgent` |
+| `subagent/compact` | 对话压缩/摘要 | 继承 subagent | 两个项目的 compact 服务 |
+| `subagent/memory` | 记忆保存、Dream 巩固 | 继承 subagent | opensquilla memory flush/dream |
+| `subagent/skill` | 技能执行（fork 模式，未细分时回退到此） | 继承 subagent | 两个项目的 skill 系统 |
+| `skill/<name>` | 特定技能（如 `skill/commit`, `skill/review-pr`） | 继承 subagent/skill | 继承父池，可 fork 独立池 |
+| `subagent/meta` | DAG 多步编排 | 继承 subagent | opensquilla MetaOrchestrator |
+| `subagent/classify` | 确定性分类/路由 | 继承 subagent | opensquilla `llm_classify` |
+| `subagent/code` | 编码模式子任务 | 继承 subagent | opensquilla coding_mode |
+| `continuous/cron` | 定时任务执行 | 继承 continuous | claude-code CronTool |
+| `continuous/monitor` | 轮询/监控 | 继承 continuous | claude-code MonitorTool |
+| `background/dream` | 离线记忆巩固 | 继承 continuous | 两个项目的 Dream |
+| `background/title` | 会话命名 | 继承 continuous | opensquilla session naming |
+| `background/flush` | 会话关闭记忆刷新 | 继承 continuous | opensquilla SessionFlushService |
+
+用户可自定义新的任务类型。子任务类型如果没有独立配置，自动继承父任务类型（`subagent`、`continuous`、`background`）的池设置。详见 `docs/design/modules.md` 的 agent 模块。
 
 ### 候选池操作
 
