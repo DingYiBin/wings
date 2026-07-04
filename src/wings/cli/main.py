@@ -103,7 +103,8 @@ async def _run_single(prompt: str, working_dir: Path, model: str | None, log: bo
         async for event in loop.run(prompt, ctx):
             if isinstance(event, TextDelta):
                 typer.echo(event.text, nl=False)
-        typer.echo()  # trailing newline
+        nickname = loop.last_model.split("/")[0] if loop.last_model else ""
+        typer.echo(f"\n  [{nickname}]")
     except Exception as e:
         typer.echo(f"\nError: {e}", err=True)
         raise typer.Exit(code=1)
@@ -125,7 +126,7 @@ async def _run_chat(working_dir: Path, model: str | None, log: bool) -> None:
 
     while True:
         try:
-            user_input = typer.prompt(">")
+            user_input = typer.prompt("> ")
         except (EOFError, KeyboardInterrupt):
             typer.echo()
             break
@@ -141,6 +142,7 @@ async def _run_chat(working_dir: Path, model: str | None, log: bool) -> None:
             async for event in loop.run(user_input, ctx):
                 if isinstance(event, TextDelta):
                     typer.echo(event.text, nl=False)
-            typer.echo()
+            nickname = loop.last_model.split("/")[0] if loop.last_model else ""
+            typer.echo(f"\n  [{nickname}]")
         except Exception as e:
             typer.echo(f"\nError: {e}", err=True)

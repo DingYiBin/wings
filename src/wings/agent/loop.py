@@ -179,6 +179,13 @@ class AgentLoop:
 
     # -- Internal helpers ------------------------------------------------------
 
+    @property
+    def last_model(self) -> str:
+        """Return the api_id used in the most recent turn, or ''."""
+        if self._turn_history:
+            return self._turn_history[-1].model_id
+        return ""
+
     def _select_model(self, context: AgentContext) -> str:
         return self._selector.select(context.task_type, context.model_override)
 
