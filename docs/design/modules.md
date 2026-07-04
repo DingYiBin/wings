@@ -1409,27 +1409,109 @@ class Environment(BaseModel):
 
 ## 11. 实施顺序
 
-| 阶段 | 模块 | 关键文件 | 可验证 |
-|------|------|----------|--------|
-| 1 | messages | `types.py`, `normalize.py` | ✅ 单元测试: Anthropic/OpenAI 消息转换 |
-| 1b | routing | `pool.py` (PoolEntry, TaskPool, PoolConfig, APIPoolManager, weighted_select), `tasks.py` (TASK_HIERARCHY, resolve_parent, resolve_pool, 动态 skill/* 解析) | 单元测试: 加权随机、空池异常、继承链、skill动态解析、register_api add_to/exclude_from、upvote/downvote/disable/enable、PoolConfig 序列化/反序列化 |
-| 2 | models | `protocol.py`, `registry.py`, `capabilities.py`, `anthropic.py`, `openai.py`, `google.py` | 单元测试: mock API + 池集成（注册自动入池、select 走池） |
-| 3 | tools | `base.py`, `registry.py`, `decorator.py`, `builtin/read.py`, `builtin/write.py`, `builtin/edit.py`, `builtin/bash.py`, `builtin/glob.py`, `builtin/grep.py` | 单元测试: 工具注册、input_schema、mock 执行 |
-| 4 | query | `engine.py` (stream + chat), `token_budget.py` | 集成测试: model + messages + tools，retry/fallback |
-| 5 | permissions | `pipeline.py`, `rules.py` | 单元测试: 权限管道四阶段 |
-| 6a | agent/core | `loop.py` (AgentLoop + handoff 集成 + TurnRecord 追踪), `handoff.py` (HandoffDetector, TurnRecord) | 单元测试: 转交检测、TurnRecord 记录；集成测试: 单模型 agent 完整运行 |
-| 6b | agent/subagent | `subagent.py` (all 10+ subagent types, per-type tool sets, task_type 传递), `coordinator.py` (DAG 编排, 事件流合并), `resume.py` (恢复 TurnRecord) | 集成测试: explore/plan/general/compact/memory/skill/code 各类型子 agent；E2E: 多 agent 协调 |
-| 7 | config | `settings.py` (GlobalSettings + ProjectSettings + PoolConfig), `routing` 段 TOML 解析 | 单元测试: 配置分层、池配置序列化、skill 池配置 |
-| 8 | cli | `main.py` (Typer), `bootstrap.py`, `repl.py` (Rich), `/pool` 命令集 (list/up/down/set/remove/add/fork) | 手动: `wings "hello"` + `/pool` 全命令 |
-| 9 | skills | `loader.py` (6 层加载), `injector.py` (inline/fork), 注册时自动创建 `skill/<name>` 任务类型 | 单元测试: SKILL.md 解析、池注册、fork 模式使用独立池 |
-| 10+ | hooks, memory, plugins, MCP, channels | 各模块 | 后续迭代 |
+| 阶段 | 模块 | 状态 | 实际文件 | 测试数 |
+|------|------|------|----------|--------|
+| 1 | messages | ✅ | `types.py`, `normalize.py` (含 MessageNormalizer) | 26 |
+| 1b | routing | ✅ | `protocol.py`, `types.py`, `selector.py`, `tasks.py`, `manager.py` | 47 |
+| 2 | models | ✅ | `protocol.py`, `capabilities.py`, `registry.py`, `anthropic.py`, `openai.py` | 21 |
+| 3 | tools | — | `base.py`, `registry.py`, `decorator.py`, `builtin/*.py` | — |
+| 4 | query | — | `engine.py`, `token_budget.py` | — |
+| 5 | permissions | — | `pipeline.py`, `rules.py` | — |
+| 6a | agent/core | — | `loop.py`, `handoff.py` | — |
+| 6b | agent/subagent | — | `subagent.py`, `coordinator.py`, `resume.py` | — |
+| 7 | config | — | `settings.py` | — |
+| 8 | cli | — | `main.py`, `repl.py` | — |
+| 9 | skills | — | `loader.py`, `injector.py` | — |
+| 10+ | hooks, memory, plugins, MCP | — | — | — |
 
-### 与设计的对照检查
+**总计**: 3 个阶段完成，94 个测试，~1400 行实现代码。
 
-实施计划覆盖了当前设计中的所有关键组件：
+### 已完成模块的实际结构
 
-- **API 候选池**: Phase 1b 实现完整 APIPoolManager + 动态 skill 解析
-- **模型转交**: Phase 6a 实现 HandoffDetector + TurnRecord
-- **子 Agent 类型**: Phase 6b 实现 10+ 种 subagent 类型，各有独立工具集和池
-- **Skill 独立池**: Phase 9 skills 加载时自动注册 `skill/<name>` 任务类型
-- **用户池管理**: Phase 8 CLI `/pool` 完整命令集 + Phase 7 config 持久化
+```
+src/wings/
+├── __init__.py
+├── messages/           # Phase 1
+│   ├── __init__.py
+│   ├── types.py        # Message, Role, TextBlock, ToolUseBlock, ToolResultBlock,
+│   │                     StreamEvent (TextDelta, ToolUseDelta, ThinkingDelta), StopReason
+│   └── normalize.py    # MessageNormalizer + from_/to_ anthropic + openai
+├── routing/            # Phase 1b
+│   ├── __init__.py
+│   ├── protocol.py     # ModelSelector Protocol
+│   ├── types.py        # PoolEntry, TaskPool, PoolConfig
+│   ├── selector.py     # weighted_select(), NoAPIAvailable
+│   ├── tasks.py        # TASK_HIERARCHY, resolve_parent(), resolve_pool()
+│   └── manager.py      # APIPoolManager (thread-safe, implements ModelSelector)
+├── models/             # Phase 2
+│   ├── __init__.py
+│   ├── protocol.py     # ModelConfig, TokenUsage, ModelResponse, ModelProvider Protocol
+│   ├── capabilities.py # ModelCapabilities, CAPABILITY_CATALOG (7 models)
+│   ├── registry.py     # ModelRegistry (delegates to ModelSelector Protocol)
+│   ├── anthropic.py    # AnthropicProvider (chat + stream, system split, thinking)
+│   └── openai.py       # OpenAIProvider (AsyncOpenAI, o-series, streaming tool calls)
+├── tools/              # Phase 3 →
+├── query/              # Phase 4 →
+└── ...
+```
+
+### 开发过程中的设计决策与反思
+
+#### 1. MessageNormalizer 的补位
+
+设计文档定义了带 `to_internal(provider, messages)` / `to_provider(provider, messages)` 的 Protocol，但 Phase 1 实现只有裸函数（`from_anthropic`, `to_openai` 等）。Phase 2 开发时发现：QueryEngine 需要一个统一入口来路由到不同 provider 的转换器，否则每个调用方都要写 if-else 分支。
+
+**决策**: 在 Phase 1 中追加 `MessageNormalizer` 类，内部维护 `_from_provider` / `_to_provider` 注册表，模块加载时自动注册 anthropic 和 openai。对外暴露模块级 `normalizer` 单例。代价很小（~50 行），消除了未来的 if-else 扩散。
+
+#### 2. Protocol 作为模块边界
+
+routing 和 models 两个模块都遵循同一个模式：定义 Protocol → 实现类 → 调用方只依赖 Protocol。
+
+- `ModelSelector` Protocol → `APIPoolManager` 实现 → `ModelRegistry` / `AgentLoop` 依赖
+- `ModelProvider` Protocol → `AnthropicProvider` / `OpenAIProvider` 实现 → `QueryEngine` 依赖
+
+**效果**: 换池实现（比如从加权随机换成 epsilon-greedy）不需要改 ModelRegistry。换 provider（比如新增 Google）不需要改 QueryEngine。Protocol 是零成本的类型安全抽象——Python 不做运行时检查，但 mypy 能做。
+
+#### 3. 纯函数层的价值
+
+routing 模块将 `weighted_select()`、`resolve_parent()`、`resolve_pool()` 作为纯函数独立出来。它们在测试中不需要构造 Manager、不需要 mock 锁、不需要关心线程安全。47 个 routing 测试中，~30 个只测纯函数。
+
+**决策**: 保持这个模式。Phase 3 的 tools、Phase 5 的 permissions 也应该先写纯函数层。
+
+#### 4. 设计文档 vs 实现的差异
+
+部分设计细节在实现时调整了：
+
+| 设计 | 实现 | 原因 |
+|------|------|------|
+| `TaskPool.inherit_from` 字段 | 删除，只用 `TASK_HIERARCHY` | 双源头会不一致 |
+| `PoolConfig.version` 字段 | 新增 | 配置格式升级需要版本号 |
+| `get_pool()` 行为 | 返回池（允许空），`select()` 才抛异常 | 查询和选择是不同的操作 |
+| `from_config()` 类方法 | 改为 `replace_config()` | 构造函数用 `config=` 参数更直观 |
+| `math` import 多余 | 删除 | lint 发现 |
+
+#### 5. Adapter 的灵活性设计
+
+Anthropic 和 OpenAI 的消息格式差异很大（system 消息位置、tool call 序列化方式、streaming 事件结构）。Adapter 内部做转换是对调用方完全透明的。
+
+**Anthropic 特有处理**: system 消息从消息列表提取为顶层 `system` 参数；thinking mode 通过 `thinking: {type: enabled, budget_tokens}` 配置。
+
+**OpenAI 特有处理**: o-series 模型用 `max_completion_tokens` 而非 `max_tokens`；tool call arguments 是 JSON 字符串需要 parse；streaming 中 tool call 通过 index 增量拼接。
+
+#### 6. 模块间依赖
+
+```
+messages  ← 无依赖
+    ↓
+routing   ← 无依赖（纯数据结构 + 算法）
+    ↓
+models    ← messages (normalizer) + routing (ModelSelector Protocol)
+    ↓
+tools     ← 无依赖（独立模块）
+    ↓
+query     ← models + messages + tools
+    ↓
+agent     ← query + tools + messages + permissions + routing
+```
+
+关键原则：**每个新模块只依赖已完成的模块**。Phase 3 (tools) 可以独立开发，因为它不依赖前三个模块。
