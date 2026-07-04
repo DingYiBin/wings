@@ -147,7 +147,7 @@ def _ctx_kwargs(config, working_dir, model, loop):
     )
 
 
-async def _handle_permission(event: PermissionRequest, loop, session) -> None:
+async def _handle_permission(event: PermissionRequest, loop) -> None:
     """Display an inline permission prompt matching claude-code's format.
 
     Arrow keys / j,k navigate, Enter selects, Esc / n cancels, y confirms.
@@ -313,8 +313,7 @@ async def _run_single(prompt: str, working_dir: Path, model: str | None, log: bo
                 typer.echo(event.text, nl=False)
                 sys.stdout.flush()
             elif isinstance(event, PermissionRequest):
-                perm_session = PromptSession("", enable_history_search=False)
-                await _handle_permission(event, loop, perm_session)
+                await _handle_permission(event, loop)
             else:
                 _display_tool_event(event)
         nickname = loop.last_model.split("/")[0] if loop.last_model else ""
@@ -387,7 +386,7 @@ async def _run_chat(working_dir: Path, model: str | None, log: bool) -> None:
                     typer.echo(event.text, nl=False)
                     sys.stdout.flush()
                 elif isinstance(event, PermissionRequest):
-                    await _handle_permission(event, loop, session)
+                    await _handle_permission(event, loop)
                 else:
                     _display_tool_event(event)
             nickname = loop.last_model.split("/")[0] if loop.last_model else ""
