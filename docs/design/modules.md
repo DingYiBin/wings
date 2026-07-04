@@ -1415,7 +1415,7 @@ class Environment(BaseModel):
 | 1b | routing | ✅ | `protocol.py`, `types.py`, `selector.py`, `tasks.py`, `manager.py` | 47 |
 | 2 | models | ✅ | `protocol.py`, `capabilities.py`, `registry.py`, `anthropic.py`, `openai.py` | 21 |
 | 3 | tools | ✅ | `base.py`, `registry.py`, `decorator.py`, `builtin/read.py`, `builtin/write.py`, `builtin/edit.py`, `builtin/bash.py`, `builtin/glob.py`, `builtin/grep.py` | 35 |
-| 4 | query | — | `engine.py`, `token_budget.py` | — |
+| 4 | query | ✅ | `engine.py` (retry), `token_budget.py` (heuristic) | 15 |
 | 5 | permissions | — | `pipeline.py`, `rules.py` | — |
 | 6a | agent/core | — | `loop.py`, `handoff.py` | — |
 | 6b | agent/subagent | — | `subagent.py`, `coordinator.py`, `resume.py` | — |
@@ -1424,7 +1424,7 @@ class Environment(BaseModel):
 | 9 | skills | — | `loader.py`, `injector.py` | — |
 | 10+ | hooks, memory, plugins, MCP | — | — | — |
 
-**总计**: 4 个阶段完成，129 个测试，~1900 行实现代码。
+**总计**: 5 个阶段完成，144 个测试，~2100 行实现代码。
 
 ### 已完成模块的实际结构
 
@@ -1463,7 +1463,10 @@ src/wings/
 │       ├── bash.py     # Shell command execution, timeout, exit code
 │       ├── glob.py     # File pattern matching
 │       └── grep.py     # Regex search: content/files_with_matches/count
-├── query/              # Phase 4 →
+├── query/              # Phase 4
+│   ├── __init__.py
+│   ├── engine.py       # QueryEngine (retry with exponential backoff)
+│   └── token_budget.py # TokenBudget (heuristic, 80% compact threshold)
 └── ...
 ```
 
@@ -1583,3 +1586,19 @@ src/wings/
     ├── decorator.py    # @tool 装饰器
     └── builtin/        # read, write, edit, bash, glob, grep
 ```
+
+#### 11. 消息双重转换 bug（Phase 4 发现并修复）
+
+最初 `QueryEngine` 持有 `MessageNormalizer`，在调用 provider 之前将 `list[Message]` 转为 `list[dict]`。但 `AnthropicProvider` / `OpenAIProvider` 内部也会调用 `to_anthropic()` / `to_openai_messages()` 做同样的转换。dict 被当成 Message 传入 adapter 会直接 crash。
+
+**根因**: 测试使用 mock provider（不检查消息格式），144 个测试全绿，但真实调用会炸。
+
+**修复**: 去掉 engine 中的消息转换和 normalizer 依赖。Provider 自己负责格式转换——engine 只做错误处理和重试。
+
+**教训**: mock 测试覆盖了"控制流"但漏掉了"数据流"。关键数据路径（消息格式的端到端传递）需要至少一个集成测试用真实 adapter 跑一遍。
+
+#### 12. QueryEngine 的职责收窄
+
+修复后 `QueryEngine` 只做两件事：(1) 从 registry 找 provider，(2) 带指数退避重试调用。消息转换、模型选择、工具执行都不归它管。
+
+好处：Phase 6 AgentLoop 的职责划分更清晰——AgentLoop 负责循环和工具调度，QueryEngine 只负责"调用一次 LLM"。
