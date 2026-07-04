@@ -23,6 +23,34 @@ async def write_file(input: WriteInput, context: ToolContext) -> str:
     path = Path(input.file_path)
     if not path.is_absolute():
         path = Path(context.working_dir) / path
+
+    existed = path.exists()
+    old_text = path.read_text() if existed else ""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(input.content)
-    return f"Wrote {len(input.content)} bytes to {path}"
+
+    action = "Updated" if existed else "Created"
+    lines = input.content.split("\n")
+    line_count = len(lines)
+
+    if not existed:
+        # Show all lines as added
+        result = [f"{action} {path} ({line_count} line(s))"]
+        for line in lines[:30]:
+            result.append(f"         +{line.rstrip()}")
+        if len(lines) > 30:
+            result.append(f"         ... ({len(lines) - 30} more lines)")
+        return "\n".join(result)
+
+    # For updates, show summary + changed line count
+    old_lines = old_text.split("\n")
+    added = max(0, line_count - len(old_lines))
+    removed = max(0, len(old_lines) - line_count)
+    parts = []
+    if added:
+        parts.append(f"+{added} line(s)")
+    if removed:
+        parts.append(f"-{removed} line(s)")
+    change_desc = ", ".join(parts) if parts else "content replaced"
+
+    return f"{action} {path}: {change_desc} ({line_count} lines)"

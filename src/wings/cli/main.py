@@ -150,18 +150,40 @@ def _ctx_kwargs(config, working_dir, model, loop):
 def _display_tool_event(event) -> None:
     """Format a tool call or result for terminal display."""
     if isinstance(event, ToolUseBlock):
-        # Show the tool call
-        input_str = str(event.input)
-        if len(input_str) > 200:
-            input_str = input_str[:200] + "..."
-        typer.echo(f"  ● {event.name}({input_str})")
+        # Show a clean one-liner for the tool call
+        label = _tool_label(event.name, event.input)
+        typer.echo(f"  ● {label}")
     elif isinstance(event, ToolResultBlock):
         # Show the result indented
         lines = event.content.strip().split("\n")
-        for line in lines[:20]:  # cap at 20 lines
+        for line in lines[:30]:  # cap at 30 lines
             typer.echo(f"    ⎿ {line}")
-        if len(lines) > 20:
-            typer.echo(f"    ... ({len(lines) - 20} more lines)")
+        if len(lines) > 30:
+            typer.echo(f"    ... ({len(lines) - 30} more lines)")
+
+
+def _tool_label(name: str, input: dict) -> str:
+    """Build a human-readable label for a tool call."""
+    path = input.get("file_path", "")
+    if path:
+        return f"{name}({path})"
+    command = input.get("command", "")
+    if command:
+        # Truncate long commands
+        if len(command) > 120:
+            command = command[:120] + "..."
+        return f"{name}({command})"
+    pattern = input.get("pattern", "")
+    if pattern:
+        return f"{name}({pattern})"
+    # Fallback: show first key-value pair
+    if input:
+        key, val = next(iter(input.items()))
+        val_str = str(val)
+        if len(val_str) > 80:
+            val_str = val_str[:80] + "..."
+        return f"{name}({key}={val_str})"
+    return f"{name}()"
 
 
 async def _run_single(prompt: str, working_dir: Path, model: str | None, log: bool) -> None:

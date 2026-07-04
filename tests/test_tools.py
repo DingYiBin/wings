@@ -188,7 +188,8 @@ def test_write_file(tmp_path):
     result = asyncio.run(write_file.call(
         WriteInput(file_path=str(f), content="hello world"), ctx
     ))
-    assert "Wrote" in result.output
+    assert "Created" in result.output
+    assert "hello world" in result.output
     assert f.read_text() == "hello world"
 
 
@@ -212,7 +213,7 @@ def test_edit_file(tmp_path):
     result = asyncio.run(edit_file.call(
         EditInput(file_path=str(f), old_string="hello", new_string="goodbye"), ctx
     ))
-    assert "Edit applied" in result.output
+    assert "Replaced" in result.output
     assert f.read_text() == "goodbye world\n"
 
 
