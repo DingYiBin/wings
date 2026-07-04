@@ -80,6 +80,20 @@ class ThinkingDelta(BaseModel):
 StreamEvent = TextDelta | ToolUseDelta | ThinkingDelta | TextBlock | ToolUseBlock | ToolResultBlock
 
 
+# -- Permission ----------------------------------------------------------------
+
+class PermissionRequest(BaseModel):
+    """An interactive permission prompt yielded by the agent loop.
+
+    The CLI displays this to the user and responds via
+    AgentLoop.set_permission_response().
+    """
+
+    type: Literal["permission_request"] = "permission_request"
+    tool_name: str
+    tool_input: dict[str, Any] = Field(default_factory=dict)
+
+
 # -- Stop reason -------------------------------------------------------------
 
 class StopReason(StrEnum):

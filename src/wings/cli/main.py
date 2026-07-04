@@ -12,7 +12,7 @@ from prompt_toolkit import PromptSession
 
 from wings.cli.bootstrap import create_session, make_agent_context
 from wings.cli.logging import TurnLogger
-from wings.messages.types import TextDelta, ToolResultBlock, ToolUseBlock
+from wings.messages.types import PermissionRequest, TextDelta, ToolResultBlock, ToolUseBlock
 
 app = typer.Typer(
     name="wings",
@@ -147,6 +147,30 @@ def _ctx_kwargs(config, working_dir, model, loop):
     )
 
 
+async def _handle_permission(event: PermissionRequest, loop, session) -> None:
+    """Display a permission prompt and send the response to the agent loop."""
+    input_str = str(event.tool_input)
+    if len(input_str) > 200:
+        input_str = input_str[:200] + "..."
+
+    typer.echo()
+    typer.echo("  \u2550\u2550 Permission required \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550")
+    typer.echo(f"  {event.tool_name}: {input_str}")
+    typer.echo("  [y] Yes  [n] No  [a] Always allow")
+
+    try:
+        answer = (await session.prompt_async("  \u25b6 ", enable_history_search=False)).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        answer = "n"
+
+    if answer == "y" or answer == "yes":
+        loop.set_permission_response("allow")
+    elif answer == "a" or answer == "always":
+        loop.set_permission_response("allow_always")
+    else:
+        loop.set_permission_response("deny")
+
+
 def _display_tool_event(event) -> None:
     """Format a tool call or result for terminal display."""
     if isinstance(event, ToolUseBlock):
@@ -163,27 +187,33 @@ def _display_tool_event(event) -> None:
 
 
 def _tool_label(name: str, input: dict) -> str:
-    """Build a human-readable label for a tool call."""
+    """Build a human-readable label for a tool call.
+
+    Uses claude-code-style names: Update for edit, Write for write.
+    """
+    human_name = {"edit": "Update", "write": "Write", "read": "Read",
+                   "bash": "Bash", "glob": "Glob", "grep": "Grep",
+                   "skill_view": "SkillView"}.get(name, name)
+
     path = input.get("file_path", "")
     if path:
-        return f"{name}({path})"
+        return f"{human_name}({path})"
     command = input.get("command", "")
     if command:
-        # Truncate long commands
         if len(command) > 120:
             command = command[:120] + "..."
-        return f"{name}({command})"
+        return f"{human_name}({command})"
     pattern = input.get("pattern", "")
     if pattern:
-        return f"{name}({pattern})"
+        return f"{human_name}({pattern})"
     # Fallback: show first key-value pair
     if input:
         key, val = next(iter(input.items()))
         val_str = str(val)
         if len(val_str) > 80:
             val_str = val_str[:80] + "..."
-        return f"{name}({key}={val_str})"
-    return f"{name}()"
+        return f"{human_name}({key}={val_str})"
+    return f"{human_name}()"
 
 
 async def _run_single(prompt: str, working_dir: Path, model: str | None, log: bool) -> None:
@@ -204,6 +234,9 @@ async def _run_single(prompt: str, working_dir: Path, model: str | None, log: bo
             if isinstance(event, TextDelta):
                 typer.echo(event.text, nl=False)
                 sys.stdout.flush()
+            elif isinstance(event, PermissionRequest):
+                perm_session = PromptSession("", enable_history_search=False)
+                await _handle_permission(event, loop, perm_session)
             else:
                 _display_tool_event(event)
         nickname = loop.last_model.split("/")[0] if loop.last_model else ""
@@ -275,6 +308,8 @@ async def _run_chat(working_dir: Path, model: str | None, log: bool) -> None:
                 if isinstance(event, TextDelta):
                     typer.echo(event.text, nl=False)
                     sys.stdout.flush()
+                elif isinstance(event, PermissionRequest):
+                    await _handle_permission(event, loop, session)
                 else:
                     _display_tool_event(event)
             nickname = loop.last_model.split("/")[0] if loop.last_model else ""

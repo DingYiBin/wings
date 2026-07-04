@@ -8,6 +8,9 @@ from pydantic import BaseModel, Field
 from wings.tools.base import ToolContext
 from wings.tools.decorator import tool
 
+# Directories to exclude from search
+_VCS_DIRS = frozenset({".git", ".svn", ".hg", ".bzr", ".jj", ".sl"})
+
 
 class GrepInput(BaseModel):
     pattern: str = Field(description="The regular expression pattern to search for")
@@ -29,6 +32,14 @@ class GrepInput(BaseModel):
     )
 
 
+def _is_in_vcs_dir(filepath: Path, base: Path) -> bool:
+    """Check if any parent directory is a VCS directory."""
+    for parent in filepath.relative_to(base).parents:
+        if parent.name in _VCS_DIRS:
+            return True
+    return False
+
+
 @tool(
     name="grep",
     description="Search file contents using regular expressions",
@@ -48,7 +59,8 @@ async def grep(input: GrepInput, context: ToolContext) -> str:
     else:
         glob_pattern = input.glob or "**/*"
         files = sorted(
-            f for f in base.glob(glob_pattern) if f.is_file()
+            f for f in base.glob(glob_pattern)
+            if f.is_file() and not _is_in_vcs_dir(f, base)
         )
 
     try:

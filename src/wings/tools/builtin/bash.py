@@ -1,5 +1,6 @@
 """Execute shell commands."""
 
+import re
 import subprocess
 
 from pydantic import BaseModel, Field
@@ -7,9 +8,49 @@ from pydantic import BaseModel, Field
 from wings.tools.base import ToolContext
 from wings.tools.decorator import tool
 
+# Commands/patterns that are always denied
+_DENY_PATTERNS: list[re.Pattern] = [
+    # Fork bomb
+    re.compile(r":\s*\(\s*\)\s*\{"),
+    # Format/wipe disk
+    re.compile(r"\bmkfs\."),
+    # Direct disk write
+    re.compile(r"\bdd\s+if="),
+    # Recursive chmod 777 on root
+    re.compile(r"\bchmod\s+.*-R\s+777\s+/"),
+    # Overwrite disk
+    re.compile(r">\s*/dev/sd[a-z]"),
+    # Fork bomb variants
+    re.compile(r"\(\)\s*\{.*:.*\|.*:.*&.*\}"),
+]
+
+
+def _is_sleep_command(cmd: str) -> bool | None:
+    """Return True if the command is a sleep >= 2 seconds."""
+    m = re.match(r"^sleep\s+(\d+)", cmd.strip())
+    if m:
+        return int(m.group(1)) >= 2
+    # Also catch decimal sleeps
+    m = re.match(r"^sleep\s+(\d+\.?\d*)", cmd.strip())
+    if m:
+        return float(m.group(1)) >= 2.0
+    return None
+
+
+def _check_denylist(cmd: str) -> str | None:
+    """Return an error message if the command matches a deny pattern."""
+    for pattern in _DENY_PATTERNS:
+        if pattern.search(cmd):
+            return f"Error: command denied by security policy (matched: {pattern.pattern})"
+    return None
+
 
 class BashInput(BaseModel):
     command: str = Field(description="The shell command to execute")
+    description: str = Field(
+        default="",
+        description="Short description of what this command does (shown to the user)",
+    )
     timeout: int | None = Field(
         default=120000, description="Timeout in milliseconds (max 600000)"
     )
@@ -22,10 +63,21 @@ class BashInput(BaseModel):
     destructive=True,
 )
 async def bash(input: BashInput, context: ToolContext) -> str:
+    cmd = input.command
+
+    # Security checks
+    error = _check_denylist(cmd)
+    if error:
+        return error
+
+    # Block sleep
+    if _is_sleep_command(cmd):
+        return "Error: sleep is not allowed. Use a non-blocking approach instead."
+
     timeout_ms = min(input.timeout or 120000, 600000)
     try:
         result = subprocess.run(
-            input.command,
+            cmd,
             shell=True,
             capture_output=True,
             text=True,

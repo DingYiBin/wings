@@ -23,6 +23,10 @@ class ToolContext(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
     session_id: str = ""
     available_skills: dict[str, str] = Field(default_factory=dict)
+    read_cache: dict[str, float] = Field(
+        default_factory=dict,
+        description="File path -> mtime for recently read files. Used for stale-write detection.",
+    )
 
 
 class Tool(Protocol):

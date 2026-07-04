@@ -11,12 +11,14 @@ draw.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
 from wings.agent.handoff import HandoffDetector, TurnRecord
 from wings.messages.types import (
     Message,
+    PermissionRequest,
     Role,
     StreamEvent,
     TextBlock,
@@ -70,11 +72,24 @@ class AgentLoop:
         self._messages: list[Message] = []
         self._logger: Any = None  # set by set_logger()
 
+        # Permission sync — used when the pipeline returns "ask"
+        self._perm_event = asyncio.Event()
+        self._perm_response: str = "deny"  # default: deny until answered
+
     # -- Public API ------------------------------------------------------------
 
     def set_logger(self, logger: Any) -> None:
         """Attach a TurnLogger for request/response recording."""
         self._logger = logger
+
+    def set_permission_response(self, response: str) -> None:
+        """Set the user's response to a pending permission request.
+
+        Called by the CLI after the user answers y/n/a.
+        Must be one of: "allow", "deny", "allow_always".
+        """
+        self._perm_response = response
+        self._perm_event.set()
 
     async def run(
         self,
@@ -173,6 +188,7 @@ class AgentLoop:
                 # Anthropic requires all tool_result blocks for one assistant
                 # response to be grouped in the next user message.
                 tool_results: list[ToolResultBlock] = []
+                permission_denied = False
                 for block in tool_use_blocks:
                     tool = self._tool_registry.get(block.name)
                     if tool is None:
@@ -197,6 +213,29 @@ class AgentLoop:
                         tool_results.append(tr)
                         yield tr
                         continue
+
+                    if perm_result == "ask":
+                        # Interactive approval
+                        self._perm_event.clear()
+                        yield PermissionRequest(
+                            tool_name=block.name,
+                            tool_input=block.input,
+                        )
+                        await self._perm_event.wait()
+                        response = self._perm_response
+
+                        if response == "allow_always":
+                            self._permission_pipeline._rules.add_allow(block.name)
+                        elif response == "deny":
+                            tr = ToolResultBlock(
+                                tool_use_id=block.id,
+                                content="permission denied by user",
+                                is_error=True,
+                            )
+                            tool_results.append(tr)
+                            yield tr
+                            permission_denied = True
+                            continue
 
                     cycle_tool_calls.append(block.name)
                     turn.tool_calls.append(block.name)
@@ -231,6 +270,14 @@ class AgentLoop:
                         response={"content": [b.model_dump() for b in tool_use_blocks]},
                         tool_calls=cycle_tool_calls,
                     )
+
+                # If user denied a permission request, stop the turn so the
+                # user can decide what to do next instead of letting the
+                # model continue with alternatives.
+                if permission_denied:
+                    turn.summary = "permission denied by user"
+                    return
+
                 continue  # loop back for next chat call with fresh model selection
 
             # No tools — end turn

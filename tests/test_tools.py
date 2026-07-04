@@ -188,7 +188,7 @@ def test_write_file(tmp_path):
     result = asyncio.run(write_file.call(
         WriteInput(file_path=str(f), content="hello world"), ctx
     ))
-    assert "Created" in result.output
+    assert "Wrote" in result.output
     assert "hello world" in result.output
     assert f.read_text() == "hello world"
 
@@ -210,10 +210,12 @@ def test_edit_file(tmp_path):
     f.write_text("hello world\n")
 
     ctx = ToolContext(working_dir=str(tmp_path))
+    ctx.read_cache[str(f)] = f.stat().st_mtime  # simulate prior read
     result = asyncio.run(edit_file.call(
         EditInput(file_path=str(f), old_string="hello", new_string="goodbye"), ctx
     ))
-    assert "Replaced" in result.output
+    assert "Added" in result.output
+    assert "removed" in result.output
     assert f.read_text() == "goodbye world\n"
 
 
@@ -233,6 +235,7 @@ def test_edit_duplicate_no_replace_all(tmp_path):
     f.write_text("hello world hello\n")
 
     ctx = ToolContext(working_dir=str(tmp_path))
+    ctx.read_cache[str(f)] = f.stat().st_mtime  # simulate prior read
     result = asyncio.run(edit_file.call(
         EditInput(file_path=str(f), old_string="hello", new_string="bye"), ctx
     ))
@@ -244,6 +247,7 @@ def test_edit_replace_all(tmp_path):
     f.write_text("hello world hello\n")
 
     ctx = ToolContext(working_dir=str(tmp_path))
+    ctx.read_cache[str(f)] = f.stat().st_mtime  # simulate prior read
     result = asyncio.run(edit_file.call(
         EditInput(
             file_path=str(f), old_string="hello", new_string="bye", replace_all=True
