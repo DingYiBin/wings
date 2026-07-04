@@ -46,74 +46,67 @@ uv pip install -e ".[dev]"
 
 ### API Keys
 
-Create `~/.wings/config.toml`:
+Create `~/.wings/config.json`:
 
-```toml
-# Anthropic (Claude models)
-[llm.anthropic]
-provider = "anthropic"
-model = "claude-sonnet-4-6"
-api_key = "sk-ant-api03-..."
-
-# OpenAI (GPT / o-series)
-[llm.openai]
-provider = "openai"
-model = "gpt-4o"
-api_key = "sk-..."
+```json
+{
+  "providers": {
+    "anthropic": {
+      "model": "claude-sonnet-4-6",
+      "api_key": "sk-ant-api03-..."
+    },
+    "openai": {
+      "model": "gpt-4o",
+      "api_key": "sk-..."
+    }
+  }
+}
 ```
+
+Provider names are the keys under `"providers"`. Each value is a dict with `model`, `api_key`, and optional `base_url`.
 
 API keys can also be set via environment variables (takes priority over config file):
 
 ```bash
-export WINGS_LLM__ANTHROPIC__API_KEY="sk-ant-api03-..."
-export WINGS_LLM__OPENAI__API_KEY="sk-..."
+export WINGS_PROVIDERS__ANTHROPIC__API_KEY="sk-ant-api03-..."
+export WINGS_PROVIDERS__OPENAI__API_KEY="sk-..."
 ```
 
 ### API Candidate Pool (optional)
 
 Customize which models serve which task types:
 
-```toml
-[routing]
-default_weight = 1.0
-
-# Main conversation: prefer Claude Opus
-[[routing.pools.main]]
-api_id = "anthropic/claude-opus-4-6"
-weight = 2.0
-
-[[routing.pools.main]]
-api_id = "openai/gpt-4o"
-weight = 1.0
-
-# Sub-agents: prefer fast/cheap models
-[[routing.pools.subagent]]
-api_id = "anthropic/claude-haiku-4-5"
-weight = 3.0
-
-[[routing.pools.subagent]]
-api_id = "openai/o4-mini"
-weight = 1.0
+```json
+{
+  "routing": {
+    "default_weight": 1.0,
+    "pools": {
+      "main": [
+        {"api_id": "anthropic/claude-opus-4-6", "weight": 2.0},
+        {"api_id": "openai/gpt-4o", "weight": 1.0}
+      ],
+      "subagent": [
+        {"api_id": "anthropic/claude-haiku-4-5", "weight": 3.0},
+        {"api_id": "openai/o4-mini", "weight": 1.0}
+      ]
+    }
+  }
+}
 ```
 
 If no pool is configured, all registered APIs participate with equal weight.
 
 ### Project Settings
 
-Place a `wings.toml` in your project root:
+Place a `wings.json` in your project root:
 
-```toml
-# Always allow these tools without asking
-allowed_tools = ["read", "glob", "grep"]
-
-# Never allow these tools
-denied_tools = ["rm"]
-
-# Override the default model for this project
-model = "anthropic/claude-opus-4-6"
-
-# Append to the system prompt
-personality = "You are a concise, no-nonsense assistant."
+```json
+{
+  "allowed_tools": ["read", "glob", "grep"],
+  "denied_tools": ["rm"],
+  "model": "anthropic/claude-opus-4-6",
+  "personality": "You are a concise, no-nonsense assistant."
+}
 ```
 
 ## Usage

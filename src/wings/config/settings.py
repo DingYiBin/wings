@@ -1,9 +1,9 @@
-"""Layered configuration: env vars > project toml > global toml > defaults."""
+"""Layered configuration: env vars > project json > global json > defaults."""
 
 from __future__ import annotations
 
+import json
 import os
-import tomllib
 from pathlib import Path
 from typing import Literal
 
@@ -16,10 +16,12 @@ from wings.routing.types import PoolConfig
 # -- Per-provider API config --------------------------------------------------
 
 
-class LLMConfig(BaseModel):
-    """Configuration for a single model provider."""
+class ProviderConfig(BaseModel):
+    """Configuration for a single model provider.
 
-    provider: str = "anthropic"
+    The provider name is the key in the ``providers`` dict, not a field here.
+    """
+
     model: str = "claude-sonnet-4-6"
     api_key: str = ""
     base_url: str | None = None
@@ -29,20 +31,19 @@ class LLMConfig(BaseModel):
 
 
 class GlobalSettings(BaseSettings):
-    """Global configuration loaded from ~/.wings/config.toml and env vars.
+    """Global configuration loaded from ~/.wings/config.json and env vars.
 
     Environment variables use WINGS_ prefix with __ as nested separator.
-    Example: WINGS_LLM__ANTHROPIC__API_KEY=sk-...
+    Example: WINGS_PROVIDERS__ANTHROPIC__API_KEY=sk-...
     """
 
     model_config = SettingsConfigDict(
         env_prefix="WINGS_",
         env_nested_delimiter="__",
-        toml_file=None,  # set at load time
     )
 
-    # Model providers (keyed by provider name: "anthropic", "openai", ...)
-    llm: dict[str, LLMConfig] = Field(default_factory=dict)
+    # Model providers keyed by name: "anthropic", "openai", ...
+    providers: dict[str, ProviderConfig] = Field(default_factory=dict)
 
     # API candidate pool configuration
     routing: PoolConfig = Field(default_factory=PoolConfig)
@@ -52,32 +53,31 @@ class GlobalSettings(BaseSettings):
 
     @classmethod
     def load(cls, path: Path | None = None) -> GlobalSettings:
-        """Load global settings from a TOML file + env var overrides.
+        """Load global settings from a JSON file + env var overrides.
 
-        Default path: ~/.wings/config.toml
+        Default path: ~/.wings/config.json
         """
-        toml_path = path or Path.home() / ".wings" / "config.toml"
-        toml_data: dict = {}
-        if toml_path.exists():
-            with open(toml_path, "rb") as f:
-                toml_data = tomllib.load(f)
+        json_path = path or Path.home() / ".wings" / "config.json"
+        json_data: dict = {}
+        if json_path.exists():
+            with open(json_path) as f:
+                json_data = json.load(f)
 
-        # Merge TOML data with env vars (env vars win)
-        return cls(**toml_data)
+        return cls(**json_data)
 
     def api_key_for(self, provider: str) -> str:
         """Resolve API key for a provider: env var > config file."""
-        env_key = os.environ.get(f"WINGS_LLM__{provider.upper()}__API_KEY", "")
+        env_key = os.environ.get(f"WINGS_PROVIDERS__{provider.upper()}__API_KEY", "")
         if env_key:
             return env_key
-        return self.llm.get(provider, LLMConfig()).api_key
+        return self.providers.get(provider, ProviderConfig()).api_key
 
 
 # -- Project settings ---------------------------------------------------------
 
 
 class ProjectSettings(BaseModel):
-    """Per-project configuration loaded from wings.toml in the project root."""
+    """Per-project configuration loaded from wings.json in the project root."""
 
     allowed_tools: list[str] = Field(default_factory=list)
     denied_tools: list[str] = Field(default_factory=list)
@@ -86,16 +86,16 @@ class ProjectSettings(BaseModel):
 
     @classmethod
     def load(cls, directory: Path) -> ProjectSettings:
-        """Load project settings from wings.toml in the given directory.
+        """Load project settings from wings.json in the given directory.
 
-        Walks up from *directory* to find the nearest wings.toml.
+        Walks up from *directory* to find the nearest wings.json.
         """
         current = directory.resolve()
         for _ in range(20):  # prevent infinite walk
-            toml_path = current / "wings.toml"
-            if toml_path.exists():
-                with open(toml_path, "rb") as f:
-                    data = tomllib.load(f)
+            json_path = current / "wings.json"
+            if json_path.exists():
+                with open(json_path) as f:
+                    data = json.load(f)
                 return cls(**data)
             parent = current.parent
             if parent == current:

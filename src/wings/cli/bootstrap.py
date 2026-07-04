@@ -51,16 +51,16 @@ def create_session(
     registry = ModelRegistry(pool_mgr)
 
     # Register all configured providers that have API keys
-    for name, llm_cfg in config.global_settings.llm.items():
-        provider_cls = _PROVIDER_CLASSES.get(llm_cfg.provider)
+    for name, cfg in config.global_settings.providers.items():
+        provider_cls = _PROVIDER_CLASSES.get(name)
         if provider_cls is None:
             continue
-        api_key = config.global_settings.api_key_for(llm_cfg.provider)
+        api_key = config.global_settings.api_key_for(name)
         if not api_key:
             continue
         # Register the provider under its canonical id
         provider = provider_cls()
-        api_id = f"{llm_cfg.provider}/{llm_cfg.model}"
+        api_id = f"{name}/{cfg.model}"
         registry.register(api_id, provider)
         # Also add to pool
         pool_mgr.register_api(api_id)

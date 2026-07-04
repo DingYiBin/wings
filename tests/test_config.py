@@ -1,16 +1,12 @@
 """Tests for the config module — settings loading and layered priority."""
 
-import os
-import tempfile
 from pathlib import Path
-
-import pytest
 
 from wings.config.settings import (
     AppConfig,
     GlobalSettings,
-    LLMConfig,
     ProjectSettings,
+    ProviderConfig,
 )
 from wings.routing.types import PoolConfig
 
@@ -20,44 +16,52 @@ from wings.routing.types import PoolConfig
 
 def test_global_settings_defaults():
     settings = GlobalSettings()
-    assert settings.llm == {}
+    assert settings.providers == {}
     assert isinstance(settings.routing, PoolConfig)
     assert settings.theme == "dark"
 
 
-def test_global_settings_load_from_toml(tmp_path):
-    toml_path = tmp_path / "config.toml"
-    toml_path.write_text("""
-theme = "light"
+def test_global_settings_load_from_json(tmp_path):
+    json_path = tmp_path / "config.json"
+    json_path.write_text("""{
+  "theme": "light",
+  "providers": {
+    "anthropic": {
+      "model": "claude-opus-4-6",
+      "api_key": "sk-test"
+    }
+  },
+  "routing": {
+    "default_weight": 2.0
+  }
+}""")
 
-[llm.anthropic]
-provider = "anthropic"
-model = "claude-opus-4-6"
-api_key = "sk-test"
-
-[routing]
-default_weight = 2.0
-""")
-
-    settings = GlobalSettings.load(toml_path)
+    settings = GlobalSettings.load(json_path)
     assert settings.theme == "light"
-    assert settings.llm["anthropic"].api_key == "sk-test"
+    assert settings.providers["anthropic"].api_key == "sk-test"
+    assert settings.providers["anthropic"].model == "claude-opus-4-6"
     assert settings.routing.default_weight == 2.0
+
+
+def test_global_settings_providers_defaults():
+    cfg = ProviderConfig()
+    assert cfg.model == "claude-sonnet-4-6"
+    assert cfg.api_key == ""
+    assert cfg.base_url is None
 
 
 def test_global_settings_api_key_from_config():
     settings = GlobalSettings(
-        llm={"anthropic": LLMConfig(api_key="sk-config")}
+        providers={"anthropic": ProviderConfig(api_key="sk-config")}
     )
     assert settings.api_key_for("anthropic") == "sk-config"
 
 
 def test_global_settings_api_key_from_env(monkeypatch):
-    monkeypatch.setenv("WINGS_LLM__ANTHROPIC__API_KEY", "sk-env")
+    monkeypatch.setenv("WINGS_PROVIDERS__ANTHROPIC__API_KEY", "sk-env")
     settings = GlobalSettings(
-        llm={"anthropic": LLMConfig(api_key="sk-config")}
+        providers={"anthropic": ProviderConfig(api_key="sk-config")}
     )
-    # Env var should win over config
     assert settings.api_key_for("anthropic") == "sk-env"
 
 
@@ -76,14 +80,14 @@ def test_project_settings_defaults():
     assert ps.model is None
 
 
-def test_project_settings_load_from_toml(tmp_path):
-    toml_path = tmp_path / "wings.toml"
-    toml_path.write_text("""
-allowed_tools = ["read", "glob"]
-denied_tools = ["rm"]
-model = "claude-opus-4-6"
-personality = "you are a pirate"
-""")
+def test_project_settings_load_from_json(tmp_path):
+    json_path = tmp_path / "wings.json"
+    json_path.write_text("""{
+  "allowed_tools": ["read", "glob"],
+  "denied_tools": ["rm"],
+  "model": "claude-opus-4-6",
+  "personality": "you are a pirate"
+}""")
 
     ps = ProjectSettings.load(tmp_path)
     assert ps.allowed_tools == ["read", "glob"]
@@ -93,8 +97,7 @@ personality = "you are a pirate"
 
 
 def test_project_settings_walks_up(tmp_path):
-    """Project settings found by walking up from a subdirectory."""
-    (tmp_path / "wings.toml").write_text('model = "claude-haiku-4-5"\n')
+    (tmp_path / "wings.json").write_text('{"model": "claude-haiku-4-5"}')
     sub = tmp_path / "deep" / "nested"
     sub.mkdir(parents=True)
 
@@ -111,11 +114,9 @@ def test_project_settings_not_found(tmp_path):
 
 
 def test_app_config_load(tmp_path, monkeypatch):
-    """AppConfig bundles global + project settings."""
-    monkeypatch.setenv("WINGS_LLM__ANTHROPIC__API_KEY", "sk-test-key")
-
-    (tmp_path / "wings.toml").write_text(
-        'allowed_tools = ["read"]\npersonality = "concise"\n'
+    monkeypatch.setenv("WINGS_PROVIDERS__ANTHROPIC__API_KEY", "sk-test-key")
+    (tmp_path / "wings.json").write_text(
+        '{"allowed_tools": ["read"], "personality": "concise"}'
     )
 
     app = AppConfig.load(tmp_path)
