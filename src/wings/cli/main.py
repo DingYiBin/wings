@@ -148,27 +148,88 @@ def _ctx_kwargs(config, working_dir, model, loop):
 
 
 async def _handle_permission(event: PermissionRequest, loop, session) -> None:
-    """Display a permission prompt and send the response to the agent loop."""
+    """Display an inline permission prompt matching claude-code's format.
+
+    Arrow keys / j,k navigate, Enter selects, Esc / n cancels, y confirms.
+    """
+    from prompt_toolkit.application import Application
+    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.layout import Layout, HSplit, Window
+    from prompt_toolkit.layout.controls import FormattedTextControl
+    from prompt_toolkit.styles import Style
+
     input_str = str(event.tool_input)
-    if len(input_str) > 200:
-        input_str = input_str[:200] + "..."
+    if len(input_str) > 120:
+        input_str = input_str[:120] + "..."
+
+    options = [
+        ("allow", "1. Yes"),
+        ("allow_always", f"2. Yes, and don't ask again for {event.tool_name}"),
+        ("deny", "3. No, tell wings what to do differently"),
+    ]
+    selected = [0]
+
+    def _render():
+        lines = [
+            ("class:border", f"  \u250c {event.tool_name} "),
+            ("class:border", "\u2500" * (70 - len(event.tool_name) - 5)),
+            ("class:border", "\u2510"),
+            ("", "\n"),
+            ("class:dim", f"   {input_str}"),
+            ("", "\n\n"),
+        ]
+        for i, (_, label) in enumerate(options):
+            if i == selected[0]:
+                lines.append(("class:pointer", f"  \u276f {label}\n"))
+            else:
+                lines.append(("class:dim", f"    {label}\n"))
+        lines.append(("", "\n"))
+        lines.append(("class:footer", "  Esc to cancel"))
+        return lines
+
+    kb = KeyBindings()
+
+    @kb.add("up")
+    @kb.add("k")
+    def _up(event):
+        selected[0] = (selected[0] - 1) % len(options)
+
+    @kb.add("down")
+    @kb.add("j")
+    def _down(event):
+        selected[0] = (selected[0] + 1) % len(options)
+
+    @kb.add("enter")
+    def _enter(event):
+        event.app.exit(result=options[selected[0]][0])
+
+    @kb.add("y")
+    def _yes(event):
+        event.app.exit(result="allow")
+
+    @kb.add("n")
+    @kb.add("escape")
+    @kb.add("c-c")
+    def _no(event):
+        event.app.exit(result="deny")
+
+    app = Application(
+        layout=Layout(HSplit([
+            Window(FormattedTextControl(_render), height=len(options) + 5),
+        ])),
+        key_bindings=kb,
+        style=Style.from_dict({
+            "pointer": "bold",
+            "border": "",
+            "dim": "fg:#888888",
+            "footer": "fg:#888888",
+        }),
+        erase_when_done=True,
+    )
 
     typer.echo()
-    typer.echo("  \u2550\u2550 Permission required \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550")
-    typer.echo(f"  {event.tool_name}: {input_str}")
-    typer.echo("  [y] Yes  [n] No  [a] Always allow")
-
-    try:
-        answer = (await session.prompt_async("  \u25b6 ", enable_history_search=False)).strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        answer = "n"
-
-    if answer == "y" or answer == "yes":
-        loop.set_permission_response("allow")
-    elif answer == "a" or answer == "always":
-        loop.set_permission_response("allow_always")
-    else:
-        loop.set_permission_response("deny")
+    answer = await app.run_async()
+    loop.set_permission_response(answer)
 
 
 def _display_tool_event(event) -> None:
