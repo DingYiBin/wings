@@ -1,0 +1,17 @@
+"""Built-in tools — the core tool set every agent gets by default."""
+
+from wings.tools.builtin.read import read_file
+from wings.tools.builtin.write import write_file
+from wings.tools.builtin.edit import edit_file
+from wings.tools.builtin.bash import bash
+from wings.tools.builtin.glob import glob_files
+from wings.tools.builtin.grep import grep
+
+__all__ = [
+    "read_file",
+    "write_file",
+    "edit_file",
+    "bash",
+    "glob_files",
+    "grep",
+]
