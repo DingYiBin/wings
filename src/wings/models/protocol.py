@@ -15,10 +15,13 @@ class ModelConfig(BaseModel):
     """Configuration for a single model API call."""
 
     model: str
-    temperature: float = 0.7
-    max_tokens: int = 4096
+    temperature: float | None = None
+    max_tokens: int = 8_000  # claude-code's CAPPED_DEFAULT
+    escalated_max_tokens: int = 64_000  # retry cap on max_tokens hit
     top_p: float | None = None
-    thinking: bool = False
+    thinking: bool = True
+    adaptive_thinking: bool = True  # use adaptive thinking (no budget needed)
+    thinking_budget: int | None = None  # only when adaptive=false
     api_key: str = ""
     base_url: str | None = None
 

@@ -33,9 +33,10 @@ from wings.routing.protocol import ModelSelector
 
 def test_model_config_defaults():
     config = ModelConfig(model="test")
-    assert config.temperature == 0.7
-    assert config.max_tokens == 4096
-    assert config.thinking is False
+    assert config.temperature is None
+    assert config.max_tokens == 8_000
+    assert config.thinking is True
+    assert config.adaptive_thinking is True
 
 
 def test_token_usage_model():
@@ -144,7 +145,7 @@ def test_registry_build_config(registry):
     config = registry.build_config("openai/gpt-4o", temperature=0.0)
     assert config.model == "openai/gpt-4o"
     assert config.temperature == 0.0
-    assert config.max_tokens == 4096
+    assert config.max_tokens == 8_000
 
 
 # -- AnthropicProvider: response parsing ---------------------------------------

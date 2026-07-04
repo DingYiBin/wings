@@ -72,6 +72,11 @@ def create_session(
             model=cfg.model,  # API model name (e.g. "deepseek-v4-flash")
             api_key=api_key,
             base_url=cfg.base_url,
+            max_tokens=cfg.max_tokens,
+            escalated_max_tokens=cfg.escalated_max_tokens,
+            thinking=cfg.thinking,
+            adaptive_thinking=cfg.adaptive_thinking,
+            thinking_budget=cfg.thinking_budget,
         )
         registry.register(api_id, provider, config=model_config)
         pool_mgr.register_api(api_id)

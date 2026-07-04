@@ -68,41 +68,73 @@ class AnthropicProvider:
         tools: list[dict[str, Any]] | None,
         config: ModelConfig,
     ) -> AsyncIterator[Any]:  # StreamEvent | ToolUseBlock | TextBlock
-        """Streaming chat call.
+        """Streaming chat call with max_tokens escalation.
 
-        Yields TextDelta/ThinkingDelta in real-time, then complete
-        TextBlock/ToolUseBlock from the accumulated final message
-        at the end. The caller can display deltas immediately and
-        use the final blocks for tool execution.
+        If the model hits max_tokens, retries once with escalated_max_tokens
+        (claude-code's CAPPED_DEFAULT → ESCALATED_MAX_TOKENS pattern).
         """
         client = self._client(config)
         system, api_messages = self._split_system(messages)
 
         kwargs = self._build_request(config, api_messages, tools, system=system, stream=False)
-        # anthropic.Messages.stream() doesn't accept a 'stream' kwarg
         kwargs.pop("stream", None)
 
+        # First attempt — buffer all events so we can decide whether to escalate
         with client.messages.stream(**kwargs) as stream:
+            events: list[Any] = []
             for event in stream:
-                if event.type == "content_block_delta":
-                    dt = event.delta.type
-                    if dt == "text_delta":
-                        yield TextDelta(text=event.delta.text)
-                    elif dt == "thinking_delta":
-                        yield ThinkingDelta(text=event.delta.thinking)
+                events.append(event)
 
-            # After stream ends, yield complete blocks from final message
             final = stream.get_final_message()
-            for block in final.content:
-                bt = getattr(block, "type", None)
-                if bt == "text":
-                    yield TextBlock(text=block.text)
-                elif bt == "tool_use":
-                    yield ToolUseBlock(
-                        id=block.id,
-                        name=block.name,
-                        input=block.input if isinstance(block.input, dict) else {},
-                    )
+            stop_reason = self._map_stop_reason(final.stop_reason)
+
+        # Escalate if we hit max_tokens and haven't already
+        if (
+            stop_reason == StopReason.MAX_TOKENS
+            and kwargs["max_tokens"] < config.escalated_max_tokens
+        ):
+            kwargs["max_tokens"] = config.escalated_max_tokens
+            with client.messages.stream(**kwargs) as stream2:
+                for event in stream2:
+                    if event.type == "content_block_delta":
+                        dt = event.delta.type
+                        if dt == "text_delta":
+                            yield TextDelta(text=event.delta.text)
+                        elif dt == "thinking_delta":
+                            yield ThinkingDelta(text=event.delta.thinking)
+
+                final2 = stream2.get_final_message()
+                for block in final2.content:
+                    bt = getattr(block, "type", None)
+                    if bt == "text":
+                        yield TextBlock(text=block.text)
+                    elif bt == "tool_use":
+                        yield ToolUseBlock(
+                            id=block.id,
+                            name=block.name,
+                            input=block.input if isinstance(block.input, dict) else {},
+                        )
+            return
+
+        # No escalation needed — replay buffered events
+        for event in events:
+            if event.type == "content_block_delta":
+                dt = event.delta.type
+                if dt == "text_delta":
+                    yield TextDelta(text=event.delta.text)
+                elif dt == "thinking_delta":
+                    yield ThinkingDelta(text=event.delta.thinking)
+
+        for block in final.content:
+            bt = getattr(block, "type", None)
+            if bt == "text":
+                yield TextBlock(text=block.text)
+            elif bt == "tool_use":
+                yield ToolUseBlock(
+                    id=block.id,
+                    name=block.name,
+                    input=block.input if isinstance(block.input, dict) else {},
+                )
 
     # -- helpers --
 
@@ -117,12 +149,11 @@ class AnthropicProvider:
     ) -> dict[str, Any]:
         kwargs: dict[str, Any] = {
             "model": config.model,
-            "max_tokens": config.max_tokens,
+            "max_tokens": config.max_tokens or 4096,
             "messages": messages,
             "stream": stream,
         }
         if system:
-            # Anthropic expects system as a top-level param, not in messages
             kwargs["system"] = system
         if tools:
             kwargs["tools"] = tools
@@ -131,7 +162,14 @@ class AnthropicProvider:
         if config.top_p is not None:
             kwargs["top_p"] = config.top_p
         if config.thinking:
-            kwargs["thinking"] = {"type": "enabled", "budget_tokens": config.max_tokens // 2}
+            if config.adaptive_thinking:
+                # Adaptive thinking — model decides when and how much to think.
+                # No budget_tokens needed (claude-code style for Opus 4.6+).
+                kwargs["thinking"] = {"type": "enabled"}
+            else:
+                # Explicit budget — user controls the thinking token allocation.
+                budget = config.thinking_budget or config.max_tokens // 2
+                kwargs["thinking"] = {"type": "enabled", "budget_tokens": budget}
         return kwargs
 
     def _split_system(

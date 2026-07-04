@@ -28,6 +28,11 @@ class ProviderConfig(BaseModel):
     protocol: str = "anthropic"  # which adapter class to use
     api_key: str = ""
     base_url: str  # required — each provider has its own endpoint
+    max_tokens: int = 8_000  # output token cap (claude-code's CAPPED_DEFAULT)
+    escalated_max_tokens: int = 64_000  # retry limit on max_tokens hit
+    thinking: bool = True  # enable extended thinking
+    adaptive_thinking: bool = True  # use adaptive thinking (no budget needed)
+    thinking_budget: int | None = None  # only used when adaptive_thinking=false
 
 
 # -- Global settings ----------------------------------------------------------
