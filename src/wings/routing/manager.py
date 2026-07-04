@@ -224,6 +224,8 @@ class APIPoolManager:
                     task_type=task_type,
                     entries=[deepcopy(e) for e in entries],
                 )
+            # Ensure root task types always exist (even with empty routing config)
+            self._init_defaults()
 
     # --- Internal ---
 

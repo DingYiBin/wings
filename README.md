@@ -53,11 +53,13 @@ Create `~/.wings/config.json`:
   "providers": {
     "anthropic": {
       "model": "claude-sonnet-4-6",
+      "protocol": "anthropic",
       "api_key": "sk-ant-api03-...",
       "base_url": "https://api.anthropic.com"
     },
     "openai": {
       "model": "gpt-4o",
+      "protocol": "openai",
       "api_key": "sk-...",
       "base_url": "https://api.openai.com/v1"
     }
@@ -65,7 +67,7 @@ Create `~/.wings/config.json`:
 }
 ```
 
-Provider names are the keys under `"providers"`. Each value requires `model`, `api_key`, and `base_url` (every provider has its own endpoint).
+Provider names are arbitrary keys under `"providers"`. Each value requires `model`, `protocol`, `api_key`, and `base_url`. `protocol` determines which adapter is used — `"anthropic"` for Anthropic-compatible APIs (Claude, DeepSeek via Anthropic endpoint, etc.) and `"openai"` for OpenAI-compatible APIs.
 
 API keys can also be set via environment variables (takes priority over config file):
 

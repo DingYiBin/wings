@@ -20,9 +20,12 @@ class ProviderConfig(BaseModel):
     """Configuration for a single model provider.
 
     The provider name is the key in the ``providers`` dict, not a field here.
+    ``protocol`` determines which adapter class is used (e.g. "anthropic"
+    for Anthropic-compatible APIs, "openai" for OpenAI-compatible).
     """
 
     model: str = "claude-sonnet-4-6"
+    protocol: str = "anthropic"  # which adapter class to use
     api_key: str = ""
     base_url: str  # required — each provider has its own endpoint
 

@@ -30,6 +30,7 @@ def test_global_settings_load_from_json(tmp_path):
   "providers": {
     "anthropic": {
       "model": "claude-opus-4-6",
+      "protocol": "anthropic",
       "api_key": "sk-test",
       "base_url": "https://api.anthropic.com"
     }
@@ -49,6 +50,7 @@ def test_global_settings_load_from_json(tmp_path):
 def test_global_settings_providers_defaults():
     cfg = ProviderConfig(base_url="https://api.anthropic.com")
     assert cfg.model == "claude-sonnet-4-6"
+    assert cfg.protocol == "anthropic"
     assert cfg.api_key == ""
     assert cfg.base_url == "https://api.anthropic.com"
 

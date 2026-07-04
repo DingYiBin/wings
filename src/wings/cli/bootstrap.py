@@ -52,17 +52,15 @@ def create_session(
 
     # Register all configured providers that have API keys
     for name, cfg in config.global_settings.providers.items():
-        provider_cls = _PROVIDER_CLASSES.get(name)
+        provider_cls = _PROVIDER_CLASSES.get(cfg.protocol)
         if provider_cls is None:
             continue
         api_key = config.global_settings.api_key_for(name)
         if not api_key:
             continue
-        # Register the provider under its canonical id
         provider = provider_cls()
         api_id = f"{name}/{cfg.model}"
         registry.register(api_id, provider)
-        # Also add to pool
         pool_mgr.register_api(api_id)
 
     # -- Tool registry --
