@@ -1,6 +1,8 @@
 from wings.messages.normalize import (
+    MessageNormalizer,
     from_anthropic,
     from_openai,
+    normalizer,
     to_anthropic,
     to_openai,
     to_openai_messages,
@@ -32,6 +34,8 @@ __all__ = [
     "ToolUseBlock",
     "ToolUseDelta",
     # normalize
+    "MessageNormalizer",
+    "normalizer",
     "from_anthropic",
     "from_openai",
     "to_anthropic",

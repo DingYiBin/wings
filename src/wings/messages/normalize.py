@@ -21,6 +21,64 @@ from wings.messages.types import (
 )
 
 
+class MessageNormalizer:
+    """Dispatch provider-specific conversion through a single interface.
+
+    QueryEngine and other consumers depend on this class rather than
+    on individual from_*/to_* functions, making it easy to add new
+    providers without touching callers.
+    """
+
+    # Per-provider converter registries.  Keyed by provider name string
+    # (e.g. "anthropic", "openai").
+    _from_provider: dict[str, Any] = {}
+    _to_provider: dict[str, Any] = {}
+    _to_provider_messages: dict[str, Any] = {}
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        # No subclassing needed — registries are populated explicitly below.
+        pass
+
+    def to_internal(
+        self, provider: str, raw_messages: list[dict[str, Any]]
+    ) -> list[Message]:
+        """Convert a list of provider-native message dicts to internal Messages."""
+        converter = self._from_provider.get(provider)
+        if converter is None:
+            raise ValueError(f"unsupported provider: {provider!r}")
+        return [converter(raw) for raw in raw_messages]
+
+    def to_provider(
+        self, provider: str, messages: list[Message]
+    ) -> list[dict[str, Any]]:
+        """Convert internal Messages to a flat list of provider-native dicts."""
+        multi_converter = self._to_provider_messages.get(provider)
+        if multi_converter is not None:
+            return multi_converter(messages)
+        converter = self._to_provider.get(provider)
+        if converter is None:
+            raise ValueError(f"unsupported provider: {provider!r}")
+        return [converter(msg) for msg in messages]
+
+    # Called at module load time to wire up converters.
+    @classmethod
+    def _register(
+        cls,
+        provider: str,
+        from_fn: Any,
+        to_fn: Any,
+        to_messages_fn: Any | None = None,
+    ) -> None:
+        cls._from_provider[provider] = from_fn
+        cls._to_provider[provider] = to_fn
+        if to_messages_fn is not None:
+            cls._to_provider_messages[provider] = to_messages_fn
+
+
+# Default singleton — all callers get the same instance.
+normalizer = MessageNormalizer()
+
+
 # -- Anthropic ----------------------------------------------------------------
 
 def from_anthropic(raw: dict[str, Any]) -> Message:
@@ -265,3 +323,9 @@ def to_openai_messages(messages: list[Message]) -> list[dict[str, Any]]:
             result.append(r)
 
     return result
+
+# -- Provider registration ----------------------------------------------------
+
+MessageNormalizer._register("anthropic", from_anthropic, to_anthropic)
+MessageNormalizer._register("openai", from_openai, to_openai, to_messages_fn=to_openai_messages)
+

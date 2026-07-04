@@ -1,8 +1,12 @@
 """Tests for provider message format conversion."""
 
+import pytest
+
 from wings.messages.normalize import (
+    MessageNormalizer,
     from_anthropic,
     from_openai,
+    normalizer,
     to_anthropic,
     to_openai,
     to_openai_messages,
@@ -14,6 +18,40 @@ from wings.messages.types import (
     ToolResultBlock,
     ToolUseBlock,
 )
+
+
+# -- MessageNormalizer ---------------------------------------------------------
+
+class TestMessageNormalizer:
+    def test_to_internal_anthropic(self) -> None:
+        raw = [{"role": "user", "content": [{"type": "text", "text": "hello"}]}]
+        msgs = normalizer.to_internal("anthropic", raw)
+        assert len(msgs) == 1
+        assert msgs[0].role == Role.USER
+
+    def test_to_internal_openai(self) -> None:
+        raw = [{"role": "user", "content": "hello"}]
+        msgs = normalizer.to_internal("openai", raw)
+        assert len(msgs) == 1
+        assert msgs[0].role == Role.USER
+
+    def test_to_provider_anthropic(self) -> None:
+        msg = Message(role=Role.USER, content=[TextBlock(text="hello")])
+        raw = normalizer.to_provider("anthropic", [msg])
+        assert raw[0]["role"] == "user"
+
+    def test_to_provider_openai(self) -> None:
+        msg = Message(role=Role.USER, content=[TextBlock(text="hello")])
+        raw = normalizer.to_provider("openai", [msg])
+        assert raw[0]["role"] == "user"
+
+    def test_unsupported_provider_raises(self) -> None:
+        with pytest.raises(ValueError, match="unsupported provider"):
+            normalizer.to_internal("unsupported", [])
+
+    def test_normalizer_is_singleton(self) -> None:
+        """Default normalizer instance is available at module level."""
+        assert isinstance(normalizer, MessageNormalizer)
 
 
 # -- Anthropic ----------------------------------------------------------------
