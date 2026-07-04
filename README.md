@@ -83,20 +83,21 @@ Customize which models serve which task types:
 ```json
 {
   "routing": {
-    "default_weight": 1.0,
-    "pools": {
-      "main": [
-        {"api_id": "anthropic/claude-opus-4-6", "weight": 2.0},
-        {"api_id": "openai/gpt-4o", "weight": 1.0}
-      ],
-      "subagent": [
-        {"api_id": "anthropic/claude-haiku-4-5", "weight": 3.0},
-        {"api_id": "openai/o4-mini", "weight": 1.0}
-      ]
+    "version": 2,
+    "masks": {
+      "main": {
+        "anthropic/claude-opus-4-6": 2.0,
+        "openai/gpt-4o": 1.0
+      },
+      "subagent": {
+        "anthropic/claude-haiku-4-5": 3.0
+      }
     }
   }
 }
 ```
+
+APIs are automatically added to the global pool (score 0) when registered via providers. Masks adjust scores per task type. Positive = higher probability, negative = lower, `-inf` = disabled. Selection uses softmax over effective scores.
 
 If no pool is configured, all registered APIs participate with equal weight.
 

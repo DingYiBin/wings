@@ -36,7 +36,13 @@ def test_global_settings_load_from_json(tmp_path):
     }
   },
   "routing": {
-    "default_weight": 2.0
+    "version": 2,
+    "apis": [
+      {"api_id": "anthropic/claude-opus-4-6", "score": 0}
+    ],
+    "masks": {
+      "main": {"anthropic/claude-opus-4-6": 2.0}
+    }
   }
 }""")
 
@@ -44,7 +50,8 @@ def test_global_settings_load_from_json(tmp_path):
     assert settings.theme == "light"
     assert settings.providers["anthropic"].api_key == "sk-test"
     assert settings.providers["anthropic"].model == "claude-opus-4-6"
-    assert settings.routing.default_weight == 2.0
+    assert settings.routing.version == 2
+    assert len(settings.routing.apis) == 1
 
 
 def test_global_settings_providers_defaults():

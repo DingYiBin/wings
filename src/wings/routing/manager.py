@@ -1,248 +1,171 @@
-"""API pool manager — stateful, thread-safe, implements ModelSelector Protocol."""
+"""API pool manager — global pool + per-task-type score masks.
+
+Each agent, skill, etc. manages a score mask over the global pool.
+An API can be disabled (-inf), promoted (+delta), or demoted (-delta).
+Selection uses softmax(effective_scores).
+"""
 
 import threading
 from copy import deepcopy
 
-from wings.routing.types import PoolConfig, PoolEntry, TaskPool
-from wings.routing.selector import weighted_select
-from wings.routing.tasks import TASK_HIERARCHY, resolve_parent, resolve_pool
+from wings.routing.types import PoolConfig, PoolEntry, ScoreMask
+from wings.routing.selector import NEG_INF, NoAPIAvailable, softmax_select
 
 
 class APIPoolManager:
-    """Manages API candidate pools for all task types.
+    """Manages a global pool of APIs with per-task-type score masks.
 
     Implements ModelSelector Protocol.
-    Thread-safe: all writes hold a lock, select() holds a lock.
-    Singleton — held by ModelRegistry.
+    Thread-safe: all writes hold an RLock.
     """
 
-    def __init__(
-        self,
-        config: PoolConfig | None = None,
-        *,
-        default_pool: TaskPool | None = None,
-    ):
+    def __init__(self, config: PoolConfig | None = None):
         self._lock = threading.RLock()
-        self._pools: dict[str, TaskPool] = {}
-        self._default_weight: float = 1.0
-        self._default_pool = default_pool
+        self._entries: dict[str, PoolEntry] = {}  # api_id → PoolEntry (global)
+        self._masks: dict[str, dict[str, float]] = {}  # task_type → {api_id → delta}
         if config is not None:
             self.replace_config(config)
-        else:
-            self._init_defaults()
 
-    # --- Selection (public API, implements ModelSelector) ---
+    # -- Selection (implements ModelSelector) --
 
     def select(self, task_type: str, override: str | None = None) -> str:
-        """Select an API from the task's pool via weighted random choice.
-
-        override (session-level /model lock) bypasses the pool entirely.
-        """
+        """Select an API via softmax over effective scores. override bypasses."""
         if override:
             return override
         with self._lock:
-            pool = resolve_pool(
-                task_type, self._pools, default_pool=self._default_pool
-            )
-            return weighted_select(pool.entries)
+            mask = self._resolve_mask(task_type)
+            entries = list(self._entries.values())
+            if not entries:
+                raise NoAPIAvailable("no APIs in global pool")
+            return softmax_select(entries, mask)
 
-    # --- Registration ---
+    # -- Registration --
 
     def register_api(
         self,
         api_id: str,
         *,
-        add_to: list[str] | None = None,
-        exclude_from: list[str] | None = None,
+        score: float = 0.0,
     ) -> None:
-        """Register a new API. By default, adds to all known task type pools.
-
-        Args:
-            api_id: The API identifier.
-            add_to: If set, ONLY add to these task type pools.
-            exclude_from: If set, add to all pools EXCEPT these.
-                Mutually exclusive with add_to.
-        """
-        if add_to is not None and exclude_from is not None:
-            raise ValueError("add_to and exclude_from are mutually exclusive")
-
-        entry = PoolEntry(api_id=api_id, weight=self._default_weight)
-
+        """Add an API to the global pool. Does NOT touch masks (effectively
+        available to all task types at base score)."""
         with self._lock:
-            if add_to is not None:
-                targets = set(add_to)
-            else:
-                targets = set(self._list_all_task_types())
-                if exclude_from is not None:
-                    targets -= set(exclude_from)
-
-            for task_type in targets:
-                self._ensure_pool(task_type).entries.append(deepcopy(entry))
+            self._entries[api_id] = PoolEntry(api_id=api_id, score=score)
 
     def unregister_api(self, api_id: str) -> None:
-        """Remove an API from all pools."""
+        """Remove an API from the global pool and all masks."""
         with self._lock:
-            for pool in self._pools.values():
-                pool.entries = [
-                    e for e in pool.entries if e.api_id != api_id
-                ]
+            self._entries.pop(api_id, None)
+            for mask in self._masks.values():
+                mask.pop(api_id, None)
 
-    # --- User adjustments ---
+    # -- Score adjustments (per task type) --
 
-    def _get_entry(self, task_type: str, api_id: str) -> PoolEntry:
-        """Find an entry in a pool. Raises KeyError if not found."""
-        pool = self._pools.get(task_type)
-        if pool is None:
-            raise KeyError(f"no pool for task_type '{task_type}'")
-        for entry in pool.entries:
-            if entry.api_id == api_id:
-                return entry
-        raise KeyError(f"api_id '{api_id}' not found in pool '{task_type}'")
+    def _ensure_mask(self, task_type: str) -> dict[str, float]:
+        if task_type not in self._masks:
+            self._masks[task_type] = {}
+        return self._masks[task_type]
 
-    def adjust_weight(self, task_type: str, api_id: str, weight: float) -> None:
-        """Set an API's weight in a task pool. weight must be >= 0."""
-        if weight < 0:
-            raise ValueError("weight must be >= 0")
+    def adjust_score(self, task_type: str, api_id: str, score: float) -> None:
+        """Set the score adjustment for an API in a task type's mask."""
         with self._lock:
-            entry = self._get_entry(task_type, api_id)
-            entry.weight = weight
+            self._ensure_mask(task_type)[api_id] = score
+
+    def adjust_base_score(self, api_id: str, score: float) -> None:
+        """Set the base score of an API (affects all task types)."""
+        with self._lock:
+            if api_id not in self._entries:
+                raise KeyError(api_id)
+            self._entries[api_id].score = score
 
     def upvote(self, task_type: str, api_id: str, delta: float = 0.5) -> None:
-        """Increase an API's weight in a task pool."""
-        if delta <= 0:
-            raise ValueError("delta must be positive")
+        """Increase an API's score adjustment for a task type."""
         with self._lock:
-            entry = self._get_entry(task_type, api_id)
-            entry.weight += delta
+            mask = self._ensure_mask(task_type)
+            current = mask.get(api_id, 0.0)
+            mask[api_id] = current + delta
 
     def downvote(self, task_type: str, api_id: str, delta: float = 0.5) -> None:
-        """Decrease an API's weight. Floor is 0 (still in pool, can upvote to restore)."""
-        if delta <= 0:
-            raise ValueError("delta must be positive")
+        """Decrease an API's score adjustment for a task type."""
         with self._lock:
-            entry = self._get_entry(task_type, api_id)
-            entry.weight = max(0.0, entry.weight - delta)
+            mask = self._ensure_mask(task_type)
+            current = mask.get(api_id, 0.0)
+            mask[api_id] = current - delta
 
     def disable(self, task_type: str, api_id: str) -> None:
-        """Disable an API in a task pool (enabled=False, preserved for re-enable)."""
+        """Disable an API for a task type (mask delta = -inf)."""
         with self._lock:
-            entry = self._get_entry(task_type, api_id)
-            entry.enabled = False
+            self._ensure_mask(task_type)[api_id] = NEG_INF
 
     def enable(self, task_type: str, api_id: str) -> None:
-        """Re-enable a previously disabled API in a task pool."""
+        """Re-enable a previously disabled API (remove mask entry)."""
         with self._lock:
-            entry = self._get_entry(task_type, api_id)
-            entry.enabled = True
+            if task_type in self._masks:
+                self._masks[task_type].pop(api_id, None)
 
-    def remove(self, task_type: str, api_id: str) -> None:
-        """Permanently delete an entry from a task pool (not recoverable)."""
+    # -- Pool fork --
+
+    def fork_mask(self, task_type: str, from_task: str) -> None:
+        """Copy another task type's mask as a starting point."""
         with self._lock:
-            pool = self._pools.get(task_type)
-            if pool is None:
-                raise KeyError(f"no pool for task_type '{task_type}'")
-            pool.entries = [e for e in pool.entries if e.api_id != api_id]
+            source = self._masks.get(from_task, {})
+            self._masks[task_type] = deepcopy(source)
 
-    # --- Pool fork ---
+    # -- Query --
 
-    def fork_pool(self, task_type: str) -> TaskPool:
-        """Create an independent pool for a subtype (deep copy from parent).
-
-        E.g. /pool fork skill/commit → copies subagent/skill pool to skill/commit.
-        Subsequent adjustments to skill/commit do not affect subagent/skill.
-        """
+    def list_apis(self) -> list[str]:
+        """List all APIs in the global pool."""
         with self._lock:
-            parent = resolve_pool(
-                task_type, self._pools, default_pool=self._default_pool
-            )
-            new_pool = TaskPool(
-                task_type=task_type,
-                entries=deepcopy(parent.entries),
-            )
-            self._pools[task_type] = new_pool
-            return new_pool
+            return sorted(self._entries.keys())
 
-    # --- Query ---
-
-    def get_pool(self, task_type: str) -> TaskPool:
-        """Return the effective pool for a task type (resolved, read-only view).
-
-        Unlike select(), this returns the pool even if it has no entries —
-        it is a query, not a selection.
-        """
+    def get_mask(self, task_type: str) -> dict[str, float]:
+        """Get the effective mask for a task type (resolved via inheritance)."""
         with self._lock:
-            return self._resolve_pool_lenient(task_type)
-
-    def _resolve_pool_lenient(self, task_type: str) -> TaskPool:
-        """Resolve the pool chain for query purposes. Accepts empty pools."""
-        current = task_type
-        while current is not None:
-            pool = self._pools.get(current)
-            if pool is not None:
-                return pool
-            current = resolve_parent(current)
-        if self._default_pool is not None:
-            return self._default_pool
-        return self._ensure_pool(task_type)
+            return dict(self._resolve_mask(task_type))
 
     def list_task_types(self) -> list[str]:
-        """List all task types that have independent pool configuration."""
+        """List task types that have explicit masks."""
         with self._lock:
-            return sorted(self._pools.keys())
+            return sorted(self._masks.keys())
 
-    def list_apis(self, task_type: str) -> list[PoolEntry]:
-        """List all API entries in the resolved pool for a task type."""
-        pool = self.get_pool(task_type)
-        return list(pool.entries)
-
-    # --- Persistence ---
+    # -- Persistence --
 
     def to_config(self) -> PoolConfig:
-        """Export current pool state as a serializable PoolConfig.
-
-        Only exports task types with non-empty independent pools.
-        Called by: /pool save, config module on session end.
-        """
+        """Export global pool + masks to PoolConfig."""
         with self._lock:
-            pools: dict[str, list[PoolEntry]] = {}
-            for task_type, pool in self._pools.items():
-                if pool.entries:
-                    pools[task_type] = [deepcopy(e) for e in pool.entries]
             return PoolConfig(
-                version=1,
-                default_weight=self._default_weight,
-                pools=pools,
+                version=2,
+                apis=[deepcopy(e) for e in self._entries.values()],
+                masks={
+                    tt: dict(m)
+                    for tt, m in self._masks.items()
+                    if m  # only non-empty masks
+                },
             )
 
     def replace_config(self, config: PoolConfig) -> None:
-        """Replace current pool state with loaded config (called on startup)."""
+        """Replace state from a loaded PoolConfig."""
         with self._lock:
-            self._pools.clear()
-            self._default_weight = config.default_weight
-            for task_type, entries in config.pools.items():
-                self._pools[task_type] = TaskPool(
-                    task_type=task_type,
-                    entries=[deepcopy(e) for e in entries],
-                )
-            # Ensure root task types always exist (even with empty routing config)
-            self._init_defaults()
+            self._entries.clear()
+            self._masks.clear()
+            for entry in config.apis:
+                self._entries[entry.api_id] = deepcopy(entry)
+            for task_type, adjustments in config.masks.items():
+                self._masks[task_type] = dict(adjustments)
 
-    # --- Internal ---
+    # -- Internal --
 
-    def _list_all_task_types(self) -> list[str]:
-        """All known task types: static hierarchy + dynamic + already configured."""
-        types: set[str] = set(TASK_HIERARCHY.keys())
-        types.update(self._pools.keys())
-        return sorted(types)
+    def _resolve_mask(self, task_type: str) -> dict[str, float]:
+        """Resolve mask via inheritance chain. Falls back to parent masks."""
+        from wings.routing.tasks import resolve_parent
 
-    def _ensure_pool(self, task_type: str) -> TaskPool:
-        """Get or create a pool for a task type."""
-        if task_type not in self._pools:
-            self._pools[task_type] = TaskPool(task_type=task_type)
-        return self._pools[task_type]
-
-    def _init_defaults(self) -> None:
-        """Initialize root task type pools as empty."""
-        for root in ("main", "subagent", "continuous", "background"):
-            if root not in self._pools:
-                self._pools[root] = TaskPool(task_type=root)
+        # Walk up the chain collecting non-empty masks
+        current = task_type
+        resolved: dict[str, float] = {}
+        while current is not None:
+            mask = self._masks.get(current, {})
+            for api_id, delta in mask.items():
+                if api_id not in resolved:
+                    resolved[api_id] = delta
+            current = resolve_parent(current)
+        return resolved

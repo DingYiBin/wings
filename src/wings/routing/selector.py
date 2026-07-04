@@ -1,41 +1,54 @@
-"""Weighted random selection algorithm — pure function, zero dependencies."""
+"""Softmax-based API selection from global pool + score masks."""
 
+import math
 import random
 from collections.abc import Sequence
 
 from wings.routing.types import PoolEntry
 
-WEIGHT_EPSILON = 1e-9
+NEG_INF = float("-inf")
 
 
 class NoAPIAvailable(Exception):
-    """No API is available in the resolved pool."""
+    """No API is available for selection."""
 
 
-def weighted_select(entries: Sequence[PoolEntry]) -> str:
-    """Select an API by weighted random choice (pure function).
+def softmax_select(
+    entries: Sequence[PoolEntry],
+    mask: dict[str, float] | None = None,
+) -> str:
+    """Select an API via softmax over effective scores.
 
-    Entries with weight <= EPSILON or enabled=False are excluded.
+    effective_score[api] = base_score + mask_delta
+    mask_delta of -inf = disabled for this task type.
 
-    Args:
-        entries: Pool entries to select from.
-
-    Returns:
-        The api_id of the selected entry.
-
-    Raises:
-        NoAPIAvailable: No active entries in the pool.
+    Returns the selected api_id.
+    Raises NoAPIAvailable if all APIs are disabled.
     """
-    active = [e for e in entries if e.enabled and e.weight > WEIGHT_EPSILON]
-    if not active:
-        raise NoAPIAvailable("no active API in pool")
+    adjustments = mask or {}
 
-    total = sum(e.weight for e in active)
+    # Compute effective scores
+    effective: dict[str, float] = {}
+    for e in entries:
+        delta = adjustments.get(e.api_id, 0.0)
+        effective[e.api_id] = e.score + delta
+
+    # Filter out -inf (disabled)
+    active = {k: v for k, v in effective.items() if not math.isinf(v) or v > NEG_INF}
+    if not active:
+        raise NoAPIAvailable("all APIs disabled for this task type")
+
+    # Softmax with numerical stability (subtract max)
+    max_score = max(active.values())
+    exps = {k: math.exp(v - max_score) for k, v in active.items()}
+    total = sum(exps.values())
+
+    # Weighted random selection
     r = random.uniform(0, total)
     cumulative = 0.0
-    for e in active:
-        cumulative += e.weight
+    for api_id, exp_val in exps.items():
+        cumulative += exp_val
         if r <= cumulative:
-            return e.api_id
-    # Float rounding caused a miss; return the last entry
-    return active[-1].api_id
+            return api_id
+    # Float rounding fallback
+    return list(active.keys())[-1]

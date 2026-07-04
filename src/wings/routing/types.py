@@ -1,38 +1,34 @@
-"""Pure data structures for the API candidate pool."""
+"""Pure data structures for the API candidate pool (v2).
+
+Global pool: every known API has a base score (default 0).
+Score masks: each task type adjusts scores over the global pool.
+Selection: softmax(effective_scores) → weighted random pick.
+"""
 
 from pydantic import BaseModel, Field
 
 
 class PoolEntry(BaseModel):
-    """A single API entry in a candidate pool.
+    """A known API in the global pool."""
 
-    Weight is a float. Comparisons use epsilon tolerance 1e-9.
+    api_id: str  # e.g. "anthropic/claude-opus-4-6"
+    score: float = 0.0  # base score (default 0, -inf = globally disabled)
+
+
+class ScoreMask(BaseModel):
+    """Per-task-type score adjustments over the global pool.
+
+    Keys are api_id, values are score deltas.
+    -inf = disabled for this task type.
+    Absent keys = no adjustment (delta 0).
     """
 
-    api_id: str  # Unique identifier, e.g. "anthropic/claude-opus-4-6"
-    weight: float = 1.0  # Relative probability weight, >= 0
-    enabled: bool = True  # False = excluded from selection
-
-
-class TaskPool(BaseModel):
-    """API candidate pool for a specific task type (runtime structure).
-
-    Inheritance is defined ONLY in TASK_HIERARCHY (tasks.py).
-    TaskPool does not carry inherit_from — single source of truth.
-    """
-
-    task_type: str
-    entries: list[PoolEntry] = Field(default_factory=list)
+    adjustments: dict[str, float] = Field(default_factory=dict)
 
 
 class PoolConfig(BaseModel):
-    """Serializable pool configuration for persistence.
+    """Serializable pool configuration (v2)."""
 
-    Only stores task types that have independent pool configuration
-    (non-empty entries). Task types not present here resolve via
-    the inheritance chain.
-    """
-
-    version: int = 1  # Config format version, for future migrations
-    default_weight: float = 1.0  # Default weight for newly registered APIs
-    pools: dict[str, list[PoolEntry]] = Field(default_factory=dict)
+    version: int = 2
+    apis: list[PoolEntry] = Field(default_factory=list)  # global pool
+    masks: dict[str, dict[str, float]] = Field(default_factory=dict)  # task_type → {api_id → delta}

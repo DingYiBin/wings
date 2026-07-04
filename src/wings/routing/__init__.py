@@ -1,24 +1,24 @@
-"""API candidate pool — wings' core differentiator.
+"""API candidate pool — global pool + per-task-type score masks.
 
-Each model call randomly selects an API from the current task type's pool
-using weighted random selection. Users adjust pools through scoring and settings.
+Each model call computes effective scores (base + mask) and picks
+via softmax. Users adjust masks per task type (upvote/downvote/disable).
 """
 
-from wings.routing.types import PoolConfig, PoolEntry, TaskPool
-from wings.routing.selector import NoAPIAvailable, weighted_select
-from wings.routing.tasks import TASK_HIERARCHY, resolve_parent, resolve_pool
+from wings.routing.types import PoolConfig, PoolEntry, ScoreMask
+from wings.routing.selector import NEG_INF, NoAPIAvailable, softmax_select
+from wings.routing.tasks import TASK_HIERARCHY, resolve_parent
 from wings.routing.protocol import ModelSelector
 from wings.routing.manager import APIPoolManager
 
 __all__ = [
     "PoolEntry",
-    "TaskPool",
+    "ScoreMask",
     "PoolConfig",
+    "NEG_INF",
     "NoAPIAvailable",
-    "weighted_select",
+    "softmax_select",
     "TASK_HIERARCHY",
     "resolve_parent",
-    "resolve_pool",
     "ModelSelector",
     "APIPoolManager",
 ]
