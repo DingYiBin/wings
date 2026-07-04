@@ -136,6 +136,17 @@ async def _wrap_stream(stream):
             sys.stderr.flush()
 
 
+def _ctx_kwargs(config, working_dir, model, loop):
+    """Build kwargs for make_agent_context from session state."""
+    return dict(
+        config=config,
+        working_dir=working_dir,
+        model_override=model,
+        skills=getattr(loop, "skills_list", None),
+        available_skills=getattr(loop, "available_skills", None),
+    )
+
+
 async def _run_single(prompt: str, working_dir: Path, model: str | None, log: bool) -> None:
     """Execute a single-turn agent request."""
     try:
@@ -144,7 +155,7 @@ async def _run_single(prompt: str, working_dir: Path, model: str | None, log: bo
             logger = TurnLogger(working_dir)
             loop.set_logger(logger)
             typer.echo(f"  Logging to {logger.path}")
-        ctx = make_agent_context(config, working_dir=working_dir, model_override=model)
+        ctx = make_agent_context(**_ctx_kwargs(config, working_dir, model, loop))
     except Exception as e:
         typer.echo(f"Error: failed to initialize session: {e}", err=True)
         raise typer.Exit(code=1)
@@ -183,12 +194,40 @@ async def _run_chat(working_dir: Path, model: str | None, log: bool) -> None:
             print()
             break
 
-        if user_input.strip() == "/exit":
-            break
         if user_input.strip() == "":
             continue
 
-        ctx = make_agent_context(config, working_dir=working_dir, model_override=model)
+        # -- Slash commands --
+        if user_input.startswith("/"):
+            parts = user_input[1:].split(maxsplit=1)
+            cmd = parts[0].strip()
+            args = parts[1].strip() if len(parts) > 1 else ""
+
+            if cmd == "exit":
+                break
+
+            if cmd == "help":
+                _show_help(loop)
+                continue
+
+            # Look up skill
+            loader = getattr(loop, "skill_loader", None)
+            skill = loader.get_by_name(cmd) if loader else None
+            if skill is not None:
+                skill_prompt = (
+                    f"[Skill: {skill.name}]\n\n{skill.content}\n\n"
+                    f"---\n\nUser request: {args or 'Run this skill'}"
+                )
+                ctx = make_agent_context(
+                    **_ctx_kwargs(config, working_dir, model, loop),
+                    task_type=f"skill/{skill.name}",
+                )
+                user_input = skill_prompt
+            else:
+                typer.echo(f"Unknown command or skill: /{cmd}")
+                continue
+        else:
+            ctx = make_agent_context(**_ctx_kwargs(config, working_dir, model, loop))
 
         try:
             async for event in _wrap_stream(loop.run(user_input, ctx)):
@@ -199,3 +238,19 @@ async def _run_chat(working_dir: Path, model: str | None, log: bool) -> None:
             typer.echo(f"\n  [{nickname}]")
         except Exception as e:
             typer.echo(f"\nError: {e}", err=True)
+
+
+def _show_help(loop) -> None:
+    """Display available slash commands and skills."""
+    typer.echo("\nCommands:")
+    typer.echo("  /exit          Quit the chat session")
+    typer.echo("  /help          Show this help")
+
+    loader = getattr(loop, "skill_loader", None)
+    if loader is not None:
+        skills = loader.list_user_invocable()
+        if skills:
+            typer.echo("\nSkills:")
+            for s in skills:
+                typer.echo(f"  /{s.name:<15} {s.description}")
+    typer.echo()

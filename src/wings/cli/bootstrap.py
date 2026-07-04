@@ -17,6 +17,10 @@ from wings.permissions.pipeline import PermissionPipeline
 from wings.permissions.rules import PermissionRules
 from wings.query.engine import QueryEngine
 from wings.routing.manager import APIPoolManager
+from wings.skills.builtin_data import builtin_skills_dir
+from wings.skills.injector import SkillInjector
+from wings.skills.loader import SkillLoader
+from wings.skills.types import SkillSpec
 from wings.tools.base import ToolContext
 from wings.tools.builtin import (
     bash,
@@ -24,6 +28,7 @@ from wings.tools.builtin import (
     glob_files,
     grep,
     read_file,
+    skill_view,
     write_file,
 )
 from wings.tools.registry import ToolRegistry
@@ -69,9 +74,28 @@ def create_session(
         registry.register(api_id, provider, config=model_config)
         pool_mgr.register_api(api_id)
 
+    # -- Skills --
+    user_skills_dir = Path.home() / ".wings" / "skills"
+    project_skills_dir = cwd / ".wings" / "skills"
+    loader = SkillLoader(
+        user_dir=user_skills_dir,
+        project_dir=project_skills_dir,
+        builtin_dir=builtin_skills_dir(),
+    )
+    skills_list = loader.load_all()
+
+    # Build name -> full content dict for skill_view tool
+    available_skills: dict[str, str] = {
+        s.name: s.content for s in skills_list
+    }
+
+    # Fork API pool per skill so each has independent scoring
+    for skill in skills_list:
+        pool_mgr.fork_mask(f"skill/{skill.name}", "subagent/skill")
+
     # -- Tool registry --
     tools = ToolRegistry()
-    for t in [read_file, write_file, edit_file, bash, glob_files, grep]:
+    for t in [read_file, write_file, edit_file, bash, glob_files, grep, skill_view]:
         tools.register(t)
 
     # Apply project-level tool filters
@@ -92,6 +116,11 @@ def create_session(
     # -- Agent loop --
     loop = AgentLoop(engine, tools, pipeline, pool_mgr, registry)
 
+    # Attach skill state so CLI layer can access it
+    loop.skill_loader = loader  # type: ignore[attr-defined]
+    loop.available_skills = available_skills  # type: ignore[attr-defined]
+    loop.skills_list = skills_list  # type: ignore[attr-defined]
+
     return loop, config
 
 
@@ -101,12 +130,33 @@ def make_agent_context(
     task_type: str = "main",
     model_override: str | None = None,
     working_dir: Path | None = None,
+    skills: list[SkillSpec] | None = None,
+    available_skills: dict[str, str] | None = None,
 ) -> AgentContext:
-    """Build an AgentContext from app config."""
+    """Build an AgentContext from app config.
+
+    Args:
+        config: Application configuration.
+        task_type: Task type for model routing (main, skill/<name>, etc.).
+        model_override: Optional session-level model lock.
+        working_dir: Working directory for tool execution.
+        skills: Loaded skills for system prompt injection.
+        available_skills: Name -> content mapping for skill_view tool.
+    """
     cwd = str(working_dir or Path.cwd())
+    system_prompt = config.project_settings.personality or ""
+
+    # Inject available skills into system prompt
+    if skills:
+        injector = SkillInjector()
+        system_prompt = injector.inject_skills(system_prompt, skills)
+
     return AgentContext(
         task_type=task_type,
         model_override=model_override or config.project_settings.model,
-        tool_context=ToolContext(working_dir=cwd),
-        system_prompt=config.project_settings.personality or "",
+        tool_context=ToolContext(
+            working_dir=cwd,
+            available_skills=available_skills or {},
+        ),
+        system_prompt=system_prompt,
     )

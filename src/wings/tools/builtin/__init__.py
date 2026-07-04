@@ -6,6 +6,7 @@ from wings.tools.builtin.edit import edit_file
 from wings.tools.builtin.bash import bash
 from wings.tools.builtin.glob import glob_files
 from wings.tools.builtin.grep import grep
+from wings.tools.builtin.skill_view import skill_view
 
 __all__ = [
     "read_file",
@@ -14,4 +15,5 @@ __all__ = [
     "bash",
     "glob_files",
     "grep",
+    "skill_view",
 ]

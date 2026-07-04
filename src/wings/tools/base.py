@@ -22,6 +22,7 @@ class ToolContext(BaseModel):
     working_dir: str
     env: dict[str, str] = Field(default_factory=dict)
     session_id: str = ""
+    available_skills: dict[str, str] = Field(default_factory=dict)
 
 
 class Tool(Protocol):
