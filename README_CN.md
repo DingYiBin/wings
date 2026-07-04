@@ -1,6 +1,6 @@
 # Wings
 
-多模型聚合 Agent 系统 —— 接入各家模型 API，让不同模型的能力相互补全。每个模型都是一只翅膀。
+多模型聚合 Agent 系统 —— 接入各家模型 API，每种任务类型拥有独立的 API 候选池。用户通过打分和配置塑造各任务使用的模型组合。每个模型都是一只翅膀。
 
 ## 设计理念
 
@@ -8,55 +8,165 @@
 
 **一切皆工具**。文件读写、shell 执行、搜索、子 agent 调用——都实现统一的 `Tool` 协议，经过同一条权限管道。
 
-**Skill 即 Command**。用户在 REPL 键入 `/xxx` 和模型通过 SkillTool 调用，是同一套东西，只是触发方式不同。
+**协议驱动边界**。模块间依赖 Protocol 而非具体类。`ModelSelector`、`ModelProvider`、`Tool`、`HookRunner`——换实现不动调用方。
 
-## 技术栈
+## 当前状态
 
-- **运行时**: Python 3.12+
-- **类型校验**: Pydantic v2
-- **CLI**: Typer + Rich
-- **包管理**: uv
+9 个阶段完成，184 个测试，约 3100 行代码。端到端数据通路已打通：用户输入 → 消息组装 → 池选模型 → Provider API 调用 → 工具执行 → 响应输出。可以用真实 API key 进行基础测试。
+
+| 阶段 | 模块 | 状态 | 说明 |
+|------|------|------|------|
+| 1 | messages | ✅ | 内部消息类型 + Anthropic/OpenAI 双向转换 |
+| 1b | routing | ✅ | API 候选池管理器（19 种任务类型，加权随机） |
+| 2 | models | ✅ | Anthropic + OpenAI 适配器（chat/stream） |
+| 3 | tools | ✅ | 6 个内置工具：read/write/edit/bash/glob/grep |
+| 4 | query | ✅ | 查询引擎（指数退避重试、token 预算） |
+| 5 | permissions | ✅ | 4 阶段权限管道 |
+| 6a | agent/core | ✅ | 主循环 + 模型转交检测 |
+| 7 | config | ✅ | TOML + 环境变量分层配置 |
+| 8 | cli | ✅ | `wings run` / `wings chat` + bootstrap wiring |
+
+## 安装
+
+需要 Python 3.12+ 和 [uv](https://docs.astral.sh/uv/)：
+
+```bash
+git clone https://github.com/opensquilla/wings.git
+cd wings
+uv pip install -e .
+```
+
+安装开发依赖：
+
+```bash
+uv pip install -e ".[dev]"
+```
+
+## 配置
+
+### API Key
+
+创建 `~/.wings/config.toml`：
+
+```toml
+# Anthropic (Claude 系列)
+[llm.anthropic]
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+api_key = "sk-ant-api03-..."
+
+# OpenAI (GPT / o-series)
+[llm.openai]
+provider = "openai"
+model = "gpt-4o"
+api_key = "sk-..."
+```
+
+也可以用环境变量（优先级高于配置文件）：
+
+```bash
+export WINGS_LLM__ANTHROPIC__API_KEY="sk-ant-api03-..."
+export WINGS_LLM__OPENAI__API_KEY="sk-..."
+```
+
+### API 候选池（可选）
+
+为不同任务类型定制模型偏好：
+
+```toml
+[routing]
+default_weight = 1.0
+
+# 主对话：偏好 Claude Opus
+[[routing.pools.main]]
+api_id = "anthropic/claude-opus-4-6"
+weight = 2.0
+
+[[routing.pools.main]]
+api_id = "openai/gpt-4o"
+weight = 1.0
+
+# 子 agent：偏好快速便宜的模型
+[[routing.pools.subagent]]
+api_id = "anthropic/claude-haiku-4-5"
+weight = 3.0
+
+[[routing.pools.subagent]]
+api_id = "openai/o4-mini"
+weight = 1.0
+```
+
+不配置池时，所有已注册 API 等权重参与选择。
+
+### 项目配置
+
+在项目根目录放置 `wings.toml`：
+
+```toml
+# 始终允许这些工具（不询问）
+allowed_tools = ["read", "glob", "grep"]
+
+# 禁止这些工具
+denied_tools = ["rm"]
+
+# 项目级模型覆盖
+model = "anthropic/claude-opus-4-6"
+
+# 追加到 system prompt
+personality = "简洁、直接的回答风格。"
+```
+
+## 使用
+
+### 单次运行
+
+```bash
+wings run "这个项目的 README 说了什么？"
+wings run --model anthropic/claude-opus-4-6 "解释架构设计"
+wings run --dir /path/to/project "列出所有 Python 文件"
+```
+
+### 交互模式
+
+```bash
+wings chat
+```
+
+输入 `/exit` 退出，Ctrl+C 中断。
+
+### 运行测试
+
+```bash
+pytest tests/ -v
+# 184 passed
+```
+
+## 架构
+
+```
+src/wings/
+├── cli/            # Typer 入口 + bootstrap 组合根
+├── agent/          # AgentLoop、HandoffDetector、TurnRecord
+├── query/          # QueryEngine（重试）+ TokenBudget
+├── tools/          # Tool 协议、注册表、6 个内置工具
+├── permissions/    # 4 阶段权限管道
+├── models/         # Anthropic + OpenAI 适配器、ModelRegistry、能力目录
+├── routing/        # API 候选池管理器 + ModelSelector Protocol
+├── messages/       # 内部消息类型 + provider 格式转换
+└── config/         # 分层配置（env > wings.toml > ~/.wings/config.toml）
+```
+
+模块依赖顺序：messages/routing（无依赖）→ models（依赖 messages + routing）→ tools（无依赖）→ query（依赖 models + messages + tools）→ permissions（依赖 tools）→ agent（依赖全部）→ config（依赖 routing）→ cli（依赖全部）。
+
+## 设计文档
+
+- [`docs/design/architecture.md`](docs/design/architecture.md) — 架构总览与设计决策
+- [`docs/design/modules.md`](docs/design/modules.md) — 详细模块设计 + 实施计划 + 开发反思
+- [`docs/reference/`](docs/reference/) — claude-code 和 opensquilla 代码仓分析
 
 ## 参考项目
 
 | 项目 | 语言 | 参考点 |
 |------|------|--------|
-| [claude-code](https://github.com/anthropics/claude-code) | TypeScript | Tool/Command 接口、权限管道、双层状态、Skill-Command 统一系统 |
-| [opensquilla](https://github.com/opensquilla/opensquilla) | Python | Protocol 驱动 DI、StageOutcome、TurnRunner 阶段分解、记忆/Dream 系统 |
-
-设计文档在 [`docs/design/`](docs/design/)。参考架构分析在 [`docs/reference/`](docs/reference/)。
-
-## 项目结构
-
-```
-src/wings/
-├── agent/          # Agent 核心循环
-├── cli/            # CLI 入口 + REPL
-├── config/         # 配置系统
-├── context/        # system prompt + 环境信息
-├── hooks/          # 生命周期钩子
-├── memory/         # 持久化记忆
-├── messages/       # 消息类型 + 跨模型转换
-├── models/         # 模型适配层 (每只翅膀)
-├── permissions/    # 权限管道
-├── plugins/        # 插件系统
-├── query/          # 查询引擎
-├── routing/        # API 候选池 (加权随机选择)
-├── services/       # 外部服务 (API, MCP)
-├── skills/         # 可复用技能 (也是 Command)
-└── tools/          # 工具系统
-```
-
-## 实施顺序
-
-| 阶段 | 模块 | 说明 |
-|------|------|------|
-| 1 | messages | ✅ 消息类型 + Anthropic/OpenAI 格式转换 |
-| 2 | models | ModelProvider 协议 + 各 API 适配器 |
-| 3 | tools | Tool 协议 + 注册表 + 内置工具 |
-| 4 | query | LLM API 调用 (retry, fallback) |
-| 5 | permissions | 多阶段权限管道 |
-| 6 | agent | 核心循环 + 子 agent |
-| 7 | config | 全局/项目配置 |
-| 8 | cli | Typer 入口 + REPL |
-| 9+ | hooks, memory, skills, plugins, MCP | 后续迭代 |
+| [claude-code](https://github.com/anthropics/claude-code) | TypeScript | Tool/Command 接口、权限管道、agent 类型 |
+| [opensquilla](https://github.com/opensquilla/opensquilla) | Python | Protocol 驱动 DI、StageOutcome、@tool 装饰器、Dream 系统 |

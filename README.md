@@ -1,61 +1,172 @@
 # Wings
 
-A multi-model agent system — connect to multiple model APIs and let their capabilities complement each other. Each model is a wing.
+A multi-model agent system — connect to multiple model APIs, each task type has its own API candidate pool. Users shape which models serve which tasks through scoring and configuration. Each model is a wing.
 
 ## Design Principles
 
-**Default to random**. Don't guess which model suits the task — be honest that "we don't know which is best". Pick a random available model each turn. Users discover model strengths through actual usage. When precise control is needed, use `/model`.
+**API candidate pool** — wings' core differentiator. Every model call randomly selects an API from the current task's candidate pool using weighted random selection. Users adjust pools by scoring (upvote/downvote), removing APIs, or forking per-skill pools. New APIs default to all pools; users can restrict them to specific task types.
 
 **Everything is a tool**. File I/O, shell execution, search, sub-agent delegation — all implement the same `Tool` protocol and pass through the same permission pipeline.
 
-**Skill = Command**. What users type as `/xxx` in the REPL and what the model invokes via SkillTool are the same thing, just triggered differently.
+**Protocol-driven boundaries**. Modules depend on Protocols, not concrete classes. `ModelSelector`, `ModelProvider`, `Tool`, `HookRunner` — swap implementations without touching callers.
 
-## Tech Stack
+## Current State
 
-- **Runtime**: Python 3.12+
-- **Validation**: Pydantic v2
-- **CLI**: Typer + Rich
-- **Package manager**: uv
+9 phases completed, 184 tests, ~3100 lines of code. End-to-end data path is wired: user input → message assembly → pool-based model selection → provider API call → tool execution → response. Ready for basic testing with real API keys.
 
-## References
+| Phase | Module | Status | Key files |
+|-------|--------|--------|-----------|
+| 1 | messages | ✅ | `types.py`, `normalize.py` (Anthropic + OpenAI roundtrip) |
+| 1b | routing | ✅ | `manager.py` (API candidate pool, 19 task types) |
+| 2 | models | ✅ | `anthropic.py`, `openai.py` (chat + stream adapters) |
+| 3 | tools | ✅ | 6 built-in tools: read, write, edit, bash, glob, grep |
+| 4 | query | ✅ | `engine.py` (retry with exponential backoff) |
+| 5 | permissions | ✅ | 4-stage pipeline: rules → classify → hooks → ask |
+| 6a | agent/core | ✅ | `loop.py` (main cycle + handoff detection) |
+| 7 | config | ✅ | `settings.py` (TOML + env var layered config) |
+| 8 | cli | ✅ | `wings run` / `wings chat` with bootstrap wiring |
 
-| Project | Language | Key takeaways |
-|---------|----------|---------------|
-| [claude-code](https://github.com/anthropics/claude-code) | TypeScript | Tool/Command interface, permission pipeline, two-tier state, Skill-Command unification |
-| [opensquilla](https://github.com/opensquilla/opensquilla) | Python | Protocol-driven DI, StageOutcome, TurnRunner stage decomposition, Memory/Dream system |
+## Installation
 
-Design docs in [`docs/design/`](docs/design/). Reference architecture analysis in [`docs/reference/`](docs/reference/).
+Requirements: Python 3.12+, [uv](https://docs.astral.sh/uv/)
 
-## Project Structure
+```bash
+git clone https://github.com/opensquilla/wings.git
+cd wings
+uv pip install -e .
+```
+
+Or with dev dependencies:
+
+```bash
+uv pip install -e ".[dev]"
+```
+
+## Configuration
+
+### API Keys
+
+Create `~/.wings/config.toml`:
+
+```toml
+# Anthropic (Claude models)
+[llm.anthropic]
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+api_key = "sk-ant-api03-..."
+
+# OpenAI (GPT / o-series)
+[llm.openai]
+provider = "openai"
+model = "gpt-4o"
+api_key = "sk-..."
+```
+
+API keys can also be set via environment variables (takes priority over config file):
+
+```bash
+export WINGS_LLM__ANTHROPIC__API_KEY="sk-ant-api03-..."
+export WINGS_LLM__OPENAI__API_KEY="sk-..."
+```
+
+### API Candidate Pool (optional)
+
+Customize which models serve which task types:
+
+```toml
+[routing]
+default_weight = 1.0
+
+# Main conversation: prefer Claude Opus
+[[routing.pools.main]]
+api_id = "anthropic/claude-opus-4-6"
+weight = 2.0
+
+[[routing.pools.main]]
+api_id = "openai/gpt-4o"
+weight = 1.0
+
+# Sub-agents: prefer fast/cheap models
+[[routing.pools.subagent]]
+api_id = "anthropic/claude-haiku-4-5"
+weight = 3.0
+
+[[routing.pools.subagent]]
+api_id = "openai/o4-mini"
+weight = 1.0
+```
+
+If no pool is configured, all registered APIs participate with equal weight.
+
+### Project Settings
+
+Place a `wings.toml` in your project root:
+
+```toml
+# Always allow these tools without asking
+allowed_tools = ["read", "glob", "grep"]
+
+# Never allow these tools
+denied_tools = ["rm"]
+
+# Override the default model for this project
+model = "anthropic/claude-opus-4-6"
+
+# Append to the system prompt
+personality = "You are a concise, no-nonsense assistant."
+```
+
+## Usage
+
+### Single turn
+
+```bash
+wings run "What does the README say about this project?"
+wings run --model anthropic/claude-opus-4-6 "Explain the architecture"
+wings run --dir /path/to/project "List all Python files"
+```
+
+### Interactive chat
+
+```bash
+wings chat
+```
+
+Type `/exit` to quit, Ctrl+C to interrupt.
+
+### Run tests
+
+```bash
+pytest tests/ -v
+# 184 passed
+```
+
+## Architecture
 
 ```
 src/wings/
-├── agent/          # Agent core loop
-├── cli/            # CLI entry + REPL
-├── config/         # Configuration system
-├── context/        # System prompt + environment info
-├── hooks/          # Lifecycle hooks
-├── memory/         # Persistent memory
-├── messages/       # Message types + cross-model conversion
-├── models/         # Model adapters (each wing)
-├── permissions/    # Permission pipeline
-├── plugins/        # Plugin system
-├── query/          # Query engine
-├── services/       # External services (API, MCP)
-├── skills/         # Reusable skills (also Commands)
-└── tools/          # Tool system
+├── cli/            # typer entry point + bootstrap wiring
+├── agent/          # AgentLoop, HandoffDetector, TurnRecord
+├── query/          # QueryEngine (retry) + TokenBudget
+├── tools/          # Tool protocol, registry, 6 built-in tools
+├── permissions/    # 4-stage permission pipeline
+├── models/         # Anthropic + OpenAI adapters, ModelRegistry, capabilities
+├── routing/        # API candidate pool manager + ModelSelector Protocol
+├── messages/       # Internal message types + provider format conversion
+└── config/         # Layered settings (env > wings.toml > ~/.wings/config.toml)
 ```
 
-## Implementation Phases
+Module dependency order: messages/routing (no deps) → models (messages + routing) → tools (no deps) → query (models + messages + tools) → permissions (tools) → agent (all) → config (routing) → cli (all).
 
-| Phase | Module | Description |
-|-------|--------|-------------|
-| 1 | messages | ✅ Message types + Anthropic/OpenAI format conversion |
-| 2 | models | ModelProvider protocol + API adapters |
-| 3 | tools | Tool protocol + registry + built-in tools |
-| 4 | query | LLM API calls (retry, fallback) |
-| 5 | permissions | Multi-stage permission pipeline |
-| 6 | agent | Core loop + sub-agents |
-| 7 | config | Global/project configuration |
-| 8 | cli | Typer entry point + REPL |
-| 9+ | hooks, memory, skills, plugins, MCP | Future iterations |
+## Design Docs
+
+- [`docs/design/architecture.md`](docs/design/architecture.md) — Architecture overview and design decisions
+- [`docs/design/modules.md`](docs/design/modules.md) — Detailed module design + implementation plan + reflections
+- [`docs/reference/`](docs/reference/) — Analysis of claude-code and opensquilla codebases
+
+## References
+
+| Project | Language | Reference points |
+|---------|----------|------------------|
+| [claude-code](https://github.com/anthropics/claude-code) | TypeScript | Tool/Command interface, permission pipeline, agent types |
+| [opensquilla](https://github.com/opensquilla/opensquilla) | Python | Protocol-driven DI, StageOutcome, @tool decorator, Dream system |
