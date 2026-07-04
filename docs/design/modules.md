@@ -156,26 +156,22 @@ class ModelProvider(Protocol):
 
 ```python
 # registry.py
-from wings.routing.pool import APIPoolManager
+from wings.routing.protocol import ModelSelector
 
 class ModelRegistry:
-    def __init__(self, pool_manager: APIPoolManager):
+    def __init__(self, selector: ModelSelector):
         self._providers: dict[str, ModelProvider] = {}
         self._aliases: dict[str, str] = {}  # 别名 -> 标准名
-        self._pool_manager = pool_manager
+        self._selector = selector
 
-    def register(self, name: str, provider: ModelProvider) -> None:
-        """注册新 API，同时添加进所有任务候选池（默认行为）。"""
-        self._providers[name] = provider
-        self._pool_manager.register_api(name)
-
+    def register(self, name: str, provider: ModelProvider) -> None: ...
     def alias(self, alias: str, target: str) -> None:        # e.g. "opus" -> "claude-opus-4-6"
     def get(self, name: str) -> ModelProvider: ...
     def list(self) -> list[str]: ...
 
     def select(self, task_type: str, override: str | None = None) -> str:
-        """从任务候选池中选择 API：用户指定 > 加权随机。"""
-        return self._pool_manager.select(task_type, override)
+        """从 ModelSelector 获取 API：用户指定 > 池选择。"""
+        return self._selector.select(task_type, override)
 ```
 
 ### 首批适配器
@@ -218,90 +214,200 @@ class ModelCapabilities(BaseModel):
 
 wings 的核心差异点：每次模型调用都从当前任务的 API 候选池中加权随机选择一个 API。用户通过打分和设置调整各任务类型的候选池。
 
+### 为什么 routing 先于 models 实现
+
+routing 模块零依赖（不依赖 messages、models、tools），可以独立开发和测试。其他模块通过 Protocol 依赖 routing，不依赖具体实现。即便后续彻底重写池的实现（换存储、换算法、换继承逻辑），也不影响调用方。
+
+### 分层架构
+
+```
+┌─────────────────────────────┐
+│  ModelSelector (Protocol)    │  ← 其他模块只依赖这个
+├─────────────────────────────┤
+│  APIPoolManager              │  ← 管理池、选择、调整、持久化
+├─────────────────────────────┤
+│  weighted_select()           │  ← 纯函数：列表 → 选中项
+│  resolve_parent()            │  ← 纯函数：task_type → parent
+│  resolve_pool()              │  ← 纯函数：task_type → 最终池
+├─────────────────────────────┤
+│  PoolEntry, TaskPool         │  ← Pydantic 数据结构
+│  PoolConfig                  │  ← 持久化格式
+│  TASK_HIERARCHY              │  ← 静态继承链（单一真相源）
+└─────────────────────────────┘
+```
+
+纯函数层（selector + tasks）无状态、无副作用，可独立测试和替换。有状态的管理器层（APIPoolManager）只做编排和锁管理。Protocol 层让调用方与实现解耦。
+
+### ModelSelector Protocol
+
+其他模块只依赖这个 Protocol，不依赖 `APIPoolManager` 具体类。
+
+```python
+# protocol.py
+from typing import Protocol
+
+class ModelSelector(Protocol):
+    """选择模型的接口。AgentLoop、QueryEngine 只依赖此协议。"""
+
+    def select(self, task_type: str, override: str | None = None) -> str:
+        """返回选中的 api_id。
+
+        Args:
+            task_type: 任务类型 ("main", "subagent/explore", "skill/commit", ...)
+            override: session 级模型锁定（用户 /model 命令设置），绕过池选择。
+
+        Returns:
+            api_id，如 "anthropic/claude-opus-4-6"
+
+        Raises:
+            NoAPIAvailable: 池中无可用 API
+        """
+        ...
+```
+
+### override 语义
+
+| 来源 | 持久性 | 说明 |
+|------|--------|------|
+| `/model <api>` | session 级锁定 | 后续所有 turn 使用此模型，直到 `/model random` |
+| `/model random` | — | 清除锁定，恢复池选择 |
+| Skill `model` 字段 | per-call | 该 skill 的一次调用使用指定模型，不影响其他 turn |
+
+实现上，`override` 是 session 级持久锁定值，由 AgentContext 携带。Skill 的 per-call 覆盖在子 agent 创建时处理（不经过池的 select）。
+
 ### 数据结构
 
 ```python
-# pool.py
+# types.py
 from pydantic import BaseModel
-from typing import Any
 
 class PoolEntry(BaseModel):
-    """候选池中的单个 API 条目"""
+    """候选池中的单个 API 条目。
+
+    weight 为浮点数。浮点比较使用误差容限 1e-9。
+    """
     api_id: str              # API 唯一标识，如 "anthropic/claude-opus-4-6"
-    weight: float = 1.0      # 相对概率权重
-    enabled: bool = True     # False = 不参与选择（已从池中移除）
+    weight: float = 1.0      # 相对概率权重，>= 0
+    enabled: bool = True     # False = 不参与选择
 
 class TaskPool(BaseModel):
-    """某个任务类型的 API 候选池"""
+    """某个任务类型的 API 候选池（运行时结构）。
+
+    继承关系只在 TASK_HIERARCHY 中定义，
+    TaskPool 本身不携带 inherit_from，避免双源头不一致。
+    """
     task_type: str
     entries: list[PoolEntry]
-    inherit_from: str | None = None  # 如 subagent/explore 继承 subagent 的配置
 
 class PoolConfig(BaseModel):
-    """候选池持久化配置"""
-    default_weight: float = 1.0  # 新 API 加入时的默认权重
+    """候选池持久化配置。
+
+    只存储有独立配置的池（entries 非空）。
+    未出现的 task_type 走继承链解析。
+    """
+    version: int = 1               # 配置格式版本，便于未来迁移
+    default_weight: float = 1.0    # 新 API 加入时的默认权重
     pools: dict[str, list[PoolEntry]]  # task_type -> entries
 ```
 
 ### APIPoolManager
 
 ```python
+# manager.py
+import threading
+from copy import deepcopy
+
 class APIPoolManager:
     """管理所有任务类型的 API 候选池。
 
+    实现 ModelSelector Protocol。
+    线程安全：所有写操作持锁，select() 持锁。
     全局单例，由 ModelRegistry 持有引用。
     """
 
-    def __init__(self, config: PoolConfig | None = None): ...
+    def __init__(
+        self,
+        config: PoolConfig | None = None,
+        *,
+        default_pool: TaskPool | None = None,
+    ):
+        self._lock = threading.RLock()
+        self._pools: dict[str, TaskPool] = {}
+        self._default_pool = default_pool
+        if config:
+            self.replace_config(config)
+        else:
+            self._init_defaults()
 
-    # --- 选择 ---
+    # --- 选择（对外核心接口）---
 
     def select(self, task_type: str, override: str | None = None) -> str:
-        """从任务候选池中按权重随机选择一个 API。
-
-        用户 override 优先。
-        子任务类型（如 subagent/explore）若无独立配置，自动 fallback 到父类型（subagent）。
-        池为空时抛出 NoAPIAvailable 错误。
-        """
-
-    def resolve_pool(self, task_type: str) -> TaskPool:
-        """解析任务类型对应的池，处理继承链。"""
+        """从任务候选池中按权重随机选择。override 优先。"""
+        if override:
+            return override
+        with self._lock:
+            pool = resolve_pool(task_type, self._pools, default_pool=self._default_pool)
+            return weighted_select(pool.entries)
 
     # --- 注册 ---
 
     def register_api(
         self,
         api_id: str,
-        add_to: list[str] | None = None,      # 只加入这些池
-        exclude_from: list[str] | None = None,  # 不加入这些池
+        *,
+        add_to: list[str] | None = None,
+        exclude_from: list[str] | None = None,
     ) -> None:
-        """注册新 API。默认加入所有已知任务类型的池。
+        """注册新 API。默认加入所有已知任务类型的池。"""
+        if add_to is not None and exclude_from is not None:
+            raise ValueError("add_to and exclude_from are mutually exclusive")
 
-        add_to 和 exclude_from 互斥。
-        """
+        entry = PoolEntry(api_id=api_id, weight=self._default_weight)
+
+        with self._lock:
+            if add_to is not None:
+                targets = set(add_to)
+            else:
+                targets = set(self._list_all_task_types())
+                if exclude_from is not None:
+                    targets -= set(exclude_from)
+            for task_type in targets:
+                self._ensure_pool(task_type).entries.append(deepcopy(entry))
 
     def unregister_api(self, api_id: str) -> None:
         """从所有池中移除该 API。"""
+        with self._lock:
+            for pool in self._pools.values():
+                pool.entries = [e for e in pool.entries if e.api_id != api_id]
 
     # --- 用户调整 ---
 
-    def adjust_weight(self, task_type: str, api_id: str, weight: float) -> None:
-        """直接设置某 API 在某任务池中的权重。weight >= 0。"""
-
-    def upvote(self, task_type: str, api_id: str, delta: float = 0.5) -> None:
-        """调高某 API 的权重。"""
-
+    def adjust_weight(self, task_type: str, api_id: str, weight: float) -> None: ...
+    def upvote(self, task_type: str, api_id: str, delta: float = 0.5) -> None: ...
     def downvote(self, task_type: str, api_id: str, delta: float = 0.5) -> None:
-        """调低某 API 的权重。最低为 0（不参与选择但仍在池中）。"""
-
+        """调低权重。最低为 0（不参与选择但仍在池中，可用 upvote 恢复）。"""
     def disable(self, task_type: str, api_id: str) -> None:
-        """从该任务池中移除（enabled = False，保留条目）。"""
-
-    def enable(self, task_type: str, api_id: str) -> None:
-        """恢复到该任务池中（enabled = True）。"""
-
+        """禁用（enabled=False，保留条目，可 enable 恢复）。"""
+    def enable(self, task_type: str, api_id: str) -> None: ...
     def remove(self, task_type: str, api_id: str) -> None:
-        """永久从该任务池中删除该条目。"""
+        """永久删除条目（不可恢复）。"""
+
+    # --- 池 fork ---
+
+    def fork_pool(self, task_type: str) -> TaskPool:
+        """为子类型创建独立池（从父池深拷贝）。
+
+        例如 /pool fork skill/commit → 拷贝 subagent/skill 池到 skill/commit。
+        之后对 skill/commit 的调整不影响 subagent/skill。
+        """
+        with self._lock:
+            parent = resolve_pool(task_type, self._pools, default_pool=self._default_pool)
+            new_pool = TaskPool(
+                task_type=task_type,
+                entries=deepcopy(parent.entries),
+            )
+            self._pools[task_type] = new_pool
+            return new_pool
 
     # --- 查询 ---
 
@@ -311,22 +417,44 @@ class APIPoolManager:
 
     # --- 持久化 ---
 
-    def to_config(self) -> PoolConfig: ...
-    @classmethod
-    def from_config(cls, config: PoolConfig) -> "APIPoolManager": ...
+    def to_config(self) -> PoolConfig:
+        """导出当前池状态为可持久化配置。
+
+        只导出有独立池的 task_type（entries 非空）。
+        调用时机：/pool save、会话结束时 config 模块调用。
+        """
+    def replace_config(self, config: PoolConfig) -> None:
+        """用配置文件内容替换当前池状态（加载配置时调用）。"""
+
+    # --- 内部 ---
+
+    @property
+    def _default_weight(self) -> float: ...
+    def _list_all_task_types(self) -> set[str]:
+        """所有已知任务类型（TASK_HIERARCHY + 已有独立池）。"""
+    def _ensure_pool(self, task_type: str) -> TaskPool: ...
+    def _init_defaults(self) -> None:
+        """初始化根任务类型空池。"""
 ```
 
-### 加权随机算法
+### 选择算法
 
 ```python
+# selector.py
 import random
+import math
 
-def _weighted_select(entries: list[PoolEntry]) -> str:
-    """按权重随机选择。
+WEIGHT_EPSILON = 1e-9  # 权重比较容限
 
-    权重为 0 或 disabled 的条目不参与选择。
+class NoAPIAvailable(Exception):
+    """池中无可用 API。"""
+
+def weighted_select(entries: Sequence[PoolEntry]) -> str:
+    """按权重随机选择一个 API（纯函数）。
+
+    权重 <= EPSILON 或 disabled 的条目不参与选择。
     """
-    active = [e for e in entries if e.enabled and e.weight > 0]
+    active = [e for e in entries if e.enabled and e.weight > WEIGHT_EPSILON]
     if not active:
         raise NoAPIAvailable("no active API in pool")
 
@@ -337,19 +465,24 @@ def _weighted_select(entries: list[PoolEntry]) -> str:
         cumulative += e.weight
         if r <= cumulative:
             return e.api_id
+    # 浮点舍入导致未命中，返回最后一个
     return active[-1].api_id
 ```
 
-### 任务类型继承
+### 任务类型继承（单一真相源）
 
 ```python
-TASK_HIERARCHY = {
-    # 根任务类型
+# tasks.py
+
+# 静态继承关系。继承关系只在这里定义，TaskPool 上不重复。
+# 不在此处的 task_type：
+#   - "skill/<name>" → resolve_parent 返回 "subagent/skill"
+#   - 其他未知 → resolve_parent 返回 None（视为根类型）
+TASK_HIERARCHY: dict[str, str | None] = {
     "main": None,
     "subagent": None,
     "continuous": None,
     "background": None,
-    # 子 agent 子类型
     "subagent/explore": "subagent",
     "subagent/plan": "subagent",
     "subagent/general": "subagent",
@@ -359,56 +492,74 @@ TASK_HIERARCHY = {
     "subagent/meta": "subagent",
     "subagent/classify": "subagent",
     "subagent/code": "subagent",
-    # skill 动态类型 — 默认继承 subagent/skill
-    # "skill/commit", "skill/review-pr", ... 注册时自动创建条目
-    # continuous 子类型
     "continuous/cron": "continuous",
     "continuous/monitor": "continuous",
     "continuous/heartbeat": "continuous",
-    # background 子类型
     "background/dream": "continuous",
     "background/title": "continuous",
     "background/compact": "continuous",
     "background/flush": "continuous",
 }
-```
 
-子任务类型如果没有独立配置，自动使用父任务类型的池。用户可以用 `/pool fork <task_type>` 为子任务类型创建独立池（从父池 fork）。
-
-### 动态 Skill 类型解析
-
-Skill 相关任务类型使用动态解析：`skill/<name>` 默认不预创建，在首次访问时按规则解析继承链：
-
-```python
 def resolve_parent(task_type: str) -> str | None:
-    """解析任务类型的父类型。"""
-    # 静态层次
+    """解析任务类型的父类型（纯函数）。
+
+    查找顺序：静态 TASK_HIERARCHY → skill/* 前缀 → 未知返回 None
+    """
     if task_type in TASK_HIERARCHY:
         return TASK_HIERARCHY[task_type]
-    # skill/<name> → subagent/skill → subagent
     if task_type.startswith("skill/"):
         return "subagent/skill"
-    return None  # 默认为根类型
+    return None
 
-def resolve_pool(task_type: str, pools: dict) -> TaskPool:
-    """解析任务对应的池，沿继承链向上查找。"""
+def resolve_pool(
+    task_type: str,
+    pools: dict[str, TaskPool],
+    *,
+    default_pool: TaskPool | None = None,
+) -> TaskPool:
+    """解析任务对应的最终池（纯函数）。
+
+    沿继承链向上查找，返回第一个有独立配置的池。
+    整条链都没有独立池时，使用 default_pool。
+    default_pool 也为 None 时抛出 NoAPIAvailable。
+    """
     current = task_type
     while current is not None:
         pool = pools.get(current)
-        if pool is not None and pool.entries:  # 有独立配置
+        if pool is not None and pool.entries:
             return pool
         current = resolve_parent(current)
-    raise NoAPIAvailable(f"no pool for {task_type}")
+    if default_pool is not None:
+        return default_pool
+    raise NoAPIAvailable(
+        f"no pool for task_type '{task_type}' and no default pool configured"
+    )
 ```
 
-这样当用户为 `skill/commit` 创建独立池后，commit skill 使用独立池；其他 skill 自动回退到 `subagent/skill` 池。
+**fallback 链示例**：`skill/commit` → `subagent/skill`（无独立池）→ `subagent`（有独立池）→ 使用 subagent 池。如果 `subagent` 也没池，回退到 `default_pool`。连 `default_pool` 都没有才抛异常。
 
-子任务类型如果没有独立配置，自动使用父任务类型的池。用户可以用 `/pool` 为子任务类型创建独立池（从父池 fork）。如果子任务类型有独立池（entries 非空），则使用独立池。
+**未知 task_type**：用户/插件可能创建未注册的自定义 task_type。此时 `resolve_parent()` 返回 `None`，`resolve_pool()` 直接走到 `default_pool`。不会崩。
+
+### 持久化时机
+
+运行时调整（upvote/downvote/disable/fork）**只修改内存**，不自动落盘：
+
+- **会话结束时**：config 模块调用 `pool_manager.to_config()` 写入 `~/.wings/config.toml`
+- **用户主动保存**：`/pool save` 命令
+- **加载时**：config 模块读 TOML → PoolConfig → `pool_manager.replace_config()`
+
+这样避免每次 upvote 都写盘，也允许用户在一个会话中随意试，不满意不保存。
 
 ### 关键文件
 
-- `pool.py` — 所有数据结构 + `APIPoolManager` + 加权随机算法
-- `tasks.py` — 任务类型定义 + 继承关系
+- `protocol.py` — `ModelSelector` Protocol（对外接口，最小表面积）
+- `types.py` — `PoolEntry`, `TaskPool`, `PoolConfig`（纯数据）
+- `selector.py` — `weighted_select()`, `NoAPIAvailable`（纯函数）
+- `tasks.py` — `TASK_HIERARCHY`, `resolve_parent()`, `resolve_pool()`（纯函数）
+- `manager.py` — `APIPoolManager`（有状态，线程安全，实现 ModelSelector）
+
+**每个文件可独立测试，可独立替换。**
 
 ---
 
@@ -741,7 +892,7 @@ from wings.tools.base import Tool, ToolContext, ToolResult
 from wings.query.engine import QueryEngine
 from wings.models.protocol import ModelConfig
 from wings.permissions.pipeline import PermissionPipeline
-from wings.routing.pool import APIPoolManager
+from wings.routing.protocol import ModelSelector
 
 class AgentLoop:
     def __init__(
@@ -749,7 +900,7 @@ class AgentLoop:
         query_engine: QueryEngine,
         tool_registry: ToolRegistry,
         permission_pipeline: PermissionPipeline,
-        pool_manager: APIPoolManager,
+        model_selector: ModelSelector,
     ):
         self._turn_history: list[TurnRecord] = []
         self._handoff_detector = HandoffDetector()
@@ -823,8 +974,8 @@ class AgentLoop:
 
     def _assemble_messages(self, user_input: str, context: AgentContext) -> list[Message]: ...
     def _select_model(self, context: AgentContext) -> str:
-        """从当前任务类型的 API 候选池中选择模型。"""
-        return self._pool_manager.select(
+        """从 ModelSelector 获取 API。"""
+        return self._selector.select(
             task_type=context.task_type,
             override=context.model_override,
         )
