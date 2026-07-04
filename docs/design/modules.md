@@ -1417,14 +1417,14 @@ class Environment(BaseModel):
 | 3 | tools | ✅ | `base.py`, `registry.py`, `decorator.py`, `builtin/read.py`, `builtin/write.py`, `builtin/edit.py`, `builtin/bash.py`, `builtin/glob.py`, `builtin/grep.py` | 35 |
 | 4 | query | ✅ | `engine.py` (retry), `token_budget.py` (heuristic) | 15 |
 | 5 | permissions | ✅ | `pipeline.py` (4-stage), `rules.py` (allowlist/denylist) | 17 |
-| 6a | agent/core | — | `loop.py`, `handoff.py` | — |
+| 6a | agent/core | ✅ | `loop.py` (chat mode), `handoff.py` (reverse-traversal) | 12 |
 | 6b | agent/subagent | — | `subagent.py`, `coordinator.py`, `resume.py` | — |
 | 7 | config | — | `settings.py` | — |
 | 8 | cli | — | `main.py`, `repl.py` | — |
 | 9 | skills | — | `loader.py`, `injector.py` | — |
 | 10+ | hooks, memory, plugins, MCP | — | — | — |
 
-**总计**: 6 个阶段完成，161 个测试，~2250 行实现代码。
+**总计**: 7 个阶段完成，173 个测试，~2550 行实现代码。
 
 ### 已完成模块的实际结构
 
@@ -1589,6 +1589,10 @@ src/wings/
 │   ├── __init__.py
 │   ├── rules.py        # PermissionRules (allowlist/denylist/asklist)
 │   └── pipeline.py     # 4-stage pipeline + HookRunner Protocol
+└── agent/              # Phase 6a ✅  12 tests
+    ├── __init__.py
+    ├── handoff.py      # TurnRecord, HandoffDetector
+    └── loop.py         # AgentLoop (chat mode), AgentContext
 ```
 
 #### 11. 消息双重转换 bug（Phase 4 发现并修复）
@@ -1606,3 +1610,33 @@ src/wings/
 修复后 `QueryEngine` 只做两件事：(1) 从 registry 找 provider，(2) 带指数退避重试调用。消息转换、模型选择、工具执行都不归它管。
 
 好处：Phase 6 AgentLoop 的职责划分更清晰——AgentLoop 负责循环和工具调度，QueryEngine 只负责"调用一次 LLM"。
+
+#### 13. HandoffDetector 逆向遍历逻辑（Phase 6a 发现并修复）
+
+`HandoffDetector` 用 `reversed(turn_history)` 从最新到最旧遍历，寻找当前模型上次出现的位置，收集此期间的"中间 turn"。最初用 `saw_self` 标志位：
+
+```python
+# 错误版本
+if turn is previous_turn:
+    saw_self = True
+elif saw_self and turn.model_id != current_model:
+    intermediate.append(turn)
+```
+
+逆向遍历时，中间 turn 出现在上次 self-turn **之前**（还没到达 self-turn），`saw_self` 永远为 False。正确逻辑是：碰到 self-turn 直接 break，之前遇到的不同模型 turn 都收集：
+
+```python
+# 修复后
+if turn is previous_turn:
+    break
+if turn.model_id != current_model:
+    intermediate.append(turn)
+```
+
+**教训**: 正向/逆向遍历的标志位语义相反。写遍历逻辑时应该在测试里覆盖多个 turn 的排列组合（3+ turn 的场景）。
+
+#### 14. AgentLoop 先用 chat() 而非 stream()
+
+设计文档中 AgentLoop 用 `stream()` 获取流式事件。但 tool_use 的完整 input 在 streaming 模式下需要跨越多个 `ToolUseDelta` 累积 `partial_json`。当前 provider 只产出 delta 事件，不产出完整的 `ToolUseBlock`。
+
+**决策**: Phase 6a 用 `chat()`（非流式）实现完整循环——tool_use block 是完整的，可立即执行。流式模式等 provider 的 `stream()` 能产出完整 tool_use 后再接，循环本身与模式无关。
