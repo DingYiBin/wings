@@ -30,6 +30,7 @@ from wings.messages.types import (
 from wings.models.protocol import ModelConfig
 from wings.models.registry import ModelRegistry
 from wings.permissions.pipeline import PermissionPipeline
+from wings.permissions.rules import suggest_scope
 from wings.query.engine import QueryEngine
 from wings.routing.protocol import ModelSelector
 from wings.tools.base import ToolContext
@@ -223,15 +224,19 @@ class AgentLoop:
                     if perm_result == "ask":
                         # Interactive approval
                         self._perm_event.clear()
+                        scope = suggest_scope(block.name, block.input)
                         yield PermissionRequest(
                             tool_name=block.name,
                             tool_input=block.input,
+                            scope=scope,
                         )
                         await self._perm_event.wait()
                         response = self._perm_response
 
                         if response == "allow_always":
-                            self._permission_pipeline._rules.add_allow(block.name)
+                            self._permission_pipeline._rules.add_allow(
+                                block.name, pattern=scope
+                            )
                         elif response == "deny":
                             tr = ToolResultBlock(
                                 tool_use_id=block.id,

@@ -53,10 +53,15 @@ class PermissionPipeline:
         Returns "allow", "deny", or "ask" (for interactive approval).
         """
 
-        # Stage 1: static rules
+        # Stage 1: static rules (tool-level)
         result = self._rules.match(tool.name)
         if result != "ask":
             return result
+
+        # Stage 1b: scoped rules (input-level)
+        scoped = self._rules.check_scoped(tool.name, tool_input)
+        if scoped is not None:
+            return scoped
 
         # Stage 2: auto-classify (read-only operations are safe)
         if tool.is_read_only(tool_input):

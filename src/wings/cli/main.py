@@ -159,12 +159,18 @@ async def _handle_permission(event: PermissionRequest, loop, session) -> None:
     from prompt_toolkit.styles import Style
 
     input_str = str(event.tool_input)
-    if len(input_str) > 120:
-        input_str = input_str[:120] + "..."
+    if len(input_str) > 100:
+        input_str = input_str[:100] + "..."
+
+    # Build scoped "always allow" label
+    if event.scope:
+        always_label = f"2. Yes, and don't ask again for {event.tool_name}({event.scope})"
+    else:
+        always_label = f"2. Yes, and don't ask again for {event.tool_name}"
 
     options = [
         ("allow", "1. Yes"),
-        ("allow_always", f"2. Yes, and don't ask again for {event.tool_name}"),
+        ("allow_always", always_label),
         ("deny", "3. No, tell wings what to do differently"),
     ]
     selected = [0]

@@ -92,6 +92,7 @@ class PermissionRequest(BaseModel):
     type: Literal["permission_request"] = "permission_request"
     tool_name: str
     tool_input: dict[str, Any] = Field(default_factory=dict)
+    scope: str | None = None  # suggested scope pattern for "don't ask again"
 
 
 # -- Stop reason -------------------------------------------------------------
