@@ -1414,7 +1414,7 @@ class Environment(BaseModel):
 | 1 | messages | ✅ | `types.py`, `normalize.py` (含 MessageNormalizer) | 26 |
 | 1b | routing | ✅ | `protocol.py`, `types.py`, `selector.py`, `tasks.py`, `manager.py` | 47 |
 | 2 | models | ✅ | `protocol.py`, `capabilities.py`, `registry.py`, `anthropic.py`, `openai.py` | 21 |
-| 3 | tools | — | `base.py`, `registry.py`, `decorator.py`, `builtin/*.py` | — |
+| 3 | tools | ✅ | `base.py`, `registry.py`, `decorator.py`, `builtin/read.py`, `builtin/write.py`, `builtin/edit.py`, `builtin/bash.py`, `builtin/glob.py`, `builtin/grep.py` | 35 |
 | 4 | query | — | `engine.py`, `token_budget.py` | — |
 | 5 | permissions | — | `pipeline.py`, `rules.py` | — |
 | 6a | agent/core | — | `loop.py`, `handoff.py` | — |
@@ -1424,7 +1424,7 @@ class Environment(BaseModel):
 | 9 | skills | — | `loader.py`, `injector.py` | — |
 | 10+ | hooks, memory, plugins, MCP | — | — | — |
 
-**总计**: 3 个阶段完成，94 个测试，~1400 行实现代码。
+**总计**: 4 个阶段完成，129 个测试，~1900 行实现代码。
 
 ### 已完成模块的实际结构
 
@@ -1450,7 +1450,19 @@ src/wings/
 │   ├── registry.py     # ModelRegistry (delegates to ModelSelector Protocol)
 │   ├── anthropic.py    # AnthropicProvider (chat + stream, system split, thinking)
 │   └── openai.py       # OpenAIProvider (AsyncOpenAI, o-series, streaming tool calls)
-├── tools/              # Phase 3 →
+├── tools/              # Phase 3
+│   ├── __init__.py
+│   ├── base.py         # ToolResult, ToolContext, Tool Protocol
+│   ├── registry.py     # ToolRegistry (register, get, schemas, deny filter)
+│   ├── decorator.py    # @tool decorator (auto-extracts Pydantic input_schema)
+│   └── builtin/
+│       ├── __init__.py
+│       ├── read.py     # Read file with line numbers, offset/limit
+│       ├── write.py    # Create/overwrite file, auto-create parent dirs
+│       ├── edit.py     # Exact string replacement, duplicate detection
+│       ├── bash.py     # Shell command execution, timeout, exit code
+│       ├── glob.py     # File pattern matching
+│       └── grep.py     # Regex search: content/files_with_matches/count
 ├── query/              # Phase 4 →
 └── ...
 ```
@@ -1515,3 +1527,59 @@ agent     ← query + tools + messages + permissions + routing
 ```
 
 关键原则：**每个新模块只依赖已完成的模块**。Phase 3 (tools) 可以独立开发，因为它不依赖前三个模块。
+
+#### 7. @tool 装饰器的 Python 闭包陷阱
+
+设计文档中示意了简化的装饰器实现：
+
+```python
+class _ToolAdapter:
+    name = name  # 错误：类体无法访问外层函数变量
+```
+
+Python class body 有自己的隔离作用域，不能直接引用外层 `def tool()` 的参数。实现时改为：先将参数赋给局部变量（`_name = name`），方法通过闭包引用这些局部变量，类属性在类体定义后单独赋值。
+
+**教训**：设计文档中的 Python 代码是伪代码，部分写法无法直接执行。后续设计评审应该关注语言特性边界。
+
+#### 8. 每个工具独立 Pydantic Input 的价值
+
+read.py 有 `ReadInput`，grep.py 有 `GrepInput`，各自带 `Field(description=...)`。这些 description 会成为 JSON Schema 的 description，直接注入 LLM system prompt。
+
+**意外的收益**：测试可以直接 `from wings.tools.builtin.read import ReadInput` 并用 `ReadInput(file_path=str(f))` 构造合法输入，不需要 mock 任何东西。6 个内置工具都在 `tmp_path` 上真实执行。
+
+#### 9. 有意推迟的决策
+
+| 推迟项 | 原因 |
+|--------|------|
+| `ToolResult.max_result_size_chars` 未使用 | Phase 4 的 `TokenBudget` 需要它，届时统一处理 |
+| 无-input 工具的 `call()` 支持 | 当前无实际用例，不影响进度 |
+| `web_fetch` / `web_search` / `agent_tool` | 依赖 httpx 外部请求 / Phase 6 子 agent |
+| `activity_description` 定制 | 统一 `f"{name}..."` 够用，过早抽象没必要 |
+| 测试中大量 `asyncio.run()` | pytest-asyncio 已配置，可以后续统一加 `@pytest.mark.asyncio` |
+
+#### 10. 当前模块状态一览
+
+```
+src/wings/
+├── __init__.py
+├── messages/           # Phase 1  ✅  26 tests
+│   ├── types.py        # 6 种 MessageContent + 3 种 StreamEvent + StopReason
+│   └── normalize.py    # MessageNormalizer + Anthropic + OpenAI 双向转换
+├── routing/            # Phase 1b ✅  47 tests
+│   ├── protocol.py     # ModelSelector Protocol
+│   ├── types.py        # PoolEntry, TaskPool, PoolConfig(v1)
+│   ├── selector.py     # weighted_select(), NoAPIAvailable
+│   ├── tasks.py        # 19 条目 TASK_HIERARCHY + resolve_* 纯函数
+│   └── manager.py      # APIPoolManager (RLock, fork, upvote/downvote)
+├── models/             # Phase 2  ✅  21 tests
+│   ├── protocol.py     # ModelConfig, TokenUsage, ModelResponse, ModelProvider
+│   ├── capabilities.py # 7 模型能力数据
+│   ├── registry.py     # ModelRegistry (依赖 ModelSelector Protocol)
+│   ├── anthropic.py    # chat/stream, system split, thinking mode
+│   └── openai.py       # AsyncOpenAI, o-series, streaming tool calls
+└── tools/              # Phase 3  ✅  35 tests
+    ├── base.py         # ToolResult, ToolContext, Tool Protocol
+    ├── registry.py     # ToolRegistry
+    ├── decorator.py    # @tool 装饰器
+    └── builtin/        # read, write, edit, bash, glob, grep
+```
