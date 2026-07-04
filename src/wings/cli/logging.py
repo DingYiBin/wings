@@ -42,6 +42,7 @@ class TurnLogger:
         messages_sent: list[dict[str, Any]],
         response: dict[str, Any],
         tool_calls: list[str] | None = None,
+        thinking: str | None = None,
     ) -> None:
         """Record a single API call cycle (request + response) with timestamps."""
         self._cycle_count += 1
@@ -57,6 +58,8 @@ class TurnLogger:
             "response": response,
             "tool_calls": tool_calls or [],
         }
+        if thinking:
+            entry["thinking"] = thinking
         self._buffer.append(entry)
         self._flush()
 

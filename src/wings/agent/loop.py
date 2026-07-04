@@ -143,6 +143,7 @@ class AgentLoop:
             text_blocks: list[TextBlock] = []
             cycle_tool_calls: list[str] = []
             streamed_text = False
+            thinking_parts: list[str] = []
 
             async for event in self._query_engine.stream(
                 self._messages,
@@ -150,7 +151,11 @@ class AgentLoop:
                 tools=self._tool_registry.get_schemas(),
                 config=cfg,
             ):
-                if isinstance(event, (TextDelta, ThinkingDelta)):
+                if isinstance(event, ThinkingDelta):
+                    streamed_text = True
+                    thinking_parts.append(event.text)
+                    yield event
+                elif isinstance(event, TextDelta):
                     streamed_text = True
                     yield event
                 elif isinstance(event, TextBlock):
@@ -171,6 +176,7 @@ class AgentLoop:
                         ]
                     },
                     tool_calls=cycle_tool_calls,
+                    thinking="".join(thinking_parts) if thinking_parts else None,
                 )
 
             # Execute tools
