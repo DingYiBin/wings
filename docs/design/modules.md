@@ -1414,59 +1414,83 @@ class Environment(BaseModel):
 | 1 | messages | ✅ | `types.py`, `normalize.py` (含 MessageNormalizer) | 26 |
 | 1b | routing | ✅ | `protocol.py`, `types.py`, `selector.py`, `tasks.py`, `manager.py` | 47 |
 | 2 | models | ✅ | `protocol.py`, `capabilities.py`, `registry.py`, `anthropic.py`, `openai.py` | 21 |
-| 3 | tools | ✅ | `base.py`, `registry.py`, `decorator.py`, `builtin/read.py`, `builtin/write.py`, `builtin/edit.py`, `builtin/bash.py`, `builtin/glob.py`, `builtin/grep.py` | 35 |
+| 3 | tools | ✅ | `base.py`, `registry.py`, `decorator.py`, `builtin/` (read, write, edit, bash, glob, grep, skill_view) | 35 |
 | 4 | query | ✅ | `engine.py` (retry), `token_budget.py` (heuristic) | 15 |
-| 5 | permissions | ✅ | `pipeline.py` (4-stage), `rules.py` (allowlist/denylist) | 17 |
-| 6a | agent/core | ✅ | `loop.py` (chat mode), `handoff.py` (reverse-traversal) | 12 |
-| 6b | ~~agent/subagent~~ | ⏸️ | 推迟，等端到端跑通后再做 | — |
-| 7 | config | — | `settings.py` (GlobalSettings + ProjectSettings) | — |
-| 8 | cli | — | `main.py` (wiring + single-turn + /pool) | — |
-| 9+ | skills, hooks, memory, plugins, MCP, subagent | — | 后续迭代 | — |
+| 5 | permissions | ✅ | `pipeline.py` (5-stage), `rules.py` (scoped rules) | 17 |
+| 6a | agent/core | ✅ | `loop.py` (per-call model selection, permission sync), `handoff.py` | 12 |
+| 6b | ~~agent/subagent~~ | ⏸️ | 推迟 | — |
+| 7 | config | ✅ | `settings.py` (JSON, ProviderConfig w/ thinking/max_tokens) | — |
+| 8 | cli | ✅ | `main.py` (chat + run, slash commands, tool display, permission UI) | — |
+| 9a | skills | ✅ | `types.py`, `loader.py`, `injector.py`, `builtin_data.py`, `builtin/` SKILL.md | 31 |
+| 9b+ | hooks, memory, plugins, MCP, subagent | — | 后续迭代 | — |
 
-**总计**: 7 个阶段完成，173 个测试，~2550 行实现代码。
+**总计**: 9 个阶段完成，200 个测试，~3800 行实现代码。
 
-### 已完成模块的实际结构
+### 当前模块结构
 
 ```
 src/wings/
 ├── __init__.py
-├── messages/           # Phase 1
+├── messages/           # Phase 1  ✅
 │   ├── __init__.py
 │   ├── types.py        # Message, Role, TextBlock, ToolUseBlock, ToolResultBlock,
-│   │                     StreamEvent (TextDelta, ToolUseDelta, ThinkingDelta), StopReason
+│   │                     StreamEvent, StopReason, PermissionRequest
 │   └── normalize.py    # MessageNormalizer + from_/to_ anthropic + openai
-├── routing/            # Phase 1b
+├── routing/            # Phase 1b ✅
 │   ├── __init__.py
 │   ├── protocol.py     # ModelSelector Protocol
 │   ├── types.py        # PoolEntry, TaskPool, PoolConfig
-│   ├── selector.py     # weighted_select(), NoAPIAvailable
+│   ├── selector.py     # softmax_select(), NoAPIAvailable
 │   ├── tasks.py        # TASK_HIERARCHY, resolve_parent(), resolve_pool()
 │   └── manager.py      # APIPoolManager (thread-safe, implements ModelSelector)
-├── models/             # Phase 2
+├── models/             # Phase 2  ✅
 │   ├── __init__.py
-│   ├── protocol.py     # ModelConfig, TokenUsage, ModelResponse, ModelProvider Protocol
-│   ├── capabilities.py # ModelCapabilities, CAPABILITY_CATALOG (7 models)
-│   ├── registry.py     # ModelRegistry (delegates to ModelSelector Protocol)
-│   ├── anthropic.py    # AnthropicProvider (chat + stream, system split, thinking)
-│   └── openai.py       # OpenAIProvider (AsyncOpenAI, o-series, streaming tool calls)
-├── tools/              # Phase 3
+│   ├── protocol.py     # ModelConfig (thinking, adaptive, escalation), Protocol
+│   ├── capabilities.py # ModelCapabilities catalog
+│   ├── registry.py     # ModelRegistry
+│   ├── anthropic.py    # AnthropicProvider (adaptive thinking, max_tokens escalation)
+│   └── openai.py       # OpenAIProvider
+├── tools/              # Phase 3  ✅
 │   ├── __init__.py
-│   ├── base.py         # ToolResult, ToolContext, Tool Protocol
-│   ├── registry.py     # ToolRegistry (register, get, schemas, deny filter)
-│   ├── decorator.py    # @tool decorator (auto-extracts Pydantic input_schema)
+│   ├── base.py         # ToolResult, ToolContext (w/ read_cache, available_skills)
+│   ├── registry.py     # ToolRegistry
+│   ├── decorator.py    # @tool decorator (dict → Pydantic coercion)
 │   └── builtin/
 │       ├── __init__.py
-│       ├── read.py     # Read file with line numbers, offset/limit
-│       ├── write.py    # Create/overwrite file, auto-create parent dirs
-│       ├── edit.py     # Exact string replacement, duplicate detection
-│       ├── bash.py     # Shell command execution, timeout, exit code
-│       ├── glob.py     # File pattern matching
-│       └── grep.py     # Regex search: content/files_with_matches/count
-├── query/              # Phase 4
+│       ├── read.py     # Read w/ binary detection, device blocking, read_cache
+│       ├── write.py    # Create/update w/ stale detection, diff display
+│       ├── edit.py     # Exact string replace w/ stale detection, @@ diff hunks
+│       ├── bash.py     # Shell w/ denylist, sleep blocking, elapsed time
+│       ├── glob.py     # File pattern matching w/ summary
+│       ├── grep.py     # Regex search w/ VCS exclusion, match summary
+│       └── skill_view.py  # Load skill content by name
+├── query/              # Phase 4  ✅
 │   ├── __init__.py
 │   ├── engine.py       # QueryEngine (retry with exponential backoff)
-│   └── token_budget.py # TokenBudget (heuristic, 80% compact threshold)
-└── ...
+│   └── token_budget.py # TokenBudget
+├── permissions/        # Phase 5  ✅
+│   ├── __init__.py
+│   ├── pipeline.py     # 5-stage pipeline (rules → scoped → classify → hooks → ask)
+│   └── rules.py        # PermissionRules (tool-level + scoped), suggest_scope()
+├── agent/              # Phase 6a ✅
+│   ├── __init__.py
+│   ├── handoff.py      # TurnRecord, HandoffDetector
+│   └── loop.py         # AgentLoop (per-call model selection, permission sync)
+├── config/             # Phase 7  ✅
+│   ├── __init__.py
+│   └── settings.py     # GlobalSettings, ProviderConfig, ProjectSettings, AppConfig
+├── cli/                # Phase 8  ✅
+│   ├── __init__.py
+│   ├── main.py         # Typer CLI (chat + run, slash commands, permission UI)
+│   ├── bootstrap.py    # Composition root wiring
+│   └── logging.py      # TurnLogger with cycle timestamps + thinking capture
+└── skills/             # Phase 9a ✅
+    ├── __init__.py
+    ├── types.py        # SkillSpec dataclass
+    ├── loader.py       # SkillLoader (3-layer: builtin < user < project)
+    ├── injector.py     # SkillInjector (<available_skills> XML block)
+    ├── builtin_data.py # builtin_skills_dir() via importlib.resources
+    └── builtin/        # SKILL.md files for commit, review-pr, simplify
 ```
 
 ### 开发过程中的设计决策与反思
@@ -1654,3 +1678,61 @@ if turn.model_id != current_model:
 设计文档中 AgentLoop 用 `stream()` 获取流式事件。但 tool_use 的完整 input 在 streaming 模式下需要跨越多个 `ToolUseDelta` 累积 `partial_json`。当前 provider 只产出 delta 事件，不产出完整的 `ToolUseBlock`。
 
 **决策**: Phase 6a 用 `chat()`（非流式）实现完整循环——tool_use block 是完整的，可立即执行。流式模式等 provider 的 `stream()` 能产出完整 tool_use 后再接，循环本身与模式无关。
+
+#### 15. Per-call 模型选择（Phase 6a 后续改进）
+
+设计文档中模型选择每个 turn 一次。但 wings 的核心理念是"每次模型调用都从候选池随机选择"。将 `model = self._select_model()` 移入 `while True` 循环内：首轮 API 调用和工具执行后的每次后续调用都独立选模型。handoff 检测和 turn record 在第一次循环时执行。
+
+#### 16. Anthropic 消息格式：tool_result 必须分组（Phase 6a bug fix）
+
+Anthropic 协议要求一个 assistant 消息中的所有 tool_use，其对应的 tool_result 必须归组在紧接着的同一个 user 消息中。之前为每个 tool_result 单独建 Message，DeepSeek API 报 "tool_use ids without tool_result"。修复为先收集所有结果，再一次 append。
+
+**教训**：API 格式差异不仅是字段名不同，消息层面的结构约束（归组要求）更隐蔽。
+
+#### 17. @tool 装饰器：dict → Pydantic 自动转换（Phase 6a bug fix）
+
+`@tool` 装饰的 `call()` 方法收到的是 dict（来自 ToolUseBlock），但装饰的函数期望 Pydantic 对象。`input.timeout` 在 dict 上直接抛 AttributeError。修复：在 `call()` 中检测 dict 输入并调用 `_input_type(**input)` 转换。这之前被 mock 测试隐藏了。
+
+#### 18. Skills 系统 MVP（Phase 9a）
+
+Skills 是 YAML frontmatter + markdown body 的 SKILL.md 文件。内置 skill 通过 `importlib.resources.files()` 打包。SkillInjector 在 system prompt 中注入 `<available_skills>` XML 块。每个 skill 自动 fork 独立 API 候选池 `skill/<name>`。
+
+#### 19. 工具安全增强（P0）
+
+参考 claude-code，补充了多项安全措施：
+- **read**: 设备路径阻止（/dev/zero 等）、二进制检测（扩展名 + NUL 字节）、read_cache 记录
+- **bash**: 危险命令 denylist、sleep 阻止、description 字段
+- **write/edit**: 先读后写（stale detection），文件被修改后需重新 read
+- **grep**: VCS 目录排除（.git/.svn/.hg/.bzr/.jj/.sl）
+
+#### 20. 交互式权限对话框
+
+模仿 claude-code 的 PermissionRequest 机制：
+- AgentLoop 中 `asyncio.Event` 同步等待用户决策
+- CLI 使用 prompt_toolkit Application 渲染带键盘导航的选项菜单
+- 支持 `y`/`n`/`Esc` 快捷键 + `↑↓`/`jk` 导航 + `Enter` 确认
+
+#### 21. 细粒度权限作用域
+
+claude-code 的 "don't ask again" 从来不是工具级（`Bash`），而是前缀匹配（`Bash(git commit:*)`）。wings 增加了：
+- `PermissionRules.scoped_allowlist`：tool_name → set of patterns
+- `suggest_scope()`：从 tool input 自动生成建议作用域（bash 的命令前缀、write/edit 的目录前缀）
+- `check_scoped()`：在 permission pipeline Stage 1b 检查输入是否匹配已存储的作用域规则
+
+#### 22. Adaptive thinking + max_tokens escalation
+
+模仿 claude-code 的两层设计：
+- **adaptive thinking**（默认）：发送 `{"type": "enabled"}` 不设 budget，模型自主决定何时思考
+- **max_tokens escalation**: 默认 8K，hit max_tokens 后自动升级到 64K 重试一次
+- ProviderConfig 中所有参数均可按 provider 独立配置
+
+#### 23. Claude-code 风格工具结果展示
+
+所有内置工具统一输出格式：
+- **Read**: "Read N lines from path" 摘要 + 带行号内容
+- **Write**: "Wrote N lines to path" + 代码预览
+- **Edit**: "Added/removed N lines" + `@@` diff hunks
+- **Bash**: 简洁输出 + 耗时 + exit code
+- **Glob**: "Found N files" 摘要 + 文件列表
+- **Grep**: "Found N matches across M files" 摘要 + 匹配详情
+- CLI 截断统一为 20 行 + `… +N lines (ctrl+o to expand)`

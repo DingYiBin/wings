@@ -154,34 +154,45 @@ class StageOutcome(Generic[T]):
 用户输入
   │
   ▼
-组装消息列表 (system prompt + history + new user message)
+组装消息列表 (system prompt + environment info + skills + history + user message)
   │
   ▼
-选择模型 (从当前任务类型的 API 候选池加权随机选择)
+[while True: 工具调用循环]
   │
   ▼
-转交检测 (同一模型再次出现，但中间有其他模型 → 注入转交提示)
+选择模型 (每次 API 调用都从候选池加权随机选择)
   │
   ▼
-query() ─── 调用 LLM API，流式返回 (AsyncIterator)
+转交检测 (首轮，同一模型再次出现 → 注入转交提示)
   │
+  ▼
+stream() ─── 调用 LLM API，流式返回 (AsyncIterator)
+  │            └── stop_reason=max_tokens → 升级到 escalated_max_tokens 重试
   ▼
 解析响应
   │
+  ├── thinking ──→ 记录到日志
   ├── text ──→ 输出给用户
   │
-  ├── tool_use ──→ 权限检查 ──→ 执行工具
-  │                    │              │
-  │                    ▼              ▼
-  │               拒绝 → 注入错误   tool_result
-  │                              │
-  └──────────────────────────────┘
+  ├── tool_use ──→ 显示工具调用 ──→ 权限检查
+  │                    │                │
+  │                    ▼                ▼
+  │              [y] 允许            [n] 拒绝 → 停止当前 turn
+  │              [a] 记住作用域        │
+  │                    │                │
+  │                    ▼                ▼
+  │              执行工具 ──→ 归组所有 tool_result
+  │                    │          到一个 user 消息
+  │                    ▼
+  │              显示结果 (claude-code 风格)
+  │                    │
+  └────────────────────┘
                     │
                     ▼
          将 tool_result 追加到消息列表
                     │
                     ▼
-            继续下一轮 query()
+            重新选模型，继续下一轮 stream()
                     │
                     ▼
               stop_reason == "end_turn" → 结束
@@ -230,23 +241,23 @@ async def run_loop(
 
 ## 关键模块
 
-| 模块 | 职责 | 核心依赖 |
-|------|------|----------|
-| `messages` | 消息类型 + 跨模型格式转换 | 无 |
-| `routing` | API 候选池管理 + 加权随机选择 | 无 |
-| `models` | ModelProvider 协议 + 各 API 适配器 | messages, routing |
-| `tools` | Tool 协议 + 注册表 + 内置工具 | 无 |
-| `query` | LLM API 调用封装（retry, fallback） | models, messages, tools |
-| `agent` | 核心循环 + 子 agent + 协调器 | query, tools, permissions, routing |
-| `permissions` | 多阶段权限管道 | tools |
-| `hooks` | 生命周期钩子 | 无 |
-| `config` | 全局/项目配置 | routing |
-| `context` | system prompt + 环境信息 | 无 |
-| `cli` | Typer 入口 + REPL | agent, config, routing |
-| `memory` | 持久化记忆 | 无 |
-| `skills` | 可复用技能/工作流 | tools |
-| `plugins` | 插件加载 | tools |
-| `services` | 外部服务封装（API, MCP） | 无 |
+| 模块 | 职责 | 状态 |
+|------|------|------|
+| `messages` | 消息类型 + 跨模型格式转换 + PermissionRequest | ✅ |
+| `routing` | API 候选池管理 + softmax 加权随机选择 | ✅ |
+| `models` | ModelProvider 协议 + Anthropic/OpenAI 适配器 (adaptive thinking, escalation) | ✅ |
+| `tools` | Tool 协议 + 注册表 + 7 内置工具 (read/write/edit/bash/glob/grep/skill_view) | ✅ |
+| `query` | LLM API 调用封装（retry, fallback） | ✅ |
+| `agent` | 核心循环 (per-call 模型选择, 权限同步, handoff 检测) | ✅ |
+| `permissions` | 5 阶段管道 (rules → scoped → classify → hooks → interactive) | ✅ |
+| `config` | 全局/项目配置 (JSON, ProviderConfig w/ thinking/max_tokens) | ✅ |
+| `cli` | Typer 入口 + chat/run REPL (slash commands, 权限 UI, 工具展示) | ✅ |
+| `skills` | 可复用技能/工作流 (SKILL.md, 3 内置 skill, per-skill API 池) | ✅ |
+| `hooks` | 生命周期钩子 | — |
+| `context` | system prompt + 环境信息 | — |
+| `memory` | 持久化记忆 | — |
+| `plugins` | 插件加载 | — |
+| `services` | 外部服务封装（API, MCP） | — |
 
 ## 与参考项目的模块对应
 
