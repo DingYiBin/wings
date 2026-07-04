@@ -31,5 +31,9 @@ async def glob_files(input: GlobInput, context: ToolContext) -> str:
 
     matches = sorted(base.glob(input.pattern))
     if not matches:
-        return "(no matches)"
-    return "\n".join(str(m) for m in matches)
+        return f"No files matched '{input.pattern}' in {base}"
+
+    label = "file" if len(matches) == 1 else "files"
+    lines = [f"Found {len(matches)} {label}"]
+    lines.extend(str(m) for m in matches)
+    return "\n".join(lines)

@@ -70,6 +70,7 @@ async def grep(input: GrepInput, context: ToolContext) -> str:
 
     output_lines: list[str] = []
     file_count = 0
+    match_count = 0
 
     for filepath in files:
         try:
@@ -82,6 +83,7 @@ async def grep(input: GrepInput, context: ToolContext) -> str:
             continue
 
         file_count += 1
+        match_count += len(matches)
 
         if input.output_mode == "files_with_matches":
             output_lines.append(str(filepath))
@@ -104,4 +106,17 @@ async def grep(input: GrepInput, context: ToolContext) -> str:
     if input.head_limit:
         output_lines = output_lines[:input.head_limit]
 
-    return "\n".join(output_lines)
+    # Summary line matching claude-code: "Found N matches across M files"
+    if input.output_mode == "files_with_matches":
+        label = "file" if file_count == 1 else "files"
+        summary = f"Found {file_count} {label}"
+    elif input.output_mode == "count":
+        label = "match" if match_count == 1 else "matches"
+        file_label = "file" if file_count == 1 else "files"
+        summary = f"Found {match_count} {label} across {file_count} {file_label}"
+    else:
+        label = "match" if match_count == 1 else "matches"
+        file_label = "file" if file_count == 1 else "files"
+        summary = f"Found {match_count} {label} across {file_count} {file_label}"
+
+    return summary + "\n" + "\n".join(output_lines)

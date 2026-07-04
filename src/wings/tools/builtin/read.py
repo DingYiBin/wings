@@ -118,5 +118,15 @@ async def read_file(input: ReadInput, context: ToolContext) -> str:
     start = (input.offset or 1) - 1
     end = start + input.limit if input.limit else len(lines)
     selected = lines[start:end]
-    result = [f"{i}\t{line}" for i, line in enumerate(selected, start=start + 1)]
+
+    # Summary line matching claude-code: "Read N lines from path"
+    total = len(lines)
+    label = "line" if len(selected) == 1 else "lines"
+    summary = f"Read {len(selected)} {label}"
+    if input.offset or input.limit:
+        summary += f" (lines {start + 1}-{end} of {total})"
+    summary += f" from {path}"
+
+    result = [summary, ""]
+    result.extend(f"{i}\t{line}" for i, line in enumerate(selected, start=start + 1))
     return "\n".join(result)

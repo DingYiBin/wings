@@ -233,20 +233,31 @@ async def _handle_permission(event: PermissionRequest, loop, session) -> None:
 
 
 def _display_tool_event(event) -> None:
-    """Format a tool call or result for terminal display."""
+    """Format a tool call or result for terminal display.
+
+    Mimics claude-code's display conventions:
+    - Single-line results use compact style
+    - Multi-line results indented under prefix
+    - Truncation with (ctrl+o to expand) hint
+    """
     if isinstance(event, ToolUseBlock):
-        # Show a clean one-liner for the tool call
         label = _tool_label(event.name, event.input)
         typer.echo(f"  ● {label}")
     elif isinstance(event, ToolResultBlock):
-        # Show the result indented
-        lines = event.content.strip().split("\n")
-        for line in lines[:30]:  # cap at 30 lines
+        text = event.content.strip()
+        if not text:
+            typer.echo(f"    ⎿ (No output)")
+            return
+
+        lines = text.split("\n")
+        if len(lines) == 1:
+            typer.echo(f"    ⎿ {lines[0]}")
+            return
+
+        for line in lines[:20]:
             typer.echo(f"    ⎿ {line}")
-        if len(lines) > 30:
-            typer.echo(f"    ... ({len(lines) - 30} more lines)")
-
-
+        if len(lines) > 20:
+            typer.echo(f"    … +{len(lines) - 20} lines (ctrl+o to expand)")
 def _tool_label(name: str, input: dict) -> str:
     """Build a human-readable label for a tool call.
 

@@ -2,6 +2,7 @@
 
 import re
 import subprocess
+import time
 
 from pydantic import BaseModel, Field
 
@@ -75,6 +76,7 @@ async def bash(input: BashInput, context: ToolContext) -> str:
         return "Error: sleep is not allowed. Use a non-blocking approach instead."
 
     timeout_ms = min(input.timeout or 120000, 600000)
+    started = time.monotonic()
     try:
         result = subprocess.run(
             cmd,
@@ -86,11 +88,26 @@ async def bash(input: BashInput, context: ToolContext) -> str:
             env={**context.env} if context.env else None,
         )
     except subprocess.TimeoutExpired:
-        return f"Error: command timed out after {timeout_ms}ms"
+        elapsed = time.monotonic() - started
+        return f"(timeout {timeout_ms / 1000:.0f}s)  ({elapsed:.1f}s)"
 
-    output = result.stdout
-    if result.stderr:
-        output += f"\n[stderr]\n{result.stderr}"
+    elapsed = time.monotonic() - started
+    elapsed_str = f"({elapsed:.1f}s)" if elapsed >= 0.5 else ""
+
+    parts: list[str] = []
+    if result.stdout.strip():
+        parts.append(result.stdout.rstrip())
+    if result.stderr.strip():
+        parts.append(result.stderr.rstrip())
+
+    output = "\n".join(parts).strip()
+    if not output and result.returncode == 0:
+        return "(No output)" if elapsed < 0.5 else f"(No output)  {elapsed_str}"
+    if not output:
+        output = "(No output)"
+
     if result.returncode != 0:
         output += f"\n[exit code: {result.returncode}]"
-    return output.strip() or "(no output)"
+    if elapsed_str:
+        output += f"\n{elapsed_str}"
+    return output

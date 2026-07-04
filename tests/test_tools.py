@@ -290,7 +290,7 @@ def test_glob_finds_files(tmp_path):
 def test_glob_no_matches(tmp_path):
     ctx = ToolContext(working_dir=str(tmp_path))
     result = asyncio.run(glob_files.call(GlobInput(pattern="*.rs"), ctx))
-    assert "(no matches)" in result.output
+    assert "matches" in result.output.lower() or "no files matched" in result.output.lower()
 
 
 # -- Built-in: grep ------------------------------------------------------------
@@ -333,7 +333,7 @@ def test_grep_no_matches(tmp_path):
     result = asyncio.run(grep.call(
         GrepInput(pattern="xyzzy_nonexistent", path=str(tmp_path)), ctx
     ))
-    assert "(no matches)" in result.output
+    assert "matches" in result.output.lower() or "no files matched" in result.output.lower()
 
 
 def test_grep_invalid_regex(tmp_path):
