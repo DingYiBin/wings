@@ -17,14 +17,23 @@ class ModelRegistry:
 
     def __init__(self, selector: ModelSelector):
         self._providers: dict[str, ModelProvider] = {}
+        self._configs: dict[str, ModelConfig] = {}  # api_id → default config
         self._aliases: dict[str, str] = {}  # alias -> canonical name
         self._selector = selector
 
     # -- Provider management --
 
-    def register(self, name: str, provider: ModelProvider) -> None:
-        """Register a model provider under its canonical name."""
+    def register(
+        self, name: str, provider: ModelProvider, *, config: ModelConfig | None = None
+    ) -> None:
+        """Register a model provider under its canonical name.
+
+        If *config* is provided, it is stored as the default ModelConfig
+        for this api_id (used by build_config).
+        """
         self._providers[name] = provider
+        if config is not None:
+            self._configs[name] = config
 
     def alias(self, alias: str, target: str) -> None:
         """Create a short alias for a model name (e.g. 'opus' -> 'claude-opus-4-6')."""
@@ -52,10 +61,11 @@ class ModelRegistry:
     # -- Convenience --
 
     def build_config(self, api_id: str, **overrides: Any) -> ModelConfig:
-        """Build a ModelConfig for the given api_id with optional overrides."""
-        provider = self.get(api_id)
-        return ModelConfig(
-            model=api_id,
-            api_key="",  # caller should set this from settings
-            **overrides,
-        )
+        """Build a ModelConfig for the given api_id.
+
+        Uses the stored default config if available, overridden by kwargs.
+        """
+        base = self._configs.get(api_id, ModelConfig(model=api_id))
+        merged = base.model_dump()
+        merged.update(overrides)
+        return ModelConfig(**merged)

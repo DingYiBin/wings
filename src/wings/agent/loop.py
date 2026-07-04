@@ -24,6 +24,7 @@ from wings.messages.types import (
     ToolUseBlock,
 )
 from wings.models.protocol import ModelConfig
+from wings.models.registry import ModelRegistry
 from wings.permissions.pipeline import PermissionPipeline
 from wings.query.engine import QueryEngine
 from wings.routing.protocol import ModelSelector
@@ -55,16 +56,23 @@ class AgentLoop:
         tool_registry: ToolRegistry,
         permission_pipeline: PermissionPipeline,
         model_selector: ModelSelector,
+        model_registry: ModelRegistry,
     ):
         self._query_engine = query_engine
         self._tool_registry = tool_registry
         self._permission_pipeline = permission_pipeline
         self._selector = model_selector
+        self._model_registry = model_registry
         self._handoff_detector = HandoffDetector()
         self._turn_history: list[TurnRecord] = []
         self._messages: list[Message] = []
+        self._logger: Any = None  # set by set_logger()
 
     # -- Public API ------------------------------------------------------------
+
+    def set_logger(self, logger: Any) -> None:
+        """Attach a TurnLogger for request/response recording."""
+        self._logger = logger
 
     async def run(
         self,
@@ -90,14 +98,17 @@ class AgentLoop:
                 )
 
         # Record turn
+        provider_name, _, service_model = model.partition("/")
         turn = TurnRecord(
             turn_id=len(self._turn_history),
             model_id=model,
+            provider_name=provider_name,
+            service_model=service_model,
             user_input_summary=user_input[:200],
         )
         self._turn_history.append(turn)
 
-        cfg = config or ModelConfig(model=model)
+        cfg = config or self._model_registry.build_config(model)
 
         while True:
             response = await self._query_engine.chat(
@@ -108,6 +119,7 @@ class AgentLoop:
             )
 
             had_tool_use = False
+            cycle_tool_calls: list[str] = []
             assistant_content: list[Any] = []
 
             for block in response.content:
@@ -130,6 +142,7 @@ class AgentLoop:
                         self._inject_error(block.id, "permission denied")
                         break
 
+                    cycle_tool_calls.append(block.name)
                     turn.tool_calls.append(block.name)
                     tool_result = await tool.call(block.input, context.tool_context)
                     self._messages.append(
@@ -144,6 +157,15 @@ class AgentLoop:
                             ],
                         )
                     )
+
+            # Log this request/response cycle
+            if self._logger is not None:
+                self._logger.record_turn(
+                    model=model,
+                    messages_sent=[m.model_dump() for m in self._messages],
+                    response=response.model_dump(),
+                    tool_calls=cycle_tool_calls,
+                )
 
             # Record assistant message
             if assistant_content:

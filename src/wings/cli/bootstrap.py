@@ -11,6 +11,7 @@ from wings.agent.loop import AgentContext, AgentLoop
 from wings.config.settings import AppConfig
 from wings.models.anthropic import AnthropicProvider
 from wings.models.openai import OpenAIProvider
+from wings.models.protocol import ModelConfig
 from wings.models.registry import ModelRegistry
 from wings.permissions.pipeline import PermissionPipeline
 from wings.permissions.rules import PermissionRules
@@ -59,8 +60,13 @@ def create_session(
         if not api_key:
             continue
         provider = provider_cls()
-        api_id = f"{name}/{cfg.model}"
-        registry.register(api_id, provider)
+        api_id = f"{name}/{cfg.model}"  # internal identifier for pool/registry
+        model_config = ModelConfig(
+            model=cfg.model,  # API model name (e.g. "deepseek-v4-flash")
+            api_key=api_key,
+            base_url=cfg.base_url,
+        )
+        registry.register(api_id, provider, config=model_config)
         pool_mgr.register_api(api_id)
 
     # -- Tool registry --
@@ -84,7 +90,7 @@ def create_session(
     engine = QueryEngine(registry)
 
     # -- Agent loop --
-    loop = AgentLoop(engine, tools, pipeline, pool_mgr)
+    loop = AgentLoop(engine, tools, pipeline, pool_mgr, registry)
 
     return loop, config
 

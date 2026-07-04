@@ -17,7 +17,9 @@ class TurnRecord(BaseModel):
     """Record of a single model call within a conversation."""
 
     turn_id: int
-    model_id: str  # API id used, e.g. "anthropic/claude-opus-4-6"
+    model_id: str  # Internal pool key, e.g. "dpsk-flash/deepseek-v4-flash"
+    provider_name: str = ""  # Provider nickname, e.g. "dpsk-flash"
+    service_model: str = ""  # API model name, e.g. "deepseek-v4-flash"
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     user_input_summary: str = ""  # One-line summary of user input
     tool_calls: list[str] = Field(default_factory=list)  # Tool names called
@@ -77,15 +79,15 @@ class HandoffDetector:
         previous_turn: TurnRecord,
         intermediate_turns: list[TurnRecord],
     ) -> str:
-        other_models = sorted({t.model_id for t in intermediate_turns})
+        other_models = sorted({t.service_model or t.model_id for t in intermediate_turns})
         turns_desc = "\n".join(
-            f"  - [{t.model_id}] {t.summary or t.user_input_summary}"
+            f"  - [{t.service_model or t.model_id}] {t.summary or t.user_input_summary}"
             for t in reversed(intermediate_turns)
         )
 
         return (
             f"[System notice] Since your last turn in this conversation "
-            f"(turn #{previous_turn.turn_id}), "
+            f"(turn #{previous_turn.turn_id}) as {current_model}, "
             f"{len(intermediate_turns)} turn(s) were handled by other "
             f"models: {', '.join(other_models)}.\n\n"
             f"Work done in between:\n{turns_desc}\n\n"

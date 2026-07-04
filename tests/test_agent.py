@@ -157,24 +157,25 @@ def _make_engine(responses=None):
             stop_reason=StopReason.END_TURN,
             usage=TokenUsage(input_tokens=5, output_tokens=5),
         )
-    registry.register("test/model", provider)
-    return QueryEngine(registry), provider
+    config = ModelConfig(model="test/model", api_key="sk-test")
+    registry.register("test/model", provider, config=config)
+    return QueryEngine(registry), registry, provider
 
 
 @pytest.fixture
-def engine_and_provider():
+def engine_registry_provider():
     return _make_engine()
 
 
 @pytest.mark.asyncio
-async def test_loop_simple_text_response(engine_and_provider):
-    engine, provider = engine_and_provider
-    registry = ToolRegistry()
+async def test_loop_simple_text_response(engine_registry_provider):
+    engine, model_registry, provider = engine_registry_provider
+    tools = ToolRegistry()
     rules = PermissionRules()
     pipeline = PermissionPipeline(rules)
     selector = _MockSelector()
 
-    loop = AgentLoop(engine, registry, pipeline, selector)
+    loop = AgentLoop(engine, tools, pipeline, selector, model_registry)
     ctx = AgentContext(task_type="main")
 
     events = []
@@ -187,11 +188,11 @@ async def test_loop_simple_text_response(engine_and_provider):
 
 
 @pytest.mark.asyncio
-async def test_loop_tool_use_cycle(engine_and_provider):
+async def test_loop_tool_use_cycle(engine_registry_provider):
     """Agent handles a tool_use response, executes it, and continues."""
-    engine, provider = engine_and_provider
-    registry = ToolRegistry()
-    registry.register(_FakeTool())
+    engine, model_registry, provider = engine_registry_provider
+    tools = ToolRegistry()
+    tools.register(_FakeTool())
     rules = PermissionRules(allowlist={"echo"})
     pipeline = PermissionPipeline(rules)
     selector = _MockSelector()
@@ -213,7 +214,7 @@ async def test_loop_tool_use_cycle(engine_and_provider):
         ),
     ]
 
-    loop = AgentLoop(engine, registry, pipeline, selector)
+    loop = AgentLoop(engine, tools, pipeline, selector, model_registry)
     ctx = AgentContext(task_type="main")
 
     events = []
@@ -227,11 +228,11 @@ async def test_loop_tool_use_cycle(engine_and_provider):
 
 
 @pytest.mark.asyncio
-async def test_loop_permission_denied(engine_and_provider):
+async def test_loop_permission_denied(engine_registry_provider):
     """Tool use is denied by the permission pipeline."""
-    engine, provider = engine_and_provider
-    registry = ToolRegistry()
-    registry.register(_FakeTool())
+    engine, model_registry, provider = engine_registry_provider
+    tools = ToolRegistry()
+    tools.register(_FakeTool())
     rules = PermissionRules(denylist={"echo"})
     pipeline = PermissionPipeline(rules)
     selector = _MockSelector()
@@ -249,7 +250,7 @@ async def test_loop_permission_denied(engine_and_provider):
         ),
     ]
 
-    loop = AgentLoop(engine, registry, pipeline, selector)
+    loop = AgentLoop(engine, tools, pipeline, selector, model_registry)
     ctx = AgentContext(task_type="main")
 
     async for _ in loop.run("echo x", ctx):
@@ -259,10 +260,10 @@ async def test_loop_permission_denied(engine_and_provider):
 
 
 @pytest.mark.asyncio
-async def test_loop_unknown_tool(engine_and_provider):
+async def test_loop_unknown_tool(engine_registry_provider):
     """Unknown tool in response is handled as an error."""
-    engine, provider = engine_and_provider
-    registry = ToolRegistry()
+    engine, model_registry, provider = engine_registry_provider
+    tools = ToolRegistry()
     rules = PermissionRules()
     pipeline = PermissionPipeline(rules)
     selector = _MockSelector()
@@ -280,7 +281,7 @@ async def test_loop_unknown_tool(engine_and_provider):
         ),
     ]
 
-    loop = AgentLoop(engine, registry, pipeline, selector)
+    loop = AgentLoop(engine, tools, pipeline, selector, model_registry)
     ctx = AgentContext(task_type="main")
 
     async for _ in loop.run("hi", ctx):
@@ -290,14 +291,15 @@ async def test_loop_unknown_tool(engine_and_provider):
 
 
 @pytest.mark.asyncio
-async def test_loop_handoff_injects_prompt(engine_and_provider):
+async def test_loop_handoff_injects_prompt(engine_registry_provider):
     """Main conversation triggers handoff when model changes mid-session."""
-    engine, provider = engine_and_provider
+    engine, model_registry, provider = engine_registry_provider
     # Register under both names so the selector can switch between them
-    engine._registry.register("model-a", provider)
-    engine._registry.register("model-b", provider)
+    cfg = ModelConfig(model="test", api_key="sk-test")
+    model_registry.register("model-a", provider, config=cfg)
+    model_registry.register("model-b", provider, config=cfg)
 
-    registry = ToolRegistry()
+    tools = ToolRegistry()
     rules = PermissionRules()
     pipeline = PermissionPipeline(rules)
 
@@ -310,7 +312,7 @@ async def test_loop_handoff_injects_prompt(engine_and_provider):
             return "model-a" if self.calls % 2 == 1 else "model-b"
 
     selector = SwitchingSelector()
-    loop = AgentLoop(engine, registry, pipeline, selector)
+    loop = AgentLoop(engine, tools, pipeline, selector, model_registry)
     ctx = AgentContext(task_type="main")
 
     # Turn 1: model-a
@@ -342,14 +344,14 @@ async def test_loop_handoff_injects_prompt(engine_and_provider):
 
 
 @pytest.mark.asyncio
-async def test_loop_system_prompt_injected_once(engine_and_provider):
-    engine, provider = engine_and_provider
-    registry = ToolRegistry()
+async def test_loop_system_prompt_injected_once(engine_registry_provider):
+    engine, model_registry, provider = engine_registry_provider
+    tools = ToolRegistry()
     rules = PermissionRules()
     pipeline = PermissionPipeline(rules)
     selector = _MockSelector()
 
-    loop = AgentLoop(engine, registry, pipeline, selector)
+    loop = AgentLoop(engine, tools, pipeline, selector, model_registry)
     ctx = AgentContext(task_type="main", system_prompt="you are helpful")
 
     # Two turns — system prompt should only appear in messages once

@@ -6,6 +6,7 @@ from pathlib import Path
 import typer
 
 from wings.cli.bootstrap import create_session, make_agent_context
+from wings.cli.logging import TurnLogger
 from wings.messages.types import TextDelta
 
 app = typer.Typer(
@@ -54,9 +55,13 @@ def run(
         None, "--model", "-m",
         help="Model override",
     ),
+    log: bool = typer.Option(
+        False, "--log",
+        help="Log request/response to .wings.log/",
+    ),
 ) -> None:
     """Run a single-turn agent request."""
-    asyncio.run(_run_single(prompt, working_dir, model))
+    asyncio.run(_run_single(prompt, working_dir, model, log))
 
 
 @app.command()
@@ -69,24 +74,30 @@ def chat(
         None, "--model", "-m",
         help="Model override",
     ),
+    log: bool = typer.Option(
+        False, "--log",
+        help="Log request/response to .wings.log/",
+    ),
 ) -> None:
     """Start an interactive chat session."""
-    asyncio.run(_run_chat(working_dir, model))
+    asyncio.run(_run_chat(working_dir, model, log))
 
 
 # -- Implementation -----------------------------------------------------------
 
 
-async def _run_single(prompt: str, working_dir: Path, model: str | None) -> None:
+async def _run_single(prompt: str, working_dir: Path, model: str | None, log: bool) -> None:
     """Execute a single-turn agent request."""
     try:
         loop, config = create_session(working_dir)
+        if log:
+            logger = TurnLogger(working_dir)
+            loop.set_logger(logger)
+            typer.echo(f"  Logging to {logger.path}")
         ctx = make_agent_context(config, working_dir=working_dir, model_override=model)
     except Exception as e:
         typer.echo(f"Error: failed to initialize session: {e}", err=True)
         raise typer.Exit(code=1)
-
-    typer.echo(f"  Model: {loop._turn_history[-1].model_id if loop._turn_history else 'pool'}")
 
     try:
         async for event in loop.run(prompt, ctx):
@@ -98,10 +109,14 @@ async def _run_single(prompt: str, working_dir: Path, model: str | None) -> None
         raise typer.Exit(code=1)
 
 
-async def _run_chat(working_dir: Path, model: str | None) -> None:
+async def _run_chat(working_dir: Path, model: str | None, log: bool) -> None:
     """Interactive chat loop."""
     try:
         loop, config = create_session(working_dir)
+        if log:
+            logger = TurnLogger(working_dir)
+            loop.set_logger(logger)
+            typer.echo(f"  Logging to {logger.path}")
     except Exception as e:
         typer.echo(f"Error: failed to initialize session: {e}", err=True)
         raise typer.Exit(code=1)
