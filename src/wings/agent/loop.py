@@ -155,17 +155,30 @@ class AgentLoop:
                 self._messages.append(
                     Message(role=Role.ASSISTANT, content=assistant_content)
                 )
+
+                # Collect all tool results into a single user message.
+                # Anthropic requires all tool_result blocks for one assistant
+                # response to be grouped in the next user message.
+                tool_results: list[ToolResultBlock] = []
                 for block in tool_use_blocks:
                     tool = self._tool_registry.get(block.name)
                     if tool is None:
-                        self._inject_error(block.id, f"unknown tool: {block.name}")
+                        tool_results.append(ToolResultBlock(
+                            tool_use_id=block.id,
+                            content=f"unknown tool: {block.name}",
+                            is_error=True,
+                        ))
                         continue
 
                     result = await self._permission_pipeline.check(
                         tool, block.input, context.tool_context,
                     )
                     if result == "deny":
-                        self._inject_error(block.id, "permission denied")
+                        tool_results.append(ToolResultBlock(
+                            tool_use_id=block.id,
+                            content="permission denied",
+                            is_error=True,
+                        ))
                         continue
 
                     cycle_tool_calls.append(block.name)
@@ -173,20 +186,22 @@ class AgentLoop:
                     try:
                         tool_result = await tool.call(block.input, context.tool_context)
                     except Exception as exc:
-                        self._inject_error(block.id, f"tool error: {exc}")
+                        tool_results.append(ToolResultBlock(
+                            tool_use_id=block.id,
+                            content=f"tool error: {exc}",
+                            is_error=True,
+                        ))
                         continue
-                    self._messages.append(
-                        Message(
-                            role=Role.USER,
-                            content=[
-                                ToolResultBlock(
-                                    tool_use_id=block.id,
-                                    content=tool_result.output,
-                                    is_error=tool_result.error is not None,
-                                )
-                            ],
-                        )
-                    )
+                    tool_results.append(ToolResultBlock(
+                        tool_use_id=block.id,
+                        content=tool_result.output,
+                        is_error=tool_result.error is not None,
+                    ))
+
+                self._messages.append(
+                    Message(role=Role.USER, content=list(tool_results))
+                )
+
                 # Update the log entry with actual tool calls
                 if self._logger is not None and cycle_tool_calls:
                     self._logger.record_turn(
@@ -224,18 +239,6 @@ class AgentLoop:
             )
         self._messages.append(
             Message(role=Role.USER, content=[TextBlock(text=user_input)])
-        )
-
-    def _inject_error(self, tool_use_id: str, error: str) -> None:
-        self._messages.append(
-            Message(
-                role=Role.USER,
-                content=[
-                    ToolResultBlock(
-                        tool_use_id=tool_use_id, content=error, is_error=True
-                    )
-                ],
-            )
         )
 
     def _last_assistant_text(self) -> str:

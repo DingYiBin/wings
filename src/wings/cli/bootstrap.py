@@ -5,6 +5,8 @@ This is the "composition root" where all modules are wired together.
 
 from __future__ import annotations
 
+import platform
+from datetime import datetime
 from pathlib import Path
 
 from wings.agent.loop import AgentContext, AgentLoop
@@ -145,6 +147,17 @@ def make_agent_context(
     """
     cwd = str(working_dir or Path.cwd())
     system_prompt = config.project_settings.personality or ""
+
+    # Inject environment information
+    env_info = (
+        f"Working directory: {cwd}\n"
+        f"Operating system: {platform.system()}\n"
+        f"Current date: {datetime.now().strftime('%Y-%m-%d')}"
+    )
+    if system_prompt:
+        system_prompt = f"{env_info}\n\n{system_prompt}"
+    else:
+        system_prompt = env_info
 
     # Inject available skills into system prompt
     if skills:
