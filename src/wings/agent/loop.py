@@ -170,7 +170,11 @@ class AgentLoop:
 
                     cycle_tool_calls.append(block.name)
                     turn.tool_calls.append(block.name)
-                    tool_result = await tool.call(block.input, context.tool_context)
+                    try:
+                        tool_result = await tool.call(block.input, context.tool_context)
+                    except Exception as exc:
+                        self._inject_error(block.id, f"tool error: {exc}")
+                        continue
                     self._messages.append(
                         Message(
                             role=Role.USER,

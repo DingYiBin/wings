@@ -57,6 +57,8 @@ def tool(
                 return _input_type.model_json_schema()
 
             async def call(self, input: Any, context: ToolContext) -> ToolResult:
+                if _input_type is not None and isinstance(input, dict):
+                    input = _input_type(**input)
                 result = await _fn(input, context)
                 return ToolResult(output=str(result))
 
