@@ -24,7 +24,7 @@ class ProviderConfig(BaseModel):
 
     model: str = "claude-sonnet-4-6"
     api_key: str = ""
-    base_url: str | None = None
+    base_url: str  # required — each provider has its own endpoint
 
 
 # -- Global settings ----------------------------------------------------------
@@ -70,7 +70,10 @@ class GlobalSettings(BaseSettings):
         env_key = os.environ.get(f"WINGS_PROVIDERS__{provider.upper()}__API_KEY", "")
         if env_key:
             return env_key
-        return self.providers.get(provider, ProviderConfig()).api_key
+        cfg = self.providers.get(provider)
+        if cfg is None:
+            return ""
+        return cfg.api_key
 
 
 # -- Project settings ---------------------------------------------------------

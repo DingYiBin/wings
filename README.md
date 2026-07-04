@@ -53,17 +53,19 @@ Create `~/.wings/config.json`:
   "providers": {
     "anthropic": {
       "model": "claude-sonnet-4-6",
-      "api_key": "sk-ant-api03-..."
+      "api_key": "sk-ant-api03-...",
+      "base_url": "https://api.anthropic.com"
     },
     "openai": {
       "model": "gpt-4o",
-      "api_key": "sk-..."
+      "api_key": "sk-...",
+      "base_url": "https://api.openai.com/v1"
     }
   }
 }
 ```
 
-Provider names are the keys under `"providers"`. Each value is a dict with `model`, `api_key`, and optional `base_url`.
+Provider names are the keys under `"providers"`. Each value requires `model`, `api_key`, and `base_url` (every provider has its own endpoint).
 
 API keys can also be set via environment variables (takes priority over config file):
 

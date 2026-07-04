@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from wings.config.settings import (
     AppConfig,
     GlobalSettings,
@@ -28,7 +30,8 @@ def test_global_settings_load_from_json(tmp_path):
   "providers": {
     "anthropic": {
       "model": "claude-opus-4-6",
-      "api_key": "sk-test"
+      "api_key": "sk-test",
+      "base_url": "https://api.anthropic.com"
     }
   },
   "routing": {
@@ -44,15 +47,20 @@ def test_global_settings_load_from_json(tmp_path):
 
 
 def test_global_settings_providers_defaults():
-    cfg = ProviderConfig()
+    cfg = ProviderConfig(base_url="https://api.anthropic.com")
     assert cfg.model == "claude-sonnet-4-6"
     assert cfg.api_key == ""
-    assert cfg.base_url is None
+    assert cfg.base_url == "https://api.anthropic.com"
+
+
+def test_provider_config_requires_base_url():
+    with pytest.raises(Exception):
+        ProviderConfig()  # base_url is required
 
 
 def test_global_settings_api_key_from_config():
     settings = GlobalSettings(
-        providers={"anthropic": ProviderConfig(api_key="sk-config")}
+        providers={"anthropic": ProviderConfig(api_key="sk-config", base_url="https://api.anthropic.com")}
     )
     assert settings.api_key_for("anthropic") == "sk-config"
 
@@ -60,7 +68,7 @@ def test_global_settings_api_key_from_config():
 def test_global_settings_api_key_from_env(monkeypatch):
     monkeypatch.setenv("WINGS_PROVIDERS__ANTHROPIC__API_KEY", "sk-env")
     settings = GlobalSettings(
-        providers={"anthropic": ProviderConfig(api_key="sk-config")}
+        providers={"anthropic": ProviderConfig(api_key="sk-config", base_url="https://api.anthropic.com")}
     )
     assert settings.api_key_for("anthropic") == "sk-env"
 
@@ -115,6 +123,7 @@ def test_project_settings_not_found(tmp_path):
 
 def test_app_config_load(tmp_path, monkeypatch):
     monkeypatch.setenv("WINGS_PROVIDERS__ANTHROPIC__API_KEY", "sk-test-key")
+    monkeypatch.setenv("WINGS_PROVIDERS__ANTHROPIC__BASE_URL", "https://api.anthropic.com")
     (tmp_path / "wings.json").write_text(
         '{"allowed_tools": ["read"], "personality": "concise"}'
     )
