@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 
 class TurnLogger:
-    """Captures outgoing messages and incoming responses for each turn.
+    """Captures outgoing messages and incoming responses for each cycle.
 
     When enabled via --log, writes one .log file per session to
     .wings.log/ in the working directory.
@@ -21,11 +22,11 @@ class TurnLogger:
         self._dir.mkdir(parents=True, exist_ok=True)
         self._path = self._make_path()
         self._buffer: list[dict[str, Any]] = []
-        self._turn_count = 0
+        self._cycle_count = 0
+        self._session_start = time.monotonic()
 
     def _make_path(self) -> Path:
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")
-        # Short hash from timestamp + pid for uniqueness
         raw = f"{ts}-{id(self)}".encode()
         h = hashlib.sha256(raw).hexdigest()[:8]
         return self._dir / f"{ts}_{h}.log"
@@ -34,7 +35,7 @@ class TurnLogger:
     def path(self) -> Path:
         return self._path
 
-    def record_turn(
+    def record_cycle(
         self,
         *,
         model: str,
@@ -42,11 +43,13 @@ class TurnLogger:
         response: dict[str, Any],
         tool_calls: list[str] | None = None,
     ) -> None:
-        """Record a single turn (request + response)."""
-        self._turn_count += 1
+        """Record a single API call cycle (request + response) with timestamps."""
+        self._cycle_count += 1
         provider_name, _, service_model = model.partition("/")
         entry = {
-            "turn": self._turn_count,
+            "cycle": self._cycle_count,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "elapsed_s": round(time.monotonic() - self._session_start, 3),
             "provider": provider_name,
             "service_model": service_model or model,
             "api_id": model,

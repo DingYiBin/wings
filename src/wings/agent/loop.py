@@ -3,8 +3,10 @@
 Ties together model selection, permission checks, tool execution,
 handoff detection, and query calls into a single async generator.
 
-Uses non-streaming chat() for now — tool_use blocks are complete
-and executable immediately. Streaming can be layered on later.
+Every API call (including tool-use cycles) independently selects a model
+from the task-type candidate pool.  This is the core wings differentiator:
+users configure pools, and each model invocation is a fresh weighted-random
+draw.
 """
 
 from __future__ import annotations
@@ -16,7 +18,6 @@ from wings.agent.handoff import HandoffDetector, TurnRecord
 from wings.messages.types import (
     Message,
     Role,
-    StopReason,
     StreamEvent,
     TextBlock,
     TextDelta,
@@ -86,38 +87,47 @@ class AgentLoop:
         Yields TextDelta events for assistant output. Tool execution
         is transparent — results are injected into the message list
         and the loop continues until end_turn.
+
+        Every API call (including after tool execution) performs
+        a fresh model selection from the task-type candidate pool.
         """
-        model = self._select_model(context)
         self._assemble_messages(user_input, context)
 
-        # Handoff detection (main conversation only)
-        if context.task_type == "main":
-            handoff = self._handoff_detector.detect(model, self._turn_history)
-            if handoff:
-                self._messages.append(
-                    Message(role=Role.USER, content=[TextBlock(text=handoff)])
-                )
-
-        # Record turn
-        provider_name, _, service_model = model.partition("/")
-        turn = TurnRecord(
-            turn_id=len(self._turn_history),
-            model_id=model,
-            provider_name=provider_name,
-            service_model=service_model,
-            user_input_summary=user_input[:200],
-        )
-        self._turn_history.append(turn)
-
-        cfg = config or self._model_registry.build_config(model)
+        turn: TurnRecord | None = None
 
         while True:
+            # -- Select model for *this* API call --
+            model = self._select_model(context)
+            cfg = config or self._model_registry.build_config(model)
+
+            # Record turn from the first cycle's model selection
+            if turn is None:
+                provider_name, _, service_model = model.partition("/")
+                turn = TurnRecord(
+                    turn_id=len(self._turn_history),
+                    model_id=model,
+                    provider_name=provider_name,
+                    service_model=service_model,
+                    user_input_summary=user_input[:200],
+                )
+
+                # Handoff detection (main conversation only).
+                # Do this BEFORE adding the turn to history so the
+                # detector looks at past turns, not the current one.
+                if context.task_type == "main":
+                    handoff = self._handoff_detector.detect(model, self._turn_history)
+                    if handoff:
+                        self._messages.append(
+                            Message(role=Role.USER, content=[TextBlock(text=handoff)])
+                        )
+
+                self._turn_history.append(turn)
+
             # Stream phase — collect deltas (real-time) and final blocks
             tool_use_blocks: list[ToolUseBlock] = []
             text_blocks: list[TextBlock] = []
             cycle_tool_calls: list[str] = []
-
-            streamed_text = False  # track if any real-time text was sent
+            streamed_text = False
 
             async for event in self._query_engine.stream(
                 self._messages,
@@ -131,14 +141,13 @@ class AgentLoop:
                 elif isinstance(event, TextBlock):
                     text_blocks.append(event)
                     if not streamed_text:
-                        # API didn't stream deltas — send text from final block
                         yield TextDelta(text=event.text)
                 elif isinstance(event, ToolUseBlock):
                     tool_use_blocks.append(event)
 
             # Log this request/response cycle
             if self._logger is not None:
-                self._logger.record_turn(
+                self._logger.record_cycle(
                     model=model,
                     messages_sent=[m.model_dump() for m in self._messages],
                     response={
@@ -170,10 +179,10 @@ class AgentLoop:
                         ))
                         continue
 
-                    result = await self._permission_pipeline.check(
+                    perm_result = await self._permission_pipeline.check(
                         tool, block.input, context.tool_context,
                     )
-                    if result == "deny":
+                    if perm_result == "deny":
                         tool_results.append(ToolResultBlock(
                             tool_use_id=block.id,
                             content="permission denied",
@@ -202,15 +211,15 @@ class AgentLoop:
                     Message(role=Role.USER, content=list(tool_results))
                 )
 
-                # Update the log entry with actual tool calls
+                # Log after tool execution
                 if self._logger is not None and cycle_tool_calls:
-                    self._logger.record_turn(
+                    self._logger.record_cycle(
                         model=model,
                         messages_sent=[m.model_dump() for m in self._messages],
                         response={"content": [b.model_dump() for b in tool_use_blocks]},
                         tool_calls=cycle_tool_calls,
                     )
-                continue  # loop back for next chat call
+                continue  # loop back for next chat call with fresh model selection
 
             # No tools — end turn
             if text_blocks:
@@ -218,6 +227,8 @@ class AgentLoop:
                     Message(role=Role.ASSISTANT, content=list(text_blocks))
                 )
             turn.summary = self._last_assistant_text()[:200]
+            # Record the model that actually produced the final answer
+            turn.model_id = model
             return  # end_turn
 
     # -- Internal helpers ------------------------------------------------------
