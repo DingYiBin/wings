@@ -77,7 +77,7 @@ class ThinkingDelta(BaseModel):
     text: str
 
 
-StreamEvent = TextDelta | ToolUseDelta | ThinkingDelta
+StreamEvent = TextDelta | ToolUseDelta | ThinkingDelta | TextBlock | ToolUseBlock | ToolResultBlock
 
 
 # -- Stop reason -------------------------------------------------------------

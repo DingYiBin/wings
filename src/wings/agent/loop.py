@@ -160,6 +160,10 @@ class AgentLoop:
 
             # Execute tools
             if tool_use_blocks:
+                # Yield tool_use blocks for CLI display
+                for block in tool_use_blocks:
+                    yield block
+
                 assistant_content: list[Any] = list(text_blocks) + list(tool_use_blocks)
                 self._messages.append(
                     Message(role=Role.ASSISTANT, content=assistant_content)
@@ -172,22 +176,26 @@ class AgentLoop:
                 for block in tool_use_blocks:
                     tool = self._tool_registry.get(block.name)
                     if tool is None:
-                        tool_results.append(ToolResultBlock(
+                        tr = ToolResultBlock(
                             tool_use_id=block.id,
                             content=f"unknown tool: {block.name}",
                             is_error=True,
-                        ))
+                        )
+                        tool_results.append(tr)
+                        yield tr
                         continue
 
                     perm_result = await self._permission_pipeline.check(
                         tool, block.input, context.tool_context,
                     )
                     if perm_result == "deny":
-                        tool_results.append(ToolResultBlock(
+                        tr = ToolResultBlock(
                             tool_use_id=block.id,
                             content="permission denied",
                             is_error=True,
-                        ))
+                        )
+                        tool_results.append(tr)
+                        yield tr
                         continue
 
                     cycle_tool_calls.append(block.name)
@@ -195,17 +203,21 @@ class AgentLoop:
                     try:
                         tool_result = await tool.call(block.input, context.tool_context)
                     except Exception as exc:
-                        tool_results.append(ToolResultBlock(
+                        tr = ToolResultBlock(
                             tool_use_id=block.id,
                             content=f"tool error: {exc}",
                             is_error=True,
-                        ))
+                        )
+                        tool_results.append(tr)
+                        yield tr
                         continue
-                    tool_results.append(ToolResultBlock(
+                    tr = ToolResultBlock(
                         tool_use_id=block.id,
                         content=tool_result.output,
                         is_error=tool_result.error is not None,
-                    ))
+                    )
+                    tool_results.append(tr)
+                    yield tr
 
                 self._messages.append(
                     Message(role=Role.USER, content=list(tool_results))
