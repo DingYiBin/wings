@@ -1418,11 +1418,10 @@ class Environment(BaseModel):
 | 4 | query | ✅ | `engine.py` (retry), `token_budget.py` (heuristic) | 15 |
 | 5 | permissions | ✅ | `pipeline.py` (4-stage), `rules.py` (allowlist/denylist) | 17 |
 | 6a | agent/core | ✅ | `loop.py` (chat mode), `handoff.py` (reverse-traversal) | 12 |
-| 6b | agent/subagent | — | `subagent.py`, `coordinator.py`, `resume.py` | — |
-| 7 | config | — | `settings.py` | — |
-| 8 | cli | — | `main.py`, `repl.py` | — |
-| 9 | skills | — | `loader.py`, `injector.py` | — |
-| 10+ | hooks, memory, plugins, MCP | — | — | — |
+| 6b | ~~agent/subagent~~ | ⏸️ | 推迟，等端到端跑通后再做 | — |
+| 7 | config | — | `settings.py` (GlobalSettings + ProjectSettings) | — |
+| 8 | cli | — | `main.py` (wiring + single-turn + /pool) | — |
+| 9+ | skills, hooks, memory, plugins, MCP, subagent | — | 后续迭代 | — |
 
 **总计**: 7 个阶段完成，173 个测试，~2550 行实现代码。
 
@@ -1527,6 +1526,21 @@ tools     ← 无依赖（独立模块）
 query     ← models + messages + tools
     ↓
 agent     ← query + tools + messages + permissions + routing
+    ↓
+config    ← routing (PoolConfig) + 无依赖 (TOML 解析)
+    ↓
+cli       ← agent + config + models + routing (全部模块汇聚)
+```
+
+### 调整说明（2026-07-04）
+
+原计划 Phase 6b 做 subagent/coordinator，但当前优先级调整为**尽快端到端跑通**。最小可用路径：
+
+```
+已完成的 7 个模块 → config (加载 API key/池配置) → cli (wiring + 交互)
+```
+
+Subagent 和 skills 推迟到端到端验证通过后再做，不阻塞首次运行。
 ```
 
 关键原则：**每个新模块只依赖已完成的模块**。Phase 3 (tools) 可以独立开发，因为它不依赖前三个模块。
