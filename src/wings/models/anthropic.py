@@ -84,10 +84,12 @@ class AnthropicProvider:
 
         with client.messages.stream(**kwargs) as stream:
             for event in stream:
-                if event.type == "text_delta":
-                    yield TextDelta(text=event.text)
-                elif event.type == "thinking_delta":
-                    yield ThinkingDelta(text=event.thinking)
+                if event.type == "content_block_delta":
+                    dt = event.delta.type
+                    if dt == "text_delta":
+                        yield TextDelta(text=event.delta.text)
+                    elif dt == "thinking_delta":
+                        yield ThinkingDelta(text=event.delta.thinking)
 
             # After stream ends, yield complete blocks from final message
             final = stream.get_final_message()

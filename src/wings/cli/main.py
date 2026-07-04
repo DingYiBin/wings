@@ -8,6 +8,8 @@ from pathlib import Path
 
 import typer
 
+from prompt_toolkit import PromptSession
+
 from wings.cli.bootstrap import create_session, make_agent_context
 from wings.cli.logging import TurnLogger
 from wings.messages.types import TextDelta
@@ -172,10 +174,11 @@ async def _run_chat(working_dir: Path, model: str | None, log: bool) -> None:
         raise typer.Exit(code=1)
 
     typer.echo("Wings chat — type /help for commands, /exit to quit.")
+    session = PromptSession("> ", enable_history_search=False)
 
     while True:
         try:
-            user_input = input("> ")
+            user_input = (await session.prompt_async()).strip()
         except (EOFError, KeyboardInterrupt):
             print()
             break
