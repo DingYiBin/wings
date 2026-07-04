@@ -20,6 +20,7 @@ from wings.messages.types import (
     StreamEvent,
     TextBlock,
     TextDelta,
+    ThinkingDelta,
     ToolResultBlock,
     ToolUseBlock,
 )
@@ -111,36 +112,61 @@ class AgentLoop:
         cfg = config or self._model_registry.build_config(model)
 
         while True:
-            response = await self._query_engine.chat(
+            # Stream phase — collect deltas (real-time) and final blocks
+            tool_use_blocks: list[ToolUseBlock] = []
+            text_blocks: list[TextBlock] = []
+            cycle_tool_calls: list[str] = []
+
+            streamed_text = False  # track if any real-time text was sent
+
+            async for event in self._query_engine.stream(
                 self._messages,
                 model,
                 tools=self._tool_registry.get_schemas(),
                 config=cfg,
-            )
+            ):
+                if isinstance(event, (TextDelta, ThinkingDelta)):
+                    streamed_text = True
+                    yield event
+                elif isinstance(event, TextBlock):
+                    text_blocks.append(event)
+                    if not streamed_text:
+                        # API didn't stream deltas — send text from final block
+                        yield TextDelta(text=event.text)
+                elif isinstance(event, ToolUseBlock):
+                    tool_use_blocks.append(event)
 
-            had_tool_use = False
-            cycle_tool_calls: list[str] = []
-            assistant_content: list[Any] = []
+            # Log this request/response cycle
+            if self._logger is not None:
+                self._logger.record_turn(
+                    model=model,
+                    messages_sent=[m.model_dump() for m in self._messages],
+                    response={
+                        "content": [
+                            b.model_dump() for b in text_blocks + tool_use_blocks  # type: ignore[union-attr]
+                        ]
+                    },
+                    tool_calls=cycle_tool_calls,
+                )
 
-            for block in response.content:
-                if isinstance(block, TextBlock):
-                    assistant_content.append(block)
-                    yield TextDelta(text=block.text)
-                elif isinstance(block, ToolUseBlock):
-                    assistant_content.append(block)
-                    had_tool_use = True
-
+            # Execute tools
+            if tool_use_blocks:
+                assistant_content: list[Any] = list(text_blocks) + list(tool_use_blocks)
+                self._messages.append(
+                    Message(role=Role.ASSISTANT, content=assistant_content)
+                )
+                for block in tool_use_blocks:
                     tool = self._tool_registry.get(block.name)
                     if tool is None:
                         self._inject_error(block.id, f"unknown tool: {block.name}")
-                        break
+                        continue
 
                     result = await self._permission_pipeline.check(
                         tool, block.input, context.tool_context,
                     )
                     if result == "deny":
                         self._inject_error(block.id, "permission denied")
-                        break
+                        continue
 
                     cycle_tool_calls.append(block.name)
                     turn.tool_calls.append(block.name)
@@ -157,25 +183,23 @@ class AgentLoop:
                             ],
                         )
                     )
+                # Update the log entry with actual tool calls
+                if self._logger is not None and cycle_tool_calls:
+                    self._logger.record_turn(
+                        model=model,
+                        messages_sent=[m.model_dump() for m in self._messages],
+                        response={"content": [b.model_dump() for b in tool_use_blocks]},
+                        tool_calls=cycle_tool_calls,
+                    )
+                continue  # loop back for next chat call
 
-            # Log this request/response cycle
-            if self._logger is not None:
-                self._logger.record_turn(
-                    model=model,
-                    messages_sent=[m.model_dump() for m in self._messages],
-                    response=response.model_dump(),
-                    tool_calls=cycle_tool_calls,
-                )
-
-            # Record assistant message
-            if assistant_content:
+            # No tools — end turn
+            if text_blocks:
                 self._messages.append(
-                    Message(role=Role.ASSISTANT, content=assistant_content)
+                    Message(role=Role.ASSISTANT, content=list(text_blocks))
                 )
-
-            if not had_tool_use:
-                turn.summary = self._last_assistant_text()[:200]
-                return  # end_turn
+            turn.summary = self._last_assistant_text()[:200]
+            return  # end_turn
 
     # -- Internal helpers ------------------------------------------------------
 

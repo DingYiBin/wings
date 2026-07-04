@@ -143,20 +143,31 @@ class _MockSelector:
         return override or "test/model"
 
 
-def _make_engine(responses=None):
-    """Create a QueryEngine with a mock provider that returns canned responses."""
+def _make_stream(blocks=None):
+    """Create an async generator that yields deltas then complete blocks."""
+    async def _stream(*args, **kwargs):
+        for b in (blocks or [TextBlock(text="hello world")]):
+            if isinstance(b, TextBlock):
+                yield TextDelta(text=b.text)
+                yield b  # complete block at end
+            elif isinstance(b, ToolUseBlock):
+                yield b  # tool block
+    return _stream
+
+
+def _make_engine(stream_blocks=None):
+    """Create a QueryEngine with a mock provider.
+
+    Args:
+        stream_blocks: list of TextBlock/ToolUseBlock to yield from stream().
+    """
     selector = _MockSelector()
     registry = ModelRegistry(selector)
 
     provider = AsyncMock()
-    if responses:
-        provider.chat.side_effect = responses
-    else:
-        provider.chat.return_value = ModelResponse(
-            content=[TextBlock(text="hello world")],
-            stop_reason=StopReason.END_TURN,
-            usage=TokenUsage(input_tokens=5, output_tokens=5),
-        )
+    provider.provider_name = "anthropic"
+    provider.stream = _make_stream(stream_blocks)
+
     config = ModelConfig(model="test/model", api_key="sk-test")
     registry.register("test/model", provider, config=config)
     return QueryEngine(registry), registry, provider
@@ -182,9 +193,8 @@ async def test_loop_simple_text_response(engine_registry_provider):
     async for event in loop.run("hello", ctx):
         events.append(event)
 
-    assert len(events) == 1
+    assert len(events) == 1  # TextDelta (TextBlock collected internally)
     assert events[0].text == "hello world"
-    provider.chat.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -197,22 +207,18 @@ async def test_loop_tool_use_cycle(engine_registry_provider):
     pipeline = PermissionPipeline(rules)
     selector = _MockSelector()
 
-    # First response: tool_use, second: final text
-    class EchoCall:
-        msg = "ping"
+    call_count = 0
 
-    provider.chat.side_effect = [
-        ModelResponse(
-            content=[ToolUseBlock(id="1", name="echo", input={"msg": "ping"})],
-            stop_reason=StopReason.TOOL_USE,
-            usage=TokenUsage(input_tokens=5, output_tokens=5),
-        ),
-        ModelResponse(
-            content=[TextBlock(text="done after tool")],
-            stop_reason=StopReason.END_TURN,
-            usage=TokenUsage(input_tokens=10, output_tokens=5),
-        ),
-    ]
+    async def _stream(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            yield ToolUseBlock(id="1", name="echo", input={"msg": "ping"})
+        else:
+            yield TextDelta(text="done after tool")
+            yield TextBlock(text="done after tool")
+
+    provider.stream = _stream
 
     loop = AgentLoop(engine, tools, pipeline, selector, model_registry)
     ctx = AgentContext(task_type="main")
@@ -221,10 +227,9 @@ async def test_loop_tool_use_cycle(engine_registry_provider):
     async for event in loop.run("echo ping", ctx):
         events.append(event)
 
-    # Two chat calls: one for tool_use, one for final
-    assert provider.chat.call_count == 2
-    assert len(events) == 1
-    assert events[0].text == "done after tool"
+    assert call_count == 2
+    # First call: tool block (no text), second call: text
+    assert events[-1].text == "done after tool"
 
 
 @pytest.mark.asyncio
@@ -237,18 +242,18 @@ async def test_loop_permission_denied(engine_registry_provider):
     pipeline = PermissionPipeline(rules)
     selector = _MockSelector()
 
-    provider.chat.side_effect = [
-        ModelResponse(
-            content=[ToolUseBlock(id="1", name="echo", input={"msg": "x"})],
-            stop_reason=StopReason.TOOL_USE,
-            usage=TokenUsage(input_tokens=5, output_tokens=5),
-        ),
-        ModelResponse(
-            content=[TextBlock(text="got error, stopping")],
-            stop_reason=StopReason.END_TURN,
-            usage=TokenUsage(input_tokens=5, output_tokens=5),
-        ),
-    ]
+    call_count = 0
+
+    async def _stream(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            yield ToolUseBlock(id="1", name="echo", input={"msg": "x"})
+        else:
+            yield TextDelta(text="got error, stopping")
+            yield TextBlock(text="got error, stopping")
+
+    provider.stream = _stream
 
     loop = AgentLoop(engine, tools, pipeline, selector, model_registry)
     ctx = AgentContext(task_type="main")
@@ -256,7 +261,7 @@ async def test_loop_permission_denied(engine_registry_provider):
     async for _ in loop.run("echo x", ctx):
         pass
 
-    assert provider.chat.call_count == 2
+    assert call_count == 2
 
 
 @pytest.mark.asyncio
@@ -268,18 +273,18 @@ async def test_loop_unknown_tool(engine_registry_provider):
     pipeline = PermissionPipeline(rules)
     selector = _MockSelector()
 
-    provider.chat.side_effect = [
-        ModelResponse(
-            content=[ToolUseBlock(id="1", name="nonexistent", input={})],
-            stop_reason=StopReason.TOOL_USE,
-            usage=TokenUsage(input_tokens=5, output_tokens=5),
-        ),
-        ModelResponse(
-            content=[TextBlock(text="ok")],
-            stop_reason=StopReason.END_TURN,
-            usage=TokenUsage(input_tokens=5, output_tokens=2),
-        ),
-    ]
+    call_count = 0
+
+    async def _stream(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            yield ToolUseBlock(id="1", name="nonexistent", input={})
+        else:
+            yield TextDelta(text="ok")
+            yield TextBlock(text="ok")
+
+    provider.stream = _stream
 
     loop = AgentLoop(engine, tools, pipeline, selector, model_registry)
     ctx = AgentContext(task_type="main")
@@ -287,7 +292,7 @@ async def test_loop_unknown_tool(engine_registry_provider):
     async for _ in loop.run("hi", ctx):
         pass
 
-    assert provider.chat.call_count == 2
+    assert call_count == 2
 
 
 @pytest.mark.asyncio
@@ -324,12 +329,6 @@ async def test_loop_handoff_injects_prompt(engine_registry_provider):
         pass
 
     # Turn 3: model-a again — should trigger handoff
-    # The handoff prompt should be injected into _messages
-    provider.chat.return_value = ModelResponse(
-        content=[TextBlock(text="back again")],
-        stop_reason=StopReason.END_TURN,
-        usage=TokenUsage(input_tokens=5, output_tokens=5),
-    )
     async for _ in loop.run("third", ctx):
         pass
 

@@ -1,6 +1,9 @@
 """Wings CLI entry point."""
 
 import asyncio
+import contextlib
+import sys
+import time
 from pathlib import Path
 
 import typer
@@ -85,6 +88,51 @@ def chat(
 
 # -- Implementation -----------------------------------------------------------
 
+# ANSI escape sequences
+_CLEAR_LINE = "\033[2K\r"
+
+
+async def _spinner_task(start: float) -> None:
+    """Update the spinner line every second until cancelled."""
+    try:
+        while True:
+            elapsed = int(time.monotonic() - start)
+            sys.stderr.write(f"{_CLEAR_LINE}Working... ({elapsed}s)")
+            sys.stderr.flush()
+            await asyncio.sleep(1)
+    except asyncio.CancelledError:
+        pass
+
+
+async def _wrap_stream(stream):
+    """Wrap an async iterator with a spinner. Yields events, clears spinner on first text."""
+    started = False
+    spinner = None
+    try:
+        async for event in stream:
+            if not started:
+                spinner = asyncio.create_task(_spinner_task(time.monotonic()))
+                started = True
+                # Yield control so the spinner task can start running
+                await asyncio.sleep(0)
+            if isinstance(event, TextDelta) and spinner is not None:
+                spinner.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await spinner
+                spinner = None
+                sys.stderr.write(_CLEAR_LINE)
+                # Move to a clean line so stdout text starts fresh
+                sys.stderr.write("\n")
+                sys.stderr.flush()
+            yield event
+    finally:
+        if spinner is not None:
+            spinner.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await spinner
+            sys.stderr.write(f"{_CLEAR_LINE}\n")
+            sys.stderr.flush()
+
 
 async def _run_single(prompt: str, working_dir: Path, model: str | None, log: bool) -> None:
     """Execute a single-turn agent request."""
@@ -100,9 +148,10 @@ async def _run_single(prompt: str, working_dir: Path, model: str | None, log: bo
         raise typer.Exit(code=1)
 
     try:
-        async for event in loop.run(prompt, ctx):
+        async for event in _wrap_stream(loop.run(prompt, ctx)):
             if isinstance(event, TextDelta):
                 typer.echo(event.text, nl=False)
+                sys.stdout.flush()
         nickname = loop.last_model.split("/")[0] if loop.last_model else ""
         typer.echo(f"\n  [{nickname}]")
     except Exception as e:
@@ -126,9 +175,9 @@ async def _run_chat(working_dir: Path, model: str | None, log: bool) -> None:
 
     while True:
         try:
-            user_input = typer.prompt("> ")
+            user_input = input("> ")
         except (EOFError, KeyboardInterrupt):
-            typer.echo()
+            print()
             break
 
         if user_input.strip() == "/exit":
@@ -139,9 +188,10 @@ async def _run_chat(working_dir: Path, model: str | None, log: bool) -> None:
         ctx = make_agent_context(config, working_dir=working_dir, model_override=model)
 
         try:
-            async for event in loop.run(user_input, ctx):
+            async for event in _wrap_stream(loop.run(user_input, ctx)):
                 if isinstance(event, TextDelta):
                     typer.echo(event.text, nl=False)
+                    sys.stdout.flush()
             nickname = loop.last_model.split("/")[0] if loop.last_model else ""
             typer.echo(f"\n  [{nickname}]")
         except Exception as e:

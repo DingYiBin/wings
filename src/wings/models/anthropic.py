@@ -67,34 +67,40 @@ class AnthropicProvider:
         messages: list[Message],
         tools: list[dict[str, Any]] | None,
         config: ModelConfig,
-    ) -> AsyncIterator[Any]:  # StreamEvent
-        """Streaming chat call. Yields TextDelta, ToolUseDelta, ThinkingDelta."""
+    ) -> AsyncIterator[Any]:  # StreamEvent | ToolUseBlock | TextBlock
+        """Streaming chat call.
+
+        Yields TextDelta/ThinkingDelta in real-time, then complete
+        TextBlock/ToolUseBlock from the accumulated final message
+        at the end. The caller can display deltas immediately and
+        use the final blocks for tool execution.
+        """
         client = self._client(config)
         system, api_messages = self._split_system(messages)
 
-        kwargs = self._build_request(config, api_messages, tools, system=system, stream=True)
-        current_tool_id: str | None = None
-        current_tool_name: str | None = None
+        kwargs = self._build_request(config, api_messages, tools, system=system, stream=False)
+        # anthropic.Messages.stream() doesn't accept a 'stream' kwarg
+        kwargs.pop("stream", None)
 
         with client.messages.stream(**kwargs) as stream:
             for event in stream:
                 if event.type == "text_delta":
                     yield TextDelta(text=event.text)
-                elif event.type == "content_block_start":
-                    block = event.content_block
-                    if block.type == "tool_use":
-                        current_tool_id = block.id
-                        current_tool_name = block.name
-                        yield ToolUseDelta(id=block.id, name=block.name)
-                elif event.type == "content_block_delta":
-                    delta = event.delta
-                    if delta.type == "input_json_delta":
-                        yield ToolUseDelta(
-                            id=current_tool_id or "",
-                            input_delta={"_partial_json": delta.partial_json},
-                        )
                 elif event.type == "thinking_delta":
                     yield ThinkingDelta(text=event.thinking)
+
+            # After stream ends, yield complete blocks from final message
+            final = stream.get_final_message()
+            for block in final.content:
+                bt = getattr(block, "type", None)
+                if bt == "text":
+                    yield TextBlock(text=block.text)
+                elif bt == "tool_use":
+                    yield ToolUseBlock(
+                        id=block.id,
+                        name=block.name,
+                        input=block.input if isinstance(block.input, dict) else {},
+                    )
 
     # -- helpers --
 

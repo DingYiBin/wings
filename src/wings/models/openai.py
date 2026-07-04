@@ -67,15 +67,20 @@ class OpenAIProvider:
         messages: list[Message],
         tools: list[dict[str, Any]] | None,
         config: ModelConfig,
-    ) -> AsyncIterator[Any]:  # StreamEvent
-        """Streaming chat call. Yields TextDelta, ToolUseDelta, ThinkingDelta."""
+    ) -> AsyncIterator[Any]:  # StreamEvent | ToolUseBlock | TextBlock
+        """Streaming chat call.
+
+        Yields TextDelta in real-time, then complete TextBlock/ToolUseBlock
+        from accumulated state at the end.
+        """
         client = self._client(config)
         api_messages = to_openai_messages(messages)
 
         kwargs = self._build_request(config, api_messages, tools, stream=True)
         stream = await client.chat.completions.create(**kwargs)
 
-        current_tool: dict[str, Any] = {}  # id -> accumulated state
+        current_tool: dict[int, dict[str, str]] = {}
+        text_buffer: list[str] = []
 
         async for chunk in stream:
             if not chunk.choices:
@@ -84,35 +89,32 @@ class OpenAIProvider:
             if delta is None:
                 continue
 
-            # Text
             if delta.content:
+                text_buffer.append(delta.content)
                 yield TextDelta(text=delta.content)
 
-            # Tool calls
             if delta.tool_calls:
                 for tc in delta.tool_calls:
                     idx = tc.index
                     if idx not in current_tool:
                         current_tool[idx] = {"id": "", "name": "", "args": ""}
-
                     if tc.id:
                         current_tool[idx]["id"] = tc.id
-                        if tc.function and tc.function.name:
-                            current_tool[idx]["name"] = tc.function.name
-                        yield ToolUseDelta(
-                            id=tc.id,
-                            name=tc.function.name if tc.function else None,
-                        )
-                    elif tc.function and tc.function.arguments:
+                    if tc.function and tc.function.name:
+                        current_tool[idx]["name"] = tc.function.name
+                    if tc.function and tc.function.arguments:
                         current_tool[idx]["args"] += tc.function.arguments
-                        yield ToolUseDelta(
-                            id=current_tool[idx]["id"],
-                            input_delta={"_partial_json": tc.function.arguments},
-                        )
 
-            # Finish reason (stop)
-            if chunk.choices[0].finish_reason:
-                pass  # terminal chunk; loop ends naturally
+        # Yield complete blocks from accumulated state
+        if text_buffer:
+            yield TextBlock(text="".join(text_buffer))
+        for idx in sorted(current_tool.keys()):
+            info = current_tool[idx]
+            try:
+                args = json.loads(info["args"]) if info["args"].strip() else {}
+            except json.JSONDecodeError:
+                args = {}
+            yield ToolUseBlock(id=info["id"], name=info["name"], input=args)
 
     # -- helpers --
 
