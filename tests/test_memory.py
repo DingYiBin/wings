@@ -16,12 +16,14 @@ def test_creates_memory_dir(tmp_path):
 
 
 def test_returns_guidance_when_no_memory_file(tmp_path):
-    """When MEMORY.md doesn't exist, return guidance only."""
+    """When MEMORY.md doesn't exist, return guidance wrapped in system-reminder."""
     result = load_memory_prompt(tmp_path)
     assert "Auto Memory" in result
     assert "MEMORY.md" in result
     assert "user" in result
     assert "feedback" in result
+    assert result.startswith("<system-reminder>")
+    assert result.endswith("</system-reminder>")
 
 
 def test_loads_existing_memory_md(tmp_path):

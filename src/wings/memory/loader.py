@@ -267,8 +267,8 @@ def load_memory_prompt(working_dir: Path) -> str:
 
     Creates .wings/memory/ if it doesn't exist.
 
-    Returns the full memory guidance + MEMORY.md content ready to append
-    to the system prompt.
+    Returns the full memory guidance + MEMORY.md content wrapped in
+    <system-reminder> tags so the model treats it as system-level context.
     """
     memory_dir = working_dir / _MEMORY_DIR_NAME
     memory_dir.mkdir(parents=True, exist_ok=True)
@@ -279,6 +279,6 @@ def load_memory_prompt(working_dir: Path) -> str:
     if memory_md.exists():
         content = memory_md.read_text().strip()
         if content:
-            return f"{guidance}\n\n{content}"
+            return f"<system-reminder>\n{guidance}\n\n{content}\n</system-reminder>"
 
-    return guidance
+    return f"<system-reminder>\n{guidance}\n</system-reminder>"
