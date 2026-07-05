@@ -4,26 +4,24 @@ from pathlib import Path
 
 import pytest
 
-from wings.config.settings import (
-    AppConfig,
-    GlobalSettings,
-    ProjectSettings,
-    ProviderConfig,
-)
+from wings.config.settings import AppConfig, GlobalSettings, ProviderConfig
 from wings.routing.types import PoolConfig
 
 
 # -- GlobalSettings ------------------------------------------------------------
-
 
 def test_global_settings_defaults():
     settings = GlobalSettings()
     assert settings.providers == {}
     assert isinstance(settings.routing, PoolConfig)
     assert settings.theme == "dark"
+    assert settings.personality is None
+    assert settings.model is None
+    assert settings.allowed_tools == []
+    assert settings.denied_tools == []
 
 
-def test_global_settings_load_from_json(tmp_path):
+def test_global_settings_load_global(tmp_path):
     json_path = tmp_path / "config.json"
     json_path.write_text("""{
   "theme": "light",
@@ -46,7 +44,7 @@ def test_global_settings_load_from_json(tmp_path):
   }
 }""")
 
-    settings = GlobalSettings.load(json_path)
+    settings = GlobalSettings.load_global(json_path)
     assert settings.theme == "light"
     assert settings.providers["anthropic"].api_key == "sk-test"
     assert settings.providers["anthropic"].model == "claude-opus-4-6"
@@ -87,68 +85,78 @@ def test_global_settings_api_key_missing():
     assert settings.api_key_for("nonexistent") == ""
 
 
-# -- ProjectSettings -----------------------------------------------------------
+# -- GlobalSettings.load (global + project merge) ------------------------------
 
-
-def test_project_settings_defaults():
-    ps = ProjectSettings()
-    assert ps.allowed_tools == []
-    assert ps.denied_tools == []
-    assert ps.model is None
-
-
-def test_project_settings_load_from_json(tmp_path):
-    json_dir = tmp_path / ".wings"
-    json_dir.mkdir()
-    (json_dir / "settings.json").write_text("""{
-  "allowed_tools": ["read", "glob"],
-  "denied_tools": ["rm"],
-  "model": "claude-opus-4-6",
-  "personality": "you are a pirate"
+def test_load_merges_project_over_global(tmp_path):
+    """Project .wings/config.json overrides global values."""
+    (tmp_path / ".wings").mkdir()
+    (tmp_path / ".wings" / "config.json").write_text("""{
+  "personality": "concise",
+  "allowed_tools": ["read"],
+  "model": "claude-haiku-4-5"
 }""")
 
-    ps = ProjectSettings.load(tmp_path)
-    assert ps.allowed_tools == ["read", "glob"]
-    assert ps.denied_tools == ["rm"]
-    assert ps.model == "claude-opus-4-6"
-    assert ps.personality == "you are a pirate"
+    settings = GlobalSettings.load(tmp_path)
+    assert settings.personality == "concise"
+    assert settings.allowed_tools == ["read"]
+    assert settings.model == "claude-haiku-4-5"
+    # Global defaults still present
+    assert settings.theme == "dark"
 
 
-def test_project_settings_walks_up(tmp_path):
-    json_dir = tmp_path / ".wings"
-    json_dir.mkdir()
-    (json_dir / "settings.json").write_text('{"model": "claude-haiku-4-5"}')
+def test_load_walks_up_for_project_config(tmp_path):
+    (tmp_path / ".wings").mkdir()
+    (tmp_path / ".wings" / "config.json").write_text('{"model": "claude-haiku-4-5"}')
     sub = tmp_path / "deep" / "nested"
     sub.mkdir(parents=True)
 
-    ps = ProjectSettings.load(sub)
-    assert ps.model == "claude-haiku-4-5"
+    settings = GlobalSettings.load(sub)
+    assert settings.model == "claude-haiku-4-5"
 
 
-def test_project_settings_not_found(tmp_path):
-    ps = ProjectSettings.load(tmp_path)
-    assert ps.model is None
+def test_load_no_project_config(tmp_path):
+    settings = GlobalSettings.load(tmp_path)
+    assert settings.model is None
+    assert settings.personality is None
 
 
-# -- AppConfig -----------------------------------------------------------------
+def test_load_project_providers_override_global(tmp_path):
+    """Project config can add providers that take precedence over global."""
+    # This tests deep merge: project providers should merge, not replace
+    (tmp_path / ".wings").mkdir()
+    (tmp_path / ".wings" / "config.json").write_text("""{
+  "providers": {
+    "openai": {
+      "model": "gpt-4o",
+      "protocol": "openai",
+      "api_key": "sk-project",
+      "base_url": "https://api.openai.com"
+    }
+  }
+}""")
 
+    settings = GlobalSettings.load(tmp_path)
+    assert "openai" in settings.providers
+    assert settings.providers["openai"].model == "gpt-4o"
+
+
+# -- AppConfig ----------------------------------------------------------------
 
 def test_app_config_load(tmp_path, monkeypatch):
     monkeypatch.setenv("WINGS_PROVIDERS__ANTHROPIC__API_KEY", "sk-test-key")
     monkeypatch.setenv("WINGS_PROVIDERS__ANTHROPIC__BASE_URL", "https://api.anthropic.com")
-    json_dir = tmp_path / ".wings"
-    json_dir.mkdir()
-    (json_dir / "settings.json").write_text(
+    (tmp_path / ".wings").mkdir()
+    (tmp_path / ".wings" / "config.json").write_text(
         '{"allowed_tools": ["read"], "personality": "concise"}'
     )
 
     app = AppConfig.load(tmp_path)
-    assert app.project_settings.allowed_tools == ["read"]
-    assert app.project_settings.personality == "concise"
+    assert app.global_settings.allowed_tools == ["read"]
+    assert app.global_settings.personality == "concise"
     assert app.global_settings.api_key_for("anthropic") == "sk-test-key"
 
 
 def test_app_config_defaults():
     app = AppConfig()
     assert isinstance(app.global_settings, GlobalSettings)
-    assert isinstance(app.project_settings, ProjectSettings)
+    assert app.global_settings.theme == "dark"

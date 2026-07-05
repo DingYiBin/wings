@@ -106,14 +106,14 @@ def create_session(
         tools.register(t)
 
     # Apply project-level tool filters
-    if config.project_settings.denied_tools:
-        tools.filter_denied(config.project_settings.denied_tools)
+    if config.global_settings.denied_tools:
+        tools.filter_denied(config.global_settings.denied_tools)
 
     # -- Permissions --
     rules = PermissionRules()
-    for name in config.project_settings.allowed_tools:
+    for name in config.global_settings.allowed_tools:
         rules.add_allow(name)
-    for name in config.project_settings.denied_tools:
+    for name in config.global_settings.denied_tools:
         rules.add_deny(name)
     pipeline = PermissionPipeline(rules)
 
@@ -151,7 +151,7 @@ def make_agent_context(
         available_skills: Name -> content mapping for skill_view tool.
     """
     cwd = str(working_dir or Path.cwd())
-    system_prompt = config.project_settings.personality or ""
+    system_prompt = config.global_settings.personality or ""
 
     # Inject environment information
     env_info = (
@@ -171,7 +171,7 @@ def make_agent_context(
 
     return AgentContext(
         task_type=task_type,
-        model_override=model_override or config.project_settings.model,
+        model_override=model_override or config.global_settings.model,
         tool_context=ToolContext(
             working_dir=cwd,
             available_skills=available_skills or {},

@@ -1,4 +1,8 @@
-"""Layered configuration: env vars > project json > global json > defaults."""
+"""Layered configuration: env vars > .wings/config.json > ~/.wings/config.json > defaults.
+
+Project-level ``.wings/config.json`` overrides global ``~/.wings/config.json``
+for overlapping keys.  Both files share the same schema.
+"""
 
 from __future__ import annotations
 
@@ -39,7 +43,8 @@ class ProviderConfig(BaseModel):
 
 
 class GlobalSettings(BaseSettings):
-    """Global configuration loaded from ~/.wings/config.json and env vars.
+    """Configuration loaded from ~/.wings/config.json + env vars,
+    with optional per-project override from .wings/config.json.
 
     Environment variables use WINGS_ prefix with __ as nested separator.
     Example: WINGS_PROVIDERS__ANTHROPIC__API_KEY=sk-...
@@ -59,8 +64,14 @@ class GlobalSettings(BaseSettings):
     # UI
     theme: Literal["dark", "light"] = "dark"
 
+    # Project-level overrides (also settable in global config)
+    model: str | None = None  # default model override
+    personality: str | None = None  # appended to system prompt
+    allowed_tools: list[str] = Field(default_factory=list)
+    denied_tools: list[str] = Field(default_factory=list)
+
     @classmethod
-    def load(cls, path: Path | None = None) -> GlobalSettings:
+    def load_global(cls, path: Path | None = None) -> GlobalSettings:
         """Load global settings from a JSON file + env var overrides.
 
         Default path: ~/.wings/config.json
@@ -70,8 +81,44 @@ class GlobalSettings(BaseSettings):
         if json_path.exists():
             with open(json_path) as f:
                 json_data = json.load(f)
-
         return cls(**json_data)
+
+    @classmethod
+    def load(cls, working_dir: Path | None = None) -> GlobalSettings:
+        """Load settings with project-level override.
+
+        1. Load global from ~/.wings/config.json
+        2. Walk up from working_dir to find .wings/config.json
+        3. Merge: project values override global values
+
+        Returns merged GlobalSettings.
+        """
+        cwd = working_dir or Path.cwd()
+        global_settings = cls.load_global()
+
+        # Walk up to find project config
+        project_data = cls._find_project_config(cwd)
+        if project_data:
+            merged = global_settings.model_dump()
+            _deep_merge(merged, project_data)
+            return cls(**merged)
+
+        return global_settings
+
+    @staticmethod
+    def _find_project_config(directory: Path) -> dict | None:
+        """Walk up from *directory* to find .wings/config.json."""
+        current = directory.resolve()
+        for _ in range(20):
+            json_path = current / ".wings" / "config.json"
+            if json_path.exists():
+                with open(json_path) as f:
+                    return json.load(f)
+            parent = current.parent
+            if parent == current:
+                break
+            current = parent
+        return None
 
     def api_key_for(self, provider: str) -> str:
         """Resolve API key for a provider: env var > config file."""
@@ -84,37 +131,6 @@ class GlobalSettings(BaseSettings):
         return cfg.api_key
 
 
-# -- Project settings ---------------------------------------------------------
-
-
-class ProjectSettings(BaseModel):
-    """Per-project configuration loaded from .wings/settings.json."""
-
-    allowed_tools: list[str] = Field(default_factory=list)
-    denied_tools: list[str] = Field(default_factory=list)
-    model: str | None = None  # project-level model override
-    personality: str | None = None  # appended to system prompt
-
-    @classmethod
-    def load(cls, directory: Path) -> ProjectSettings:
-        """Load project settings from .wings/settings.json.
-
-        Walks up from *directory* to find the nearest .wings/settings.json.
-        """
-        current = directory.resolve()
-        for _ in range(20):  # prevent infinite walk
-            json_path = current / ".wings" / "settings.json"
-            if json_path.exists():
-                with open(json_path) as f:
-                    data = json.load(f)
-                return cls(**data)
-            parent = current.parent
-            if parent == current:
-                break
-            current = parent
-        return cls()
-
-
 # -- Wiring helper ------------------------------------------------------------
 
 
@@ -123,13 +139,27 @@ class AppConfig(BaseModel):
     to bootstrap a wings session."""
 
     global_settings: GlobalSettings = Field(default_factory=GlobalSettings)
-    project_settings: ProjectSettings = Field(default_factory=ProjectSettings)
+
+    # Convenience aliases for the most-accessed project-level fields
+    @property
+    def project_settings(self) -> GlobalSettings:
+        """The merged settings (global + project override)."""
+        return self.global_settings
 
     @classmethod
     def load(cls, working_dir: Path | None = None) -> AppConfig:
         """Load the full application configuration."""
-        cwd = working_dir or Path.cwd()
-        return cls(
-            global_settings=GlobalSettings.load(),
-            project_settings=ProjectSettings.load(cwd),
-        )
+        return cls(global_settings=GlobalSettings.load(working_dir))
+
+
+# -- Helpers ------------------------------------------------------------------
+
+
+def _deep_merge(base: dict, override: dict) -> None:
+    """Merge *override* into *base* in-place.  Nested dicts are merged
+    recursively; everything else is replaced."""
+    for key, value in override.items():
+        if key in base and isinstance(base[key], dict) and isinstance(value, dict):
+            _deep_merge(base[key], value)
+        else:
+            base[key] = value
