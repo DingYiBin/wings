@@ -113,6 +113,20 @@ class APIPoolManager:
 
     # -- Query --
 
+    def get_pool_info(self, task_type: str) -> dict[str, dict[str, float]]:
+        """Return effective scores for a task type: api_id → {base, delta, effective}."""
+        with self._lock:
+            mask = dict(self._resolve_mask(task_type))
+            result: dict[str, dict[str, float]] = {}
+            for api_id, entry in self._entries.items():
+                delta = mask.get(api_id, 0.0)
+                result[api_id] = {
+                    "base": entry.score,
+                    "delta": delta,
+                    "effective": entry.score + delta,
+                }
+            return result
+
     def list_apis(self) -> list[str]:
         """List all APIs in the global pool."""
         with self._lock:

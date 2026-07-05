@@ -428,6 +428,10 @@ async def _run_chat(working_dir: Path, model: str | None, log: bool) -> None:
                 _show_help(loop)
                 continue
 
+            if cmd == "pool":
+                _handle_pool(loop, args)
+                continue
+
             # Look up skill
             loader = getattr(loop, "skill_loader", None)
             skill = loader.get_by_name(cmd) if loader else None
@@ -463,11 +467,87 @@ async def _run_chat(working_dir: Path, model: str | None, log: bool) -> None:
             typer.echo(f"\nError: {e}", err=True)
 
 
+def _handle_pool(loop, args: str) -> None:
+    """Handle /pool command — view and adjust API candidate pools."""
+    pool_mgr = getattr(loop, "pool_manager", None)
+    if pool_mgr is None:
+        typer.echo("  Pool manager not available.")
+        return
+
+    parts = args.split() if args else []
+    task_type = "main"
+
+    # Parse subcommand
+    if not parts:
+        pass  # display
+    elif parts[0] in ("up", "down", "disable", "enable"):
+        if len(parts) < 2:
+            typer.echo("  Usage: /pool up|down|disable|enable <api_id>")
+            return
+        # Check for optional task type at the end
+        api_id_parts = []
+        for p in parts[1:]:
+            if p.startswith("--task="):
+                task_type = p.split("=", 1)[1]
+            else:
+                api_id_parts.append(p)
+        api_id = " ".join(api_id_parts)
+
+        if parts[0] == "up":
+            pool_mgr.upvote(task_type, api_id, delta=0.5)
+            typer.echo(f"  +0.5 for {api_id} in {task_type}")
+        elif parts[0] == "down":
+            pool_mgr.downvote(task_type, api_id, delta=0.5)
+            typer.echo(f"  -0.5 for {api_id} in {task_type}")
+        elif parts[0] == "disable":
+            pool_mgr.disable(task_type, api_id)
+            typer.echo(f"  Disabled {api_id} for {task_type}")
+        elif parts[0] == "enable":
+            pool_mgr.enable(task_type, api_id)
+            typer.echo(f"  Enabled {api_id} for {task_type}")
+        return
+    else:
+        # /pool <task_type> — display pool for specific type
+        task_type = parts[0]
+
+    # Display pool info
+    info = pool_mgr.get_pool_info(task_type)
+    typer.echo(f"\n  Pool: {task_type}")
+    if not info:
+        typer.echo("    (no APIs registered)")
+        return
+
+    for api_id, scores in info.items():
+        base = scores["base"]
+        delta = scores["delta"]
+        eff = scores["effective"]
+        delta_str = f"+{delta}" if delta > 0 else str(delta)
+        disabled = eff <= -1e9  # NEG_INF check
+        if disabled:
+            typer.echo(f"    {api_id:<45} [DISABLED]")
+        elif delta != 0.0:
+            typer.echo(f"    {api_id:<45} eff={eff:+.1f}  (base={base:.1f} {delta_str})")
+        else:
+            typer.echo(f"    {api_id:<45} eff={eff:+.1f}")
+
+    # Show custom masks on other task types
+    custom_types = [t for t in pool_mgr.list_task_types() if t != "main" and t != task_type]
+    if custom_types:
+        types_str = ", ".join(sorted(custom_types)[:8])
+        if len(custom_types) > 8:
+            types_str += f", +{len(custom_types) - 8} more"
+        typer.echo(f"\n  Types with custom masks: {types_str}")
+
+    typer.echo("\n  /pool up|down|disable|enable <api_id>")
+    typer.echo("  /pool <task_type>  — view another task type's pool")
+
+
 def _show_help(loop) -> None:
     """Display available slash commands and skills."""
     typer.echo("\nCommands:")
     typer.echo("  /exit          Quit the chat session")
     typer.echo("  /help          Show this help")
+    typer.echo("  /pool          View/adjust API candidate pool")
     typer.echo("  ctrl+o         Expand last truncated tool result")
 
     loader = getattr(loop, "skill_loader", None)

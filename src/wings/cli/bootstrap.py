@@ -128,10 +128,11 @@ def create_session(
     # -- Agent loop --
     loop = AgentLoop(engine, tools, pipeline, pool_mgr, registry)
 
-    # Attach skill state so CLI layer can access it
+    # Attach state so CLI layer can access it
     loop.skill_loader = loader  # type: ignore[attr-defined]
     loop.available_skills = available_skills  # type: ignore[attr-defined]
     loop.skills_list = skills_list  # type: ignore[attr-defined]
+    loop.pool_manager = pool_mgr  # type: ignore[attr-defined]
 
     return loop, config
 
