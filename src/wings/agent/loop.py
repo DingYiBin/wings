@@ -114,6 +114,8 @@ class AgentLoop:
 
         turn: TurnRecord | None = None
 
+        is_first_cycle = True
+
         while True:
             # -- Select model for *this* API call --
             model = self._select_model(context)
@@ -171,13 +173,16 @@ class AgentLoop:
 
             # Log this request/response cycle
             if self._logger is not None:
-                # First cycle of the turn: log the user's original input + system prompt
-                input_summary = user_input if turn is None else ""
+                # First cycle: log user input + system prompt. Later: empty.
+                input_summary = user_input if is_first_cycle else ""
                 system_prompt = ""
-                if turn is None and self._messages:
+                if is_first_cycle and self._messages:
                     first = self._messages[0]
-                    if first.role == Role.SYSTEM and first.content:
-                        system_prompt = first.content[0].text if hasattr(first.content[0], "text") else ""
+                    if first.role == Role.SYSTEM:
+                        for block in first.content:
+                            if hasattr(block, "text"):
+                                system_prompt = block.text
+                                break
                 self._logger.record_cycle(
                     model=model,
                     context=context.task_type,
@@ -192,6 +197,7 @@ class AgentLoop:
                     tool_calls=cycle_tool_calls,
                     thinking="".join(thinking_parts) if thinking_parts else None,
                 )
+                is_first_cycle = False
 
             # Execute tools
             if tool_use_blocks:
