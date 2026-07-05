@@ -134,6 +134,16 @@ def _build_subagent_permission_pipeline(
     return PermissionPipeline(rules)
 
 
+def get_agent_types(
+    custom_agents: dict[str, AgentTypeSpec] | None = None,
+) -> dict[str, AgentTypeSpec]:
+    """Return merged agent types — custom on top of built-in."""
+    merged = dict(BUILTIN_AGENT_TYPES)
+    if custom_agents:
+        merged.update(custom_agents)
+    return merged
+
+
 async def run_subagent(
     prompt: str,
     agent_type: str,
@@ -144,6 +154,7 @@ async def run_subagent(
     model_selector: ModelSelector,
     working_dir: str,
     event_callback: Callable[[Any], Awaitable[None]] | None = None,
+    custom_agents: dict[str, AgentTypeSpec] | None = None,
 ) -> str:
     """Run a subagent to completion and return the final text output.
 
@@ -152,10 +163,11 @@ async def run_subagent(
     """
     # Case-insensitive lookup (model may pass "Explore" instead of "explore")
     agent_type_lower = agent_type.lower().strip()
-    spec = BUILTIN_AGENT_TYPES.get(agent_type_lower)
+    available = get_agent_types(custom_agents)
+    spec = available.get(agent_type_lower)
     if spec is None:
-        available = ", ".join(sorted(BUILTIN_AGENT_TYPES))
-        return f"Error: unknown agent type '{agent_type}'. Available: {available}"
+        names = ", ".join(sorted(available))
+        return f"Error: unknown agent type '{agent_type}'. Available: {names}"
 
     # Build filtered tool set
     filtered_tools = _filter_tools_for_agent(tool_registry, spec)

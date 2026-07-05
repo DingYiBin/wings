@@ -9,6 +9,7 @@ import platform
 from datetime import datetime
 from pathlib import Path
 
+from wings.agent.agent_loader import load_custom_agents
 from wings.agent.loop import AgentContext, AgentLoop
 from wings.config.settings import AppConfig
 from wings.memory.loader import load_memory_prompt
@@ -125,7 +126,8 @@ def create_session(
     engine = QueryEngine(registry)
 
     # -- Agent tool (subagent support) --
-    agent_tool = make_agent_tool(engine, registry, tools, pool_mgr, rules)
+    custom_agents = load_custom_agents(cwd)
+    agent_tool = make_agent_tool(engine, registry, tools, pool_mgr, rules, custom_agents)
     tools.register(agent_tool)
 
     # -- Agent loop --
