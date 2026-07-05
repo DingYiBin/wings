@@ -19,6 +19,8 @@ dependencies = [
     "prompt-toolkit>=3.0.0",
     "pyyaml>=6.0",
     "html2text>=2025.4.15",
+    "duckduckgo-search>=8.1.1",
+    "ddgs>=9.14.4",
 ]
 
 [project.optional-dependencies]

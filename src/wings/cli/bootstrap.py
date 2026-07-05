@@ -34,6 +34,7 @@ from wings.tools.builtin import (
     read_file,
     skill_view,
     web_fetch,
+    web_search,
     write_file,
 )
 from wings.tools.registry import ToolRegistry
@@ -105,7 +106,7 @@ def create_session(
 
     # -- Tool registry --
     tools = ToolRegistry()
-    for t in [read_file, write_file, edit_file, bash, glob_files, grep, skill_view, web_fetch]:
+    for t in [read_file, write_file, edit_file, bash, glob_files, grep, skill_view, web_fetch, web_search]:
         tools.register(t)
 
     # Apply project-level tool filters
