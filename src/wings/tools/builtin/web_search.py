@@ -43,8 +43,10 @@ class WebSearchInput(BaseModel):
         "  - This is MANDATORY - never skip including sources in your response\n"
         "\n"
         "Usage notes:\n"
-        "  - Domain filtering is supported to include or block specific websites\n"
-        "  - Web search is only available in the US\n"
+        "  - Search returns brief summaries only. Use web_fetch(url=...) to "
+        "read the full content of any result.\n"
+        "  - Results may not be comprehensive — if you need more detail, "
+        "try different query variations or web_fetch the most promising URLs.\n"
         "\n"
         "IMPORTANT - Use the correct year in search queries:\n"
         "  - The current month is July 2026. You MUST use this year when searching "
@@ -84,7 +86,10 @@ async def web_search(input: WebSearchInput, context: ToolContext) -> str:
     if not results:
         return f"No results found for '{query}'."
 
-    lines = [f'Web search results for: "{query}"\n']
+    lines = [
+        f'Search: "{query}" — {len(results)} results',
+        "",
+    ]
     for i, r in enumerate(results, 1):
         title = r.get("title", "Untitled")
         href = r.get("href", "")
@@ -95,7 +100,8 @@ async def web_search(input: WebSearchInput, context: ToolContext) -> str:
         lines.append("")
 
     lines.append(
-        "REMINDER: You MUST include the sources above in your response "
-        "to the user using markdown hyperlinks."
+        "---\n"
+        "Search results are brief summaries. To read full content of any "
+        "result, use web_fetch(url=\"<link>\") with the specific URL."
     )
     return "\n".join(lines)
