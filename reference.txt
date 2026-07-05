@@ -1,4 +1,6 @@
 # Wings reference repositories
 # Initialise with: bash scripts/init-references.sh
+# Lines marked with #no-update are cloned once but not auto-updated.
 
 opensquilla https://github.com/opensquilla/opensquilla.git
+#no-update claude-code https://github.com/tanbiralam/claude-code.git
