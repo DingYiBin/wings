@@ -61,16 +61,25 @@ async def web_search(input: WebSearchInput, context: ToolContext) -> str:
 
     try:
         from ddgs import DDGS
-
-        with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=input.max_results))
     except ImportError:
-        return (
-            "Error: ddgs package not installed. "
-            "Run: uv add ddgs"
-        )
-    except Exception as e:
-        return f"Error: search failed for '{query}': {e}"
+        return "Error: ddgs package not installed. Run: uv add ddgs"
+
+    import time
+
+    results = []
+    last_error = None
+    for attempt in range(3):
+        try:
+            with DDGS() as ddgs:
+                results = list(ddgs.text(query, max_results=input.max_results))
+            break
+        except Exception as e:
+            last_error = e
+            if attempt < 2:
+                time.sleep(1.0 * (attempt + 1))
+
+    if last_error and not results:
+        return f"Error: search failed for '{query}' (retried 3x): {last_error}"
 
     if not results:
         return f"No results found for '{query}'."
