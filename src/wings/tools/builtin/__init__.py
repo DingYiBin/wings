@@ -7,6 +7,7 @@ from wings.tools.builtin.bash import bash
 from wings.tools.builtin.glob import glob_files
 from wings.tools.builtin.grep import grep
 from wings.tools.builtin.skill_view import skill_view
+from wings.tools.builtin.web_fetch import web_fetch
 from wings.tools.builtin.agent import make_agent_tool
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     "glob_files",
     "grep",
     "skill_view",
+    "web_fetch",
     "make_agent_tool",
 ]
