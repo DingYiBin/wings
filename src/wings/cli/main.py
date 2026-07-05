@@ -2,13 +2,17 @@
 
 import asyncio
 import contextlib
+import os
+import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
 import typer
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.key_binding import KeyBindings
 
 from wings.cli.bootstrap import create_session, make_agent_context
 from wings.cli.logging import TurnLogger
@@ -100,6 +104,29 @@ def chat(
 
 # ANSI escape sequences
 _CLEAR_LINE = "\033[2K\r"
+
+# Per-turn store of truncated tool results for ctrl+o expansion.
+# Each entry is (label, full_content).
+_truncated_results: list[tuple[str, str]] = []
+
+
+def _expand_last_result() -> None:
+    """Open the most recent truncated tool result in $PAGER (default: less)."""
+    if not _truncated_results:
+        return
+    label, content = _truncated_results[-1]
+    pager = os.environ.get("PAGER", "less -R")
+    fd, path = tempfile.mkstemp(suffix=".txt", prefix="wings-tool-")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(f"# {label}\n\n")
+            f.write(content)
+        subprocess.call([*pager.split(), path])
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
 
 
 async def _spinner_task(start: float) -> None:
@@ -249,36 +276,36 @@ async def _handle_permission(event: PermissionRequest, loop) -> None:
 def _display_tool_event(event) -> None:
     """Format a tool call or result for terminal display.
 
-    Mimics claude-code's display conventions:
-    - Single-line results use compact style
-    - Multi-line results indented under prefix
-    - Truncation with (ctrl+o to expand) hint
+    Tool results are capped at 3 lines by default. Full content is stored
+    in _truncated_results for ctrl+o expansion in chat mode.
     """
+    global _truncated_results
+
     if isinstance(event, SubAgentStart):
-        typer.echo(f"\n  ╭─ Agent({event.agent_type}) ─ {event.description}")
+        typer.echo(f"\n  \u256d\u2500 Agent({event.agent_type}) \u2500 {event.description}")
     elif isinstance(event, SubAgentDelta):
-        typer.echo(f"  │  {event.text}", nl=False)
+        typer.echo(f"  \u2502  {event.text}", nl=False)
         sys.stdout.flush()
     elif isinstance(event, SubAgentEnd):
-        typer.echo(f"  ╰─ Agent({event.agent_type}) done")
+        typer.echo(f"  \u2570\u2500 Agent({event.agent_type}) done")
     elif isinstance(event, ToolUseBlock):
         label = _tool_label(event.name, event.input)
-        typer.echo(f"  ● {label}")
+        typer.echo(f"  \u25cf {label}")
     elif isinstance(event, ToolResultBlock):
         text = event.content.strip()
         if not text:
-            typer.echo(f"    ⎿ (No output)")
+            typer.echo(f"    \u23bf (No output)")
             return
 
         lines = text.split("\n")
-        if len(lines) == 1:
-            typer.echo(f"    ⎿ {lines[0]}")
-            return
+        cap = 3
+        for line in lines[:cap]:
+            typer.echo(f"    \u23bf {line}")
+        if len(lines) > cap:
+            _truncated_results.append((f"Tool result", text))
+            typer.echo(f"    \u2026 +{len(lines) - cap} lines (ctrl+o to expand)")
 
-        for line in lines[:20]:
-            typer.echo(f"    ⎿ {line}")
-        if len(lines) > 20:
-            typer.echo(f"    … +{len(lines) - 20} lines (ctrl+o to expand)")
+
 def _tool_label(name: str, input: dict) -> str:
     """Build a human-readable label for a tool call.
 
@@ -303,7 +330,7 @@ def _tool_label(name: str, input: dict) -> str:
     if name == "agent":
         desc = input.get("description", "")
         atype = input.get("subagent_type", "general")
-        return f"{human_name}({atype}) — {desc}"
+        return f"{human_name}({atype}) \u2014 {desc}"
     # Fallback: show first key-value pair
     if input:
         key, val = next(iter(input.items()))
@@ -316,6 +343,7 @@ def _tool_label(name: str, input: dict) -> str:
 
 async def _run_single(prompt: str, working_dir: Path, model: str | None, log: bool) -> None:
     """Execute a single-turn agent request."""
+    global _truncated_results
     try:
         loop, config = create_session(working_dir)
         if log:
@@ -327,6 +355,7 @@ async def _run_single(prompt: str, working_dir: Path, model: str | None, log: bo
         typer.echo(f"Error: failed to initialize session: {e}", err=True)
         raise typer.Exit(code=1)
 
+    _truncated_results = []
     try:
         async for event in _wrap_stream(loop.run(prompt, ctx)):
             if isinstance(event, TextDelta):
@@ -343,8 +372,20 @@ async def _run_single(prompt: str, working_dir: Path, model: str | None, log: bo
         raise typer.Exit(code=1)
 
 
+def _make_chat_keybindings() -> KeyBindings:
+    """Create keybindings for the chat prompt, including ctrl+o expansion."""
+    kb = KeyBindings()
+
+    @kb.add("c-o")
+    def _expand(_event):
+        _expand_last_result()
+
+    return kb
+
+
 async def _run_chat(working_dir: Path, model: str | None, log: bool) -> None:
     """Interactive chat loop."""
+    global _truncated_results
     try:
         loop, config = create_session(working_dir)
         if log:
@@ -356,7 +397,11 @@ async def _run_chat(working_dir: Path, model: str | None, log: bool) -> None:
         raise typer.Exit(code=1)
 
     typer.echo("Wings chat — type /help for commands, /exit to quit.")
-    session = PromptSession("> ", enable_history_search=False)
+    session = PromptSession(
+        "> ",
+        key_bindings=_make_chat_keybindings(),
+        enable_history_search=False,
+    )
 
     while True:
         try:
@@ -400,6 +445,7 @@ async def _run_chat(working_dir: Path, model: str | None, log: bool) -> None:
         else:
             ctx = make_agent_context(**_ctx_kwargs(config, working_dir, model, loop))
 
+        _truncated_results = []
         try:
             async for event in _wrap_stream(loop.run(user_input, ctx)):
                 if isinstance(event, TextDelta):
@@ -420,6 +466,7 @@ def _show_help(loop) -> None:
     typer.echo("\nCommands:")
     typer.echo("  /exit          Quit the chat session")
     typer.echo("  /help          Show this help")
+    typer.echo("  ctrl+o         Expand last truncated tool result")
 
     loader = getattr(loop, "skill_loader", None)
     if loader is not None:
