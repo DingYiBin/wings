@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Install (including dev deps)
 uv sync --extra dev
 
-# Run all tests (224 passing)
+# Run all tests (248 passing)
 uv run pytest tests/ -q
 
 # Run a single test file
@@ -74,6 +74,7 @@ Wings is a **multi-model AI agent** where every API call independently selects a
 
 ## Design docs
 
+- `docs/design/status.md` — current project status, module completion, known issues, next steps
 - `docs/design/architecture.md` — full architecture with agent loop diagram
 - `docs/design/modules.md` — detailed module specs, implementation history, design reflections
 - `docs/design/tool-comparison.md` — read/write/edit/bash/glob/grep compared across claude-code and opensquilla
