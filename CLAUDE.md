@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Install (including dev deps)
 uv sync --extra dev
 
-# Run all tests (200 passing)
+# Run all tests (224 passing)
 uv run pytest tests/ -q
 
 # Run a single test file
@@ -42,7 +42,8 @@ Wings is a **multi-model AI agent** where every API call independently selects a
 
 - `routing/` — `APIPoolManager` (global pool + per-task-type score masks, softmax selection). Implements `ModelSelector` Protocol so AgentLoop only depends on the protocol.
 - `agent/loop.py` — `AgentLoop.run()` is the main loop. Model selection happens **per API call** (inside the `while True` tool-execution loop), not per turn. Handoff detection runs on the first cycle only. Permission requests use `asyncio.Event` to pause for user input.
-- `tools/builtin/` — 7 tools (read, write, edit, bash, glob, grep, skill_view). All use the `@tool` decorator which auto-coerces dict inputs to Pydantic models and auto-generates JSON Schema.
+- `tools/builtin/` — 8 tools (read, write, edit, bash, glob, grep, skill_view, agent). All use the `@tool` decorator which auto-coerces dict inputs to Pydantic models and auto-generates JSON Schema.
+- `agent/subagent.py` — `AgentTypeSpec` dataclass + `BUILTIN_AGENT_TYPES` (general/explore/plan) + `run_subagent()`. Subagents run in a fresh AgentLoop with filtered tools and pre-allowed permissions. Each type routes via `subagent/<type>` pool.
 - `permissions/` — 5-stage pipeline: tool-level rules → scoped rules (prefix matching) → auto-classify (read-only → allow) → hooks → interactive prompt. Scoped rules (`Bash(git commit:*)`) match command prefixes or directory paths, never entire tools.
 - `models/anthropic.py` — Adaptive thinking (no budget_tokens) + max_tokens escalation (8K → 64K on stop_reason=max_tokens). Streams buffer all events first to check stop_reason before yielding.
 - `skills/` — Skills are SKILL.md files (YAML frontmatter + markdown body). Three layers: builtin < `~/.wings/skills/` < `.wings/skills/`. Each skill auto-forks an independent API pool (`skill/<name>`).
@@ -68,6 +69,8 @@ Wings is a **multi-model AI agent** where every API call independently selects a
 - `docs/design/architecture.md` — full architecture with agent loop diagram
 - `docs/design/modules.md` — detailed module specs, implementation history, design reflections
 - `docs/design/tool-comparison.md` — read/write/edit/bash/glob/grep compared across claude-code and opensquilla
+- `docs/reference/claude-code/subagent.md` — claude-code subagent system design
+- `docs/reference/opensquilla/subagent.md` — opensquilla subagent system design
 - `docs/reference/opensquilla/skills-list.md` — ~70 bundled skills
 - `docs/reference/opensquilla/dream.md` — memory consolidation system
 - `docs/reference/claude-code/skills-list.md` — ~18 bundled skills

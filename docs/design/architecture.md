@@ -248,10 +248,10 @@ async def run_loop(
 | `models` | ModelProvider 协议 + Anthropic/OpenAI 适配器 (adaptive thinking, escalation) | ✅ |
 | `tools` | Tool 协议 + 注册表 + 7 内置工具 (read/write/edit/bash/glob/grep/skill_view) | ✅ |
 | `query` | LLM API 调用封装（retry, fallback） | ✅ |
-| `agent` | 核心循环 (per-call 模型选择, 权限同步, handoff 检测) | ✅ |
+| `agent` | 核心循环 + subagent (3 types: general/explore/plan) | ✅ |
 | `permissions` | 5 阶段管道 (rules → scoped → classify → hooks → interactive) | ✅ |
 | `config` | 全局/项目配置 (JSON, ProviderConfig w/ thinking/max_tokens) | ✅ |
-| `cli` | Typer 入口 + chat/run REPL (slash commands, 权限 UI, 工具展示) | ✅ |
+| `cli` | Typer 入口 + chat/run (slash commands, 权限 UI, tool展示, ctrl+o展开) | ✅ |
 | `skills` | 可复用技能/工作流 (SKILL.md, 3 内置 skill, per-skill API 池) | ✅ |
 | `hooks` | 生命周期钩子 | — |
 | `context` | system prompt + 环境信息 | — |
