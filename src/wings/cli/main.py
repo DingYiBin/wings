@@ -294,16 +294,18 @@ def _display_tool_event(event) -> None:
     elif isinstance(event, ToolResultBlock):
         text = event.content.strip()
         if not text:
-            typer.echo(f"    \u23bf (No output)")
+            typer.echo("    \u23bf (No output)")
             return
 
         lines = text.split("\n")
-        cap = 3
-        for line in lines[:cap]:
-            typer.echo(f"    \u23bf {line}")
-        if len(lines) > cap:
-            _truncated_results.append((f"Tool result", text))
-            typer.echo(f"    \u2026 +{len(lines) - cap} lines (ctrl+o to expand)")
+        first = lines[0].strip()
+        if len(first) > 120:
+            first = first[:120] + "..."
+        if len(lines) > 1:
+            _truncated_results.append(("Tool result", text))
+            typer.echo(f"    \u23bf {first}  \u2026 +{len(lines) - 1} lines (ctrl+o)")
+        else:
+            typer.echo(f"    \u23bf {first}")
 
 
 def _tool_label(name: str, input: dict) -> str:
