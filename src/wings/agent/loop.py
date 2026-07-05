@@ -171,10 +171,13 @@ class AgentLoop:
 
             # Log this request/response cycle
             if self._logger is not None:
+                # First cycle of the turn: log the user's original input
+                input_summary = user_input if turn is None else ""
                 self._logger.record_cycle(
                     model=model,
                     context=context.task_type,
                     message_count=len(self._messages),
+                    input_summary=input_summary,
                     response={
                         "content": [
                             b.model_dump() for b in text_blocks + tool_use_blocks  # type: ignore[union-attr]
@@ -305,10 +308,12 @@ class AgentLoop:
 
                 # Log after tool execution
                 if self._logger is not None and cycle_tool_calls:
+                    tool_names = ", ".join(cycle_tool_calls)
                     self._logger.record_cycle(
                         model=model,
                         context=context.task_type,
                         message_count=len(self._messages),
+                        input_summary=f"[tool results: {tool_names}]",
                         response={"content": [b.model_dump() for b in tool_use_blocks]},
                         tool_calls=cycle_tool_calls,
                         tool_results=[tr.content[:500] for tr in tool_results],

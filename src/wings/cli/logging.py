@@ -41,6 +41,7 @@ class TurnLogger:
         model: str,
         context: str = "main",
         message_count: int = 0,
+        input_summary: str = "",
         response: dict[str, Any],
         tool_calls: list[str] | None = None,
         tool_results: list[str] | None = None,
@@ -52,6 +53,8 @@ class TurnLogger:
             model: api_id used for this call (e.g. "anthropic/claude-opus-4-6")
             context: task_type — "main", "subagent/explore", etc.
             message_count: total messages in conversation (tracks context growth)
+            input_summary: what was sent to the model this cycle (user prompt
+                or tool result summary)
             response: the model's response (text blocks + tool use blocks)
             tool_calls: list of tool names called in this cycle
             tool_results: truncated tool outputs from this cycle
@@ -68,6 +71,7 @@ class TurnLogger:
             "service_model": service_model or model,
             "api_id": model,
             "message_count": message_count,
+            "input": input_summary,
             "response": response,
             "tool_calls": tool_calls or [],
         }
