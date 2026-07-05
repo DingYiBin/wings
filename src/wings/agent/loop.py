@@ -328,7 +328,7 @@ class AgentLoop:
                         input_summary=f"[tool results: {tool_names}]",
                         response={"content": [b.model_dump() for b in tool_use_blocks]},
                         tool_calls=cycle_tool_calls,
-                        tool_results=[tr.content[:500] for tr in tool_results],
+                        tool_results=[tr.content for tr in tool_results],
                     )
 
                 # If user denied a permission request, stop the turn so the
