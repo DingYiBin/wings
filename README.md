@@ -1,30 +1,14 @@
 # Wings
 
-A multi-model agent system — connect to multiple model APIs, each task type has its own API candidate pool. Users shape which models serve which tasks through scoring and configuration. Each model is a wing.
+A multi-model AI agent system. Every model call randomly selects an API from a task-type-specific candidate pool using softmax-weighted random selection. Users shape which models serve which tasks through scoring — each model is a wing.
 
 ## Design Principles
 
-**API candidate pool** — wings' core differentiator. Every model call randomly selects an API from the current task's candidate pool using weighted random selection. Users adjust pools by scoring (upvote/downvote), removing APIs, or forking per-skill pools. New APIs default to all pools; users can restrict them to specific task types.
+**API candidate pool** — wings' core differentiator. Every model call (including tool-use cycles within a turn) independently selects from the current task's candidate pool. Users adjust pools by scoring (upvote/downvote), removing APIs, or forking per-skill pools. Selection uses softmax over effective scores.
 
-**Everything is a tool**. File I/O, shell execution, search, sub-agent delegation — all implement the same `Tool` protocol and pass through the same permission pipeline.
+**Everything is a tool**. File I/O, shell execution, search, skills — all implement the same `Tool` protocol and pass through the same permission pipeline with fine-grained scoped rules.
 
 **Protocol-driven boundaries**. Modules depend on Protocols, not concrete classes. `ModelSelector`, `ModelProvider`, `Tool`, `HookRunner` — swap implementations without touching callers.
-
-## Current State
-
-9 phases completed, 184 tests, ~3100 lines of code. End-to-end data path is wired: user input → message assembly → pool-based model selection → provider API call → tool execution → response. Ready for basic testing with real API keys.
-
-| Phase | Module | Status | Key files |
-|-------|--------|--------|-----------|
-| 1 | messages | ✅ | `types.py`, `normalize.py` (Anthropic + OpenAI roundtrip) |
-| 1b | routing | ✅ | `manager.py` (API candidate pool, 19 task types) |
-| 2 | models | ✅ | `anthropic.py`, `openai.py` (chat + stream adapters) |
-| 3 | tools | ✅ | 6 built-in tools: read, write, edit, bash, glob, grep |
-| 4 | query | ✅ | `engine.py` (retry with exponential backoff) |
-| 5 | permissions | ✅ | 4-stage pipeline: rules → classify → hooks → ask |
-| 6a | agent/core | ✅ | `loop.py` (main cycle + handoff detection) |
-| 7 | config | ✅ | `settings.py` (TOML + env var layered config) |
-| 8 | cli | ✅ | `wings run` / `wings chat` with bootstrap wiring |
 
 ## Installation
 
@@ -33,138 +17,121 @@ Requirements: Python 3.12+, [uv](https://docs.astral.sh/uv/)
 ```bash
 git clone https://github.com/opensquilla/wings.git
 cd wings
-uv pip install -e .
-```
-
-Or with dev dependencies:
-
-```bash
-uv pip install -e ".[dev]"
+uv sync --extra dev
 ```
 
 ## Configuration
 
-### API Keys
-
-Create `~/.wings/config.json`:
+### Global (`~/.wings/config.json`)
 
 ```json
 {
   "providers": {
-    "anthropic": {
-      "model": "claude-sonnet-4-6",
+    "dpsk-flash": {
+      "model": "deepseek-v4-flash",
       "protocol": "anthropic",
-      "api_key": "sk-ant-api03-...",
-      "base_url": "https://api.anthropic.com"
-    },
-    "openai": {
-      "model": "gpt-4o",
-      "protocol": "openai",
       "api_key": "sk-...",
-      "base_url": "https://api.openai.com/v1"
+      "base_url": "https://api.deepseek.com/v1/"
     }
   }
 }
 ```
 
-Provider names are arbitrary keys under `"providers"`. Each value requires `model`, `protocol`, `api_key`, and `base_url`. `protocol` determines which adapter is used — `"anthropic"` for Anthropic-compatible APIs (Claude, DeepSeek via Anthropic endpoint, etc.) and `"openai"` for OpenAI-compatible APIs.
+Provider fields: `model`, `protocol` ("anthropic" or "openai"), `api_key`, `base_url` (required), `max_tokens` (8000), `escalated_max_tokens` (64000), `thinking` (true), `adaptive_thinking` (true), `thinking_budget` (null).
 
-API keys can also be set via environment variables (takes priority over config file):
+API keys can also be set via environment variables (takes priority):
 
 ```bash
-export WINGS_PROVIDERS__ANTHROPIC__API_KEY="sk-ant-api03-..."
-export WINGS_PROVIDERS__OPENAI__API_KEY="sk-..."
+export WINGS_PROVIDERS__DPSK_FLASH__API_KEY="sk-..."
 ```
+
+### Project (`.wings/config.json`)
+
+Overrides global settings for the current project. Deep-merged on top of global config:
+
+```json
+{
+  "personality": "You are a concise, no-nonsense assistant.",
+  "allowed_tools": ["read", "glob", "grep"],
+  "denied_tools": []
+}
+```
+
+### Skills
+
+Skills are SKILL.md files (YAML frontmatter + markdown body). Place them in:
+- `.wings/skills/<name>/SKILL.md` (project)
+- `~/.wings/skills/<name>/SKILL.md` (user)
+
+Three built-in skills ship with wings: `commit`, `review-pr`, `simplify`.
 
 ### API Candidate Pool (optional)
 
-Customize which models serve which task types:
+Customize which models serve which task types by adjusting scores:
 
 ```json
 {
   "routing": {
     "version": 2,
     "masks": {
-      "main": {
-        "anthropic/claude-opus-4-6": 2.0,
-        "openai/gpt-4o": 1.0
-      },
-      "subagent": {
-        "anthropic/claude-haiku-4-5": 3.0
-      }
+      "main": {"dpsk-pro/deepseek-v4-pro": 2.0},
+      "subagent": {"dpsk-flash/deepseek-v4-flash": 3.0}
     }
   }
 }
 ```
 
-APIs are automatically added to the global pool (score 0) when registered via providers. Masks adjust scores per task type. Positive = higher probability, negative = lower, `-inf` = disabled. Selection uses softmax over effective scores.
-
-If no pool is configured, all registered APIs participate with equal weight.
-
-### Project Settings
-
-Place a `wings.json` in your project root:
-
-```json
-{
-  "allowed_tools": ["read", "glob", "grep"],
-  "denied_tools": ["rm"],
-  "model": "anthropic/claude-opus-4-6",
-  "personality": "You are a concise, no-nonsense assistant."
-}
-```
-
 ## Usage
 
-### Single turn
-
 ```bash
-wings run "What does the README say about this project?"
-wings run --model anthropic/claude-opus-4-6 "Explain the architecture"
-wings run --dir /path/to/project "List all Python files"
-```
-
-### Interactive chat
-
-```bash
+# Interactive chat with slash commands and permission dialogs
 wings chat
+wings chat --log          # with session logging to .wings/logs/
+
+# Single turn
+wings run "What does this project do?"
+wings run --model dpsk-pro/deepseek-v4-pro "Explain the architecture"
 ```
 
-Type `/exit` to quit, Ctrl+C to interrupt.
-
-### Run tests
+## Development
 
 ```bash
-pytest tests/ -v
-# 184 passed
+uv sync --extra dev                 # install with dev deps
+uv run pytest tests/ -q             # 200 tests
+uv run pytest tests/test_tools.py -v  # single file
+uv run ruff check src/ tests/       # lint
+uv run mypy src/                    # type-check
+bash scripts/init-references.sh     # clone reference repos
 ```
 
 ## Architecture
 
 ```
 src/wings/
-├── cli/            # typer entry point + bootstrap wiring
-├── agent/          # AgentLoop, HandoffDetector, TurnRecord
-├── query/          # QueryEngine (retry) + TokenBudget
-├── tools/          # Tool protocol, registry, 6 built-in tools
-├── permissions/    # 4-stage permission pipeline
-├── models/         # Anthropic + OpenAI adapters, ModelRegistry, capabilities
-├── routing/        # API candidate pool manager + ModelSelector Protocol
-├── messages/       # Internal message types + provider format conversion
-└── config/         # Layered settings (env > wings.toml > ~/.wings/config.toml)
+├── cli/            # typer entry point (chat + run), bootstrap wiring, logging
+├── agent/          # AgentLoop (per-call model selection, permission sync), HandoffDetector
+├── query/          # QueryEngine (retry with backoff), TokenBudget
+├── tools/          # Tool protocol, @tool decorator, 7 built-in tools
+├── permissions/    # 5-stage pipeline (rules → scoped → classify → hooks → ask)
+├── models/         # Anthropic + OpenAI adapters (adaptive thinking, escalation)
+├── routing/        # API pool manager (softmax selection), ModelSelector Protocol
+├── messages/       # Internal types + Anthropic/OpenAI format conversion
+├── skills/         # SkillLoader (3-layer), SkillInjector, 3 built-in skills
+└── config/         # GlobalSettings (.wings/config.json merge)
 ```
 
-Module dependency order: messages/routing (no deps) → models (messages + routing) → tools (no deps) → query (models + messages + tools) → permissions (tools) → agent (all) → config (routing) → cli (all).
+Module dependency order: messages/routing → models → tools → query → permissions → agent → config/skills → cli.
 
 ## Design Docs
 
-- [`docs/design/architecture.md`](docs/design/architecture.md) — Architecture overview and design decisions
-- [`docs/design/modules.md`](docs/design/modules.md) — Detailed module design + implementation plan + reflections
-- [`docs/reference/`](docs/reference/) — Analysis of claude-code and opensquilla codebases
+- [`docs/design/architecture.md`](docs/design/architecture.md) — Architecture overview and agent loop
+- [`docs/design/modules.md`](docs/design/modules.md) — Detailed module specs + implementation history + reflections
+- [`docs/design/tool-comparison.md`](docs/design/tool-comparison.md) — Tool comparison: wings vs claude-code vs opensquilla
+- [`docs/reference/`](docs/reference/) — Analysis of claude-code and opensquilla
 
 ## References
 
 | Project | Language | Reference points |
 |---------|----------|------------------|
-| [claude-code](https://github.com/anthropics/claude-code) | TypeScript | Tool/Command interface, permission pipeline, agent types |
-| [opensquilla](https://github.com/opensquilla/opensquilla) | Python | Protocol-driven DI, StageOutcome, @tool decorator, Dream system |
+| [claude-code](https://github.com/anthropics/claude-code) | TypeScript | Tool interface, permission pipeline, agent types, display format |
+| [opensquilla](https://github.com/opensquilla/opensquilla) | Python | Protocol-driven DI, @tool decorator, Dream memory consolidation |
