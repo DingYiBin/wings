@@ -173,7 +173,8 @@ class AgentLoop:
             if self._logger is not None:
                 self._logger.record_cycle(
                     model=model,
-                    messages_sent=[m.model_dump() for m in self._messages],
+                    context=context.task_type,
+                    message_count=len(self._messages),
                     response={
                         "content": [
                             b.model_dump() for b in text_blocks + tool_use_blocks  # type: ignore[union-attr]
@@ -306,9 +307,11 @@ class AgentLoop:
                 if self._logger is not None and cycle_tool_calls:
                     self._logger.record_cycle(
                         model=model,
-                        messages_sent=[m.model_dump() for m in self._messages],
+                        context=context.task_type,
+                        message_count=len(self._messages),
                         response={"content": [b.model_dump() for b in tool_use_blocks]},
                         tool_calls=cycle_tool_calls,
+                        tool_results=[tr.content[:500] for tr in tool_results],
                     )
 
                 # If user denied a permission request, stop the turn so the

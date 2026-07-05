@@ -1,4 +1,4 @@
-"""Request/response logger — writes turn transcripts to .wings.log/."""
+"""Request/response logger — writes session transcripts to .wings/logs/."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import Any
 
 
 class TurnLogger:
-    """Captures outgoing messages and incoming responses for each cycle.
+    """Captures each API call cycle (request + response) with tool results.
 
     When enabled via --log, writes one .log file per session to
     .wings/logs/ in the working directory.
@@ -39,25 +39,40 @@ class TurnLogger:
         self,
         *,
         model: str,
-        messages_sent: list[dict[str, Any]],
+        context: str = "main",
+        message_count: int = 0,
         response: dict[str, Any],
         tool_calls: list[str] | None = None,
+        tool_results: list[str] | None = None,
         thinking: str | None = None,
     ) -> None:
-        """Record a single API call cycle (request + response) with timestamps."""
+        """Record a single API call cycle.
+
+        Args:
+            model: api_id used for this call (e.g. "anthropic/claude-opus-4-6")
+            context: task_type — "main", "subagent/explore", etc.
+            message_count: total messages in conversation (tracks context growth)
+            response: the model's response (text blocks + tool use blocks)
+            tool_calls: list of tool names called in this cycle
+            tool_results: truncated tool outputs from this cycle
+            thinking: thinking/reasoning text if the model produced it
+        """
         self._cycle_count += 1
         provider_name, _, service_model = model.partition("/")
-        entry = {
+        entry: dict[str, Any] = {
             "cycle": self._cycle_count,
+            "context": context,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "elapsed_s": round(time.monotonic() - self._session_start, 3),
             "provider": provider_name,
             "service_model": service_model or model,
             "api_id": model,
-            "messages_sent": messages_sent,
+            "message_count": message_count,
             "response": response,
             "tool_calls": tool_calls or [],
         }
+        if tool_results:
+            entry["tool_results"] = tool_results
         if thinking:
             entry["thinking"] = thinking
         self._buffer.append(entry)
