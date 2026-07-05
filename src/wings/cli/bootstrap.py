@@ -11,6 +11,7 @@ from pathlib import Path
 
 from wings.agent.loop import AgentContext, AgentLoop
 from wings.config.settings import AppConfig
+from wings.memory.loader import load_memory_prompt
 from wings.models.anthropic import AnthropicProvider
 from wings.models.openai import OpenAIProvider
 from wings.models.protocol import ModelConfig
@@ -174,6 +175,10 @@ def make_agent_context(
     if skills:
         injector = SkillInjector()
         system_prompt = injector.inject_skills(system_prompt, skills)
+
+    # Inject memory (MEMORY.md from .wings/memory/)
+    memory_prompt = load_memory_prompt(Path(cwd))
+    system_prompt = f"{system_prompt}\n\n{memory_prompt}"
 
     return AgentContext(
         task_type=task_type,
