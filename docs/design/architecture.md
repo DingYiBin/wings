@@ -255,7 +255,7 @@ async def run_loop(
 | `skills` | 可复用技能/工作流 (SKILL.md, 3 内置 skill, per-skill API 池) | ✅ |
 | `hooks` | 生命周期钩子 | — |
 | `context` | system prompt + 环境信息 | — |
-| `memory` | 持久化记忆 | — |
+| `memory` | 持久化记忆 (.wings/memory/, MEMORY.md 索引 + 话题文件) | ✅ |
 | `plugins` | 插件加载 | — |
 | `services` | 外部服务封装（API, MCP） | — |
 
