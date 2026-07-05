@@ -92,6 +92,32 @@ def _set_cache(url: str, content: str) -> None:
     _cache[url] = (time.monotonic(), content)
 
 
+def _decode_content(raw: bytes) -> str | None:
+    """Try to decode bytes to text with encoding fallback chain.
+
+    UTF-8 first, then common Chinese encodings (GBK, GB18030, Big5).
+    Returns None if all decoders fail (likely binary content).
+    """
+    # Try UTF-8 first (covers most modern sites)
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+
+    # Try Chinese encodings (Sina Finance, East Money, etc.)
+    for enc in ("gb18030", "gbk", "big5", "gb2312"):
+        try:
+            return raw.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+
+    # Last resort: latin-1 never fails, but may produce garbage
+    try:
+        return raw.decode("latin-1")
+    except Exception:
+        return None
+
+
 class WebFetchInput(BaseModel):
     """Input schema for web_fetch tool."""
 
@@ -110,16 +136,15 @@ class WebFetchInput(BaseModel):
         "Use this tool when you need to retrieve and analyze web content.\n"
         "\n"
         "Usage notes:\n"
-        "- IMPORTANT: If an MCP-provided web fetch tool is available, prefer using "
-        "that tool instead of this one, as it may have fewer restrictions.\n"
         "- The URL must be a fully-formed valid URL\n"
         "- HTTP URLs will be automatically upgraded to HTTPS\n"
         "- Results may be summarized if the content is very large\n"
-        "- Includes a self-cleaning 15-minute cache for faster responses when "
-        "repeatedly accessing the same URL\n"
-        "- When a URL redirects to a different host, the tool will inform you and "
-        "provide the redirect URL. You should then make a new WebFetch request with "
-        "the redirect URL to fetch the content."
+        "- Includes a 15-minute cache for repeated URLs\n"
+        "- When a URL redirects to a different host, make a new WebFetch request "
+        "with the redirect URL.\n"
+        "- Many financial, news, and e-commerce sites return 403 (blocked). "
+        "If you get 403 from a domain, do NOT retry that same domain — the block "
+        "is intentional. Work with what you have from search snippets instead."
     ),
     read_only=True,
     search_hint="web_fetch url='https://docs.python.org/3/'",
@@ -183,14 +208,10 @@ async def web_fetch(input: WebFetchInput, context: ToolContext) -> str:
                 f"Try a more specific URL."
             )
 
-    # Convert to text
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        try:
-            text = raw.decode("latin-1")
-        except Exception:
-            return f"Error: binary content ({len(raw)} bytes, {content_type})"
+    # Convert to text — try UTF-8 first, fall back to common Chinese encodings
+    text = _decode_content(raw)
+    if text is None:
+        return f"Error: binary content ({len(raw)} bytes, {content_type})"
 
     # Convert HTML to markdown
     if "text/html" in content_type:

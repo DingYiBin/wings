@@ -4,6 +4,7 @@ import pytest
 
 from wings.tools.builtin.web_fetch import (
     WebFetchInput,
+    _decode_content,
     _is_blocked_host,
     _html_to_markdown,
     _check_cache,
@@ -63,6 +64,34 @@ def test_input_schema():
     props = schema["properties"]
     assert "url" in props
     assert "prompt" in props
+
+
+def test_decode_utf8():
+    result = _decode_content("Hello 世界".encode("utf-8"))
+    assert result == "Hello 世界"
+
+
+def test_decode_gbk():
+    # "腾讯控股" in GBK
+    result = _decode_content("腾讯控股".encode("gbk"))
+    assert result == "腾讯控股"
+
+
+def test_decode_gb18030():
+    result = _decode_content("腾讯股价".encode("gb18030"))
+    assert result == "腾讯股价"
+
+
+def test_decode_fallback_to_latin1():
+    # Random bytes that aren't valid in any Chinese encoding
+    result = _decode_content(b"\xff\xfe\x00\x01")
+    assert result is not None  # latin-1 always succeeds
+
+
+def test_decode_binary_returns_none():
+    # Edge case — unlikely but handled
+    result = _decode_content(bytes(range(256)))
+    assert result is not None  # latin-1 succeeds
 
 
 @pytest.mark.asyncio
