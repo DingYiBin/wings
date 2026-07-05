@@ -29,6 +29,7 @@ from wings.tools.builtin import (
     edit_file,
     glob_files,
     grep,
+    make_agent_tool,
     read_file,
     skill_view,
     write_file,
@@ -119,6 +120,10 @@ def create_session(
 
     # -- Query engine --
     engine = QueryEngine(registry)
+
+    # -- Agent tool (subagent support) --
+    agent_tool = make_agent_tool(engine, registry, tools, pool_mgr, rules)
+    tools.register(agent_tool)
 
     # -- Agent loop --
     loop = AgentLoop(engine, tools, pipeline, pool_mgr, registry)

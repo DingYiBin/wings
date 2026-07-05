@@ -77,7 +77,30 @@ class ThinkingDelta(BaseModel):
     text: str
 
 
-StreamEvent = TextDelta | ToolUseDelta | ThinkingDelta | TextBlock | ToolUseBlock | ToolResultBlock
+class SubAgentStart(BaseModel):
+    """A subagent has started executing."""
+    type: Literal["subagent_start"] = "subagent_start"
+    agent_type: str
+    description: str
+
+
+class SubAgentDelta(BaseModel):
+    """A chunk of text from a running subagent."""
+    type: Literal["subagent_delta"] = "subagent_delta"
+    text: str
+
+
+class SubAgentEnd(BaseModel):
+    """A subagent has finished executing."""
+    type: Literal["subagent_end"] = "subagent_end"
+    agent_type: str
+
+
+StreamEvent = (
+    TextDelta | ToolUseDelta | ThinkingDelta
+    | TextBlock | ToolUseBlock | ToolResultBlock
+    | SubAgentStart | SubAgentDelta | SubAgentEnd
+)
 
 
 # -- Permission ----------------------------------------------------------------

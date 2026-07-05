@@ -21,6 +21,9 @@ from wings.messages.types import (
     PermissionRequest,
     Role,
     StreamEvent,
+    SubAgentDelta,
+    SubAgentEnd,
+    SubAgentStart,
     TextBlock,
     TextDelta,
     ThinkingDelta,
@@ -250,6 +253,18 @@ class AgentLoop:
 
                     cycle_tool_calls.append(block.name)
                     turn.tool_calls.append(block.name)
+
+                    # Agent tool: set up subagent event capture
+                    subagent_events: list[Any] = []
+                    if block.name == "agent":
+                        async def _capture(event: Any) -> None:
+                            subagent_events.append(event)
+                        context.tool_context.event_callback = _capture
+                        yield SubAgentStart(
+                            agent_type=block.input.get("subagent_type", "general"),
+                            description=block.input.get("description", ""),
+                        )
+
                     try:
                         tool_result = await tool.call(block.input, context.tool_context)
                     except Exception as exc:
@@ -261,6 +276,20 @@ class AgentLoop:
                         tool_results.append(tr)
                         yield tr
                         continue
+
+                    # Agent tool: yield captured subagent events
+                    if block.name == "agent":
+                        for evt in subagent_events:
+                            # Wrap subagent text deltas for CLI display
+                            if isinstance(evt, TextDelta):
+                                yield SubAgentDelta(text=evt.text)
+                            elif isinstance(evt, (ToolUseBlock, ToolResultBlock)):
+                                yield evt
+                        yield SubAgentEnd(
+                            agent_type=block.input.get("subagent_type", "general"),
+                        )
+                        context.tool_context.event_callback = None
+
                     tr = ToolResultBlock(
                         tool_use_id=block.id,
                         content=tool_result.output,

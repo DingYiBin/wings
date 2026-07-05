@@ -27,6 +27,11 @@ class ToolContext(BaseModel):
         default_factory=dict,
         description="File path -> mtime for recently read files. Used for stale-write detection.",
     )
+    event_callback: Any | None = Field(
+        default=None,
+        exclude=True,
+        description="Optional callback for subagent events. Set by AgentLoop before calling the agent tool.",
+    )
 
 
 class Tool(Protocol):

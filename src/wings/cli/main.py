@@ -12,7 +12,15 @@ from prompt_toolkit import PromptSession
 
 from wings.cli.bootstrap import create_session, make_agent_context
 from wings.cli.logging import TurnLogger
-from wings.messages.types import PermissionRequest, TextDelta, ToolResultBlock, ToolUseBlock
+from wings.messages.types import (
+    PermissionRequest,
+    SubAgentDelta,
+    SubAgentEnd,
+    SubAgentStart,
+    TextDelta,
+    ToolResultBlock,
+    ToolUseBlock,
+)
 
 app = typer.Typer(
     name="wings",
@@ -117,7 +125,7 @@ async def _wrap_stream(stream):
                 started = True
                 # Yield control so the spinner task can start running
                 await asyncio.sleep(0)
-            if isinstance(event, (TextDelta, ToolUseBlock)) and spinner is not None:
+            if isinstance(event, (TextDelta, ToolUseBlock, SubAgentStart, SubAgentDelta)) and spinner is not None:
                 spinner.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await spinner
@@ -246,7 +254,14 @@ def _display_tool_event(event) -> None:
     - Multi-line results indented under prefix
     - Truncation with (ctrl+o to expand) hint
     """
-    if isinstance(event, ToolUseBlock):
+    if isinstance(event, SubAgentStart):
+        typer.echo(f"\n  ╭─ Agent({event.agent_type}) ─ {event.description}")
+    elif isinstance(event, SubAgentDelta):
+        typer.echo(f"  │  {event.text}", nl=False)
+        sys.stdout.flush()
+    elif isinstance(event, SubAgentEnd):
+        typer.echo(f"  ╰─ Agent({event.agent_type}) done")
+    elif isinstance(event, ToolUseBlock):
         label = _tool_label(event.name, event.input)
         typer.echo(f"  ● {label}")
     elif isinstance(event, ToolResultBlock):
@@ -271,7 +286,7 @@ def _tool_label(name: str, input: dict) -> str:
     """
     human_name = {"edit": "Update", "write": "Write", "read": "Read",
                    "bash": "Bash", "glob": "Glob", "grep": "Grep",
-                   "skill_view": "SkillView"}.get(name, name)
+                   "skill_view": "SkillView", "agent": "Agent"}.get(name, name)
 
     path = input.get("file_path", "")
     if path:
@@ -284,6 +299,11 @@ def _tool_label(name: str, input: dict) -> str:
     pattern = input.get("pattern", "")
     if pattern:
         return f"{human_name}({pattern})"
+    # Agent tool: show description and type
+    if name == "agent":
+        desc = input.get("description", "")
+        atype = input.get("subagent_type", "general")
+        return f"{human_name}({atype}) — {desc}"
     # Fallback: show first key-value pair
     if input:
         key, val = next(iter(input.items()))
