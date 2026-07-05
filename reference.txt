@@ -1,0 +1,4 @@
+# Wings reference repositories
+# Initialise with: bash scripts/init-references.sh
+
+opensquilla https://github.com/opensquilla/opensquilla.git
