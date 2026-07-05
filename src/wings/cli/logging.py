@@ -43,6 +43,7 @@ class TurnLogger:
         message_count: int = 0,
         input_summary: str = "",
         response: dict[str, Any],
+        system_prompt: str = "",
         tool_calls: list[str] | None = None,
         tool_results: list[str] | None = None,
         thinking: str | None = None,
@@ -75,6 +76,8 @@ class TurnLogger:
             "response": response,
             "tool_calls": tool_calls or [],
         }
+        if system_prompt:
+            entry["system_prompt"] = system_prompt
         if tool_results:
             entry["tool_results"] = tool_results
         if thinking:

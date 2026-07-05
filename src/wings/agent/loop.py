@@ -171,13 +171,19 @@ class AgentLoop:
 
             # Log this request/response cycle
             if self._logger is not None:
-                # First cycle of the turn: log the user's original input
+                # First cycle of the turn: log the user's original input + system prompt
                 input_summary = user_input if turn is None else ""
+                system_prompt = ""
+                if turn is None and self._messages:
+                    first = self._messages[0]
+                    if first.role == Role.SYSTEM and first.content:
+                        system_prompt = first.content[0].text if hasattr(first.content[0], "text") else ""
                 self._logger.record_cycle(
                     model=model,
                     context=context.task_type,
                     message_count=len(self._messages),
                     input_summary=input_summary,
+                    system_prompt=system_prompt,
                     response={
                         "content": [
                             b.model_dump() for b in text_blocks + tool_use_blocks  # type: ignore[union-attr]
