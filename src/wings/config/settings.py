@@ -69,6 +69,8 @@ class GlobalSettings(BaseSettings):
     personality: str | None = None  # appended to system prompt
     allowed_tools: list[str] = Field(default_factory=list)
     denied_tools: list[str] = Field(default_factory=list)
+    hooks: dict[str, list[dict]] = Field(default_factory=dict)
+    mcp_servers: dict[str, dict] = Field(default_factory=dict)
 
     @classmethod
     def load_global(cls, path: Path | None = None) -> GlobalSettings:

@@ -314,6 +314,11 @@ class AgentLoop:
                     tool_results.append(tr)
                     yield tr
 
+                    # Post-tool-use hooks
+                    await self._permission_pipeline.run_post_tool_use(
+                        block.name, block.input, tr.content,
+                    )
+
                 self._messages.append(
                     Message(role=Role.USER, content=list(tool_results))
                 )

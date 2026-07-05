@@ -348,7 +348,7 @@ async def _run_single(prompt: str, working_dir: Path, model: str | None, log: bo
     """Execute a single-turn agent request."""
     global _truncated_results
     try:
-        loop, config = create_session(working_dir)
+        loop, config = await create_session(working_dir)
         if log:
             logger = TurnLogger(working_dir)
             loop.set_logger(logger)
@@ -390,7 +390,7 @@ async def _run_chat(working_dir: Path, model: str | None, log: bool) -> None:
     """Interactive chat loop."""
     global _truncated_results
     try:
-        loop, config = create_session(working_dir)
+        loop, config = await create_session(working_dir)
         if log:
             logger = TurnLogger(working_dir)
             loop.set_logger(logger)

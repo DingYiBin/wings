@@ -77,3 +77,12 @@ class PermissionPipeline:
 
         # Stage 4: interactive approval
         return "ask"
+
+    async def run_post_tool_use(
+        self, tool_name: str, tool_input: Any, tool_result: str,
+    ) -> None:
+        """Run post-tool-use hooks (fire-and-forget)."""
+        if self._hook_runner is not None and hasattr(self._hook_runner, "run_post_tool_use"):
+            await self._hook_runner.run_post_tool_use(
+                tool_name, tool_input, tool_result,
+            )

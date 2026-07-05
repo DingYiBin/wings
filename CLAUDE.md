@@ -50,6 +50,8 @@ Wings is a **multi-model AI agent** where every API call independently selects a
 - `tools/builtin/` — 8 tools (read, write, edit, bash, glob, grep, skill_view, agent). All use the `@tool` decorator which auto-coerces dict inputs to Pydantic models and auto-generates JSON Schema.
 - `agent/subagent.py` — `AgentTypeSpec` dataclass + `BUILTIN_AGENT_TYPES` (general/explore/plan) + `run_subagent()`. Subagents run in a fresh AgentLoop with filtered tools and pre-allowed permissions. Each type routes via `subagent/<type>` pool.
 - `memory/` — File-based persistent memory in `.wings/memory/`. `MEMORY.md` index + per-topic markdown files with YAML frontmatter. 4 types: user/feedback/project/reference. Model uses existing Write/Edit tools to maintain memories.
+- `hooks/` — Shell-command lifecycle hooks. `PreToolUse` (can block/allow tools), `PostToolUse` (advisory). Configured via `config.json` `hooks` field. Plugs into `PermissionPipeline` Stage 3.
+- `mcp/` — MCP (Model Context Protocol) integration via stdio transport. Tools named `mcp__<server>__<tool>`. Configured via `config.json` `mcp_servers` field.
 - `permissions/` — 5-stage pipeline: tool-level rules → scoped rules (prefix matching) → auto-classify (read-only → allow) → hooks → interactive prompt. Scoped rules (`Bash(git commit:*)`) match command prefixes or directory paths, never entire tools.
 - `models/anthropic.py` — Adaptive thinking (no budget_tokens) + max_tokens escalation (8K → 64K on stop_reason=max_tokens). Streams buffer all events first to check stop_reason before yielding.
 - `skills/` — Skills are SKILL.md files (YAML frontmatter + markdown body). Three layers: builtin < `~/.wings/skills/` < `.wings/skills/`. Each skill auto-forks an independent API pool (`skill/<name>`).

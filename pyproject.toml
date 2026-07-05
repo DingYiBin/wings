@@ -22,6 +22,7 @@ dependencies = [
     "duckduckgo-search>=8.1.1",
     "ddgs>=9.14.4",
     "beautifulsoup4>=4.15.0",
+    "mcp>=1.28.1",
 ]
 
 [project.optional-dependencies]

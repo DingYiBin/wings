@@ -253,7 +253,8 @@ async def run_loop(
 | `config` | 全局/项目配置 (JSON, ProviderConfig w/ thinking/max_tokens) | ✅ |
 | `cli` | Typer 入口 + chat/run (slash commands, 权限 UI, tool展示, ctrl+o展开) | ✅ |
 | `skills` | 可复用技能/工作流 (SKILL.md, 3 内置 skill, per-skill API 池) | ✅ |
-| `hooks` | 生命周期钩子 | — |
+| `hooks` | Shell 命令生命周期钩子 (PreToolUse/PostToolUse) | ✅ |
+| `mcp` | MCP 协议集成 (stdio, mcp__server__tool) | ✅ |
 | `context` | system prompt + 环境信息 | — |
 | `memory` | 持久化记忆 (.wings/memory/, MEMORY.md 索引 + 话题文件) | ✅ |
 | `plugins` | 插件加载 | — |

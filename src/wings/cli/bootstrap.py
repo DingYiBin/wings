@@ -12,6 +12,9 @@ from pathlib import Path
 from wings.agent.agent_loader import load_custom_agents
 from wings.agent.loop import AgentContext, AgentLoop
 from wings.config.settings import AppConfig
+from wings.hooks.runner import HookRunner
+from wings.hooks.types import HookConfig
+from wings.mcp.loader import load_mcp_tools
 from wings.memory.loader import load_memory_prompt
 from wings.models.anthropic import AnthropicProvider
 from wings.models.openai import OpenAIProvider
@@ -47,7 +50,27 @@ _PROVIDER_CLASSES = {
 }
 
 
-def create_session(
+def _build_hook_runner(config: AppConfig) -> HookRunner:
+    """Build a HookRunner from app config hooks."""
+    hooks_cfg = config.global_settings.hooks or {}
+    pre = _parse_hook_configs(hooks_cfg.get("PreToolUse", []))
+    post = _parse_hook_configs(hooks_cfg.get("PostToolUse", []))
+    return HookRunner(pre_tool_use=pre, post_tool_use=post)
+
+
+def _parse_hook_configs(raw: list[dict]) -> list[HookConfig]:
+    """Parse raw hook config dicts into HookConfig objects."""
+    configs = []
+    for item in raw:
+        if isinstance(item, dict) and "command" in item:
+            configs.append(HookConfig(
+                command=item["command"],
+                matcher=item.get("matcher"),
+            ))
+    return configs
+
+
+async def create_session(
     working_dir: Path | None = None,
 ) -> tuple[AgentLoop, AppConfig]:
     """Create a fully wired agent session.
@@ -120,10 +143,20 @@ def create_session(
         rules.add_allow(name)
     for name in config.global_settings.denied_tools:
         rules.add_deny(name)
-    pipeline = PermissionPipeline(rules)
+    # -- Hooks --
+    hook_runner = _build_hook_runner(config)
+
+    pipeline = PermissionPipeline(rules, hook_runner=hook_runner if hook_runner.has_hooks() else None)
 
     # -- Query engine --
     engine = QueryEngine(registry)
+
+    # -- MCP tools --
+    mcp_servers = config.global_settings.mcp_servers or {}
+    if mcp_servers:
+        mcp_tools = await load_mcp_tools(mcp_servers)
+        for t in mcp_tools:
+            tools.register(t)
 
     # -- Agent tool (subagent support) --
     custom_agents = load_custom_agents(cwd)
