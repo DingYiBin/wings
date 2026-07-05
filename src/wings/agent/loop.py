@@ -80,6 +80,15 @@ class AgentLoop:
         self._perm_event = asyncio.Event()
         self._perm_response: str = "deny"  # default: deny until answered
 
+        # CLI-accessible state (set by bootstrap / main)
+        self.skill_loader: Any = None
+        self.available_skills: dict[str, str] = {}
+        self.skills_list: list[Any] = []
+        self.pool_manager: Any = None
+        self.custom_agents: dict[str, Any] = {}
+        self._turn_count: int = 0
+        self.extract_memories: Any = None
+
     # -- Public API ------------------------------------------------------------
 
     def set_logger(self, logger: Any) -> None:

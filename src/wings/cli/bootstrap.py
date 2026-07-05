@@ -168,18 +168,16 @@ async def create_session(
     loop = AgentLoop(engine, tools, pipeline, pool_mgr, registry)
 
     # Attach state so CLI layer can access it
-    loop.skill_loader = loader  # type: ignore[attr-defined]
-    loop.available_skills = available_skills  # type: ignore[attr-defined]
-    loop.skills_list = skills_list  # type: ignore[attr-defined]
-    loop.pool_manager = pool_mgr  # type: ignore[attr-defined]
-    loop.custom_agents = custom_agents  # type: ignore[attr-defined]
+    loop.skill_loader = loader
+    loop.available_skills = available_skills
+    loop.skills_list = skills_list
+    loop.pool_manager = pool_mgr
+    loop.custom_agents = custom_agents
 
     # Memory extraction callback — called from CLI after each turn
-    loop._turn_count = 0  # type: ignore[attr-defined]
-
     async def _extract_after_turn(messages_text: str) -> None:
-        loop._turn_count += 1  # type: ignore[attr-defined]
-        if loop._turn_count % 5 == 0:  # type: ignore[attr-defined]
+        loop._turn_count += 1
+        if loop._turn_count % 5 == 0:
             await maybe_extract_memories(
                 messages_text=messages_text,
                 working_dir=str(cwd),
@@ -189,7 +187,7 @@ async def create_session(
                 model_selector=pool_mgr,
             )
 
-    loop.extract_memories = _extract_after_turn  # type: ignore[attr-defined]
+    loop.extract_memories = _extract_after_turn
 
     return loop, config
 
