@@ -11,4 +11,4 @@ build/
 .mypy_cache/
 .ruff_cache/
 uv.lock
-.wings.log
+.wings/logs/

@@ -14,11 +14,11 @@ class TurnLogger:
     """Captures outgoing messages and incoming responses for each cycle.
 
     When enabled via --log, writes one .log file per session to
-    .wings.log/ in the working directory.
+    .wings/logs/ in the working directory.
     """
 
     def __init__(self, working_dir: Path):
-        self._dir = working_dir / ".wings.log"
+        self._dir = working_dir / ".wings" / "logs"
         self._dir.mkdir(parents=True, exist_ok=True)
         self._path = self._make_path()
         self._buffer: list[dict[str, Any]] = []

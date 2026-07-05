@@ -98,8 +98,9 @@ def test_project_settings_defaults():
 
 
 def test_project_settings_load_from_json(tmp_path):
-    json_path = tmp_path / "wings.json"
-    json_path.write_text("""{
+    json_dir = tmp_path / ".wings"
+    json_dir.mkdir()
+    (json_dir / "settings.json").write_text("""{
   "allowed_tools": ["read", "glob"],
   "denied_tools": ["rm"],
   "model": "claude-opus-4-6",
@@ -114,7 +115,9 @@ def test_project_settings_load_from_json(tmp_path):
 
 
 def test_project_settings_walks_up(tmp_path):
-    (tmp_path / "wings.json").write_text('{"model": "claude-haiku-4-5"}')
+    json_dir = tmp_path / ".wings"
+    json_dir.mkdir()
+    (json_dir / "settings.json").write_text('{"model": "claude-haiku-4-5"}')
     sub = tmp_path / "deep" / "nested"
     sub.mkdir(parents=True)
 
@@ -133,7 +136,9 @@ def test_project_settings_not_found(tmp_path):
 def test_app_config_load(tmp_path, monkeypatch):
     monkeypatch.setenv("WINGS_PROVIDERS__ANTHROPIC__API_KEY", "sk-test-key")
     monkeypatch.setenv("WINGS_PROVIDERS__ANTHROPIC__BASE_URL", "https://api.anthropic.com")
-    (tmp_path / "wings.json").write_text(
+    json_dir = tmp_path / ".wings"
+    json_dir.mkdir()
+    (json_dir / "settings.json").write_text(
         '{"allowed_tools": ["read"], "personality": "concise"}'
     )
 

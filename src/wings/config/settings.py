@@ -88,7 +88,7 @@ class GlobalSettings(BaseSettings):
 
 
 class ProjectSettings(BaseModel):
-    """Per-project configuration loaded from wings.json in the project root."""
+    """Per-project configuration loaded from .wings/settings.json."""
 
     allowed_tools: list[str] = Field(default_factory=list)
     denied_tools: list[str] = Field(default_factory=list)
@@ -97,13 +97,13 @@ class ProjectSettings(BaseModel):
 
     @classmethod
     def load(cls, directory: Path) -> ProjectSettings:
-        """Load project settings from wings.json in the given directory.
+        """Load project settings from .wings/settings.json.
 
-        Walks up from *directory* to find the nearest wings.json.
+        Walks up from *directory* to find the nearest .wings/settings.json.
         """
         current = directory.resolve()
         for _ in range(20):  # prevent infinite walk
-            json_path = current / "wings.json"
+            json_path = current / ".wings" / "settings.json"
             if json_path.exists():
                 with open(json_path) as f:
                     data = json.load(f)
