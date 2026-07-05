@@ -1,7 +1,4 @@
-"""WebSearch tool — search the web via DuckDuckGo.
-
-Uses the ddgs (formerly duckduckgo_search) package — free, no API key required.
-"""
+"""WebSearch tool — search the web via DuckDuckGo (primary) or Bing (fallback)."""
 
 from __future__ import annotations
 
@@ -26,6 +23,28 @@ class WebSearchInput(BaseModel):
     )
 
 
+def _search_ddgs(query: str, max_results: int) -> list[dict[str, str]]:
+    """Search via DuckDuckGo (primary backend)."""
+    try:
+        from ddgs import DDGS
+
+        with DDGS() as ddgs:
+            raw = list(ddgs.text(query, max_results=max_results))
+        return [
+            {"title": r.get("title", ""), "href": r.get("href", ""), "body": r.get("body", "")}
+            for r in raw
+        ]
+    except Exception:
+        return []
+
+
+def _search_bing(query: str, max_results: int) -> list[dict[str, str]]:
+    """Search via Bing (fallback)."""
+    from wings.tools.builtin.bing_search import bing_search
+
+    return bing_search(query, max_results)
+
+
 @tool(
     name="web_search",
     description=(
@@ -33,7 +52,6 @@ class WebSearchInput(BaseModel):
         "- Provides up-to-date information for current events and recent data\n"
         "- Returns search result information formatted as search result blocks\n"
         "- Use this tool for accessing information beyond Claude's knowledge cutoff\n"
-        "- Searches are performed automatically within a single API call\n"
         "\n"
         "CRITICAL REQUIREMENT - You MUST follow this:\n"
         "  - After answering the user's question, you MUST include a \"Sources:\" "
@@ -48,8 +66,10 @@ class WebSearchInput(BaseModel):
         "call web_fetch on every result. Only fetch when the snippet is "
         "insufficient.\n"
         "  - If your first 1-2 web_fetch calls return 403 errors, STOP "
-        "fetching. Many financial and news sites block automated access. "
-        "Work with the search snippets you already have.\n"
+        "fetching. Many sites block automated access. Work with the snippets "
+        "you already have.\n"
+        "  - For time-sensitive queries, 2-3 search attempts are usually enough. "
+        "Answer with what you have rather than searching indefinitely.\n"
         "\n"
         "IMPORTANT - Use the correct year in search queries:\n"
         "  - The current month is July 2026. You MUST use this year when searching "
@@ -59,42 +79,30 @@ class WebSearchInput(BaseModel):
     search_hint="web_search query='python documentation' max_results=5",
 )
 async def web_search(input: WebSearchInput, context: ToolContext) -> str:
-    """Search the web via DuckDuckGo and return formatted results."""
+    """Search the web and return formatted results."""
     query = input.query.strip()
     if len(query) < 2:
         return "Error: search query must be at least 2 characters"
 
+    # Try DuckDuckGo first, fall back to Bing
     try:
-        from ddgs import DDGS
-    except ImportError:
-        return "Error: ddgs package not installed. Run: uv add ddgs"
-
-    import time
-
-    results = []
-    last_error = None
-    for attempt in range(3):
-        try:
-            with DDGS() as ddgs:
-                results = list(ddgs.text(query, max_results=input.max_results))
-            break
-        except Exception as e:
-            last_error = e
-            if attempt < 2:
-                time.sleep(1.0 * (attempt + 1))
-
-    if last_error and not results:
-        return f"Error: search failed for '{query}' (retried 3x): {last_error}"
+        results = _search_ddgs(query, input.max_results)
+    except Exception:
+        results = []
+    backend = "DuckDuckGo"
+    if not results:
+        results = _search_bing(query, input.max_results)
+        backend = "Bing"
 
     if not results:
-        return f"No results found for '{query}'."
+        return f"No results found for '{query}'. Try a broader or different query."
 
     lines = [
-        f'Search: "{query}" — {len(results)} results',
+        f'Search: "{query}" — {len(results)} results ({backend})',
         "",
     ]
     for i, r in enumerate(results, 1):
-        title = r.get("title", "Untitled")
+        title = r.get("title", "") or "Untitled"
         href = r.get("href", "")
         body = r.get("body", "")
         lines.append(f"{i}. [{title}]({href})")
