@@ -138,6 +138,7 @@ def create_session(
     loop.available_skills = available_skills  # type: ignore[attr-defined]
     loop.skills_list = skills_list  # type: ignore[attr-defined]
     loop.pool_manager = pool_mgr  # type: ignore[attr-defined]
+    loop.custom_agents = custom_agents  # type: ignore[attr-defined]
 
     return loop, config
 
@@ -150,6 +151,7 @@ def make_agent_context(
     working_dir: Path | None = None,
     skills: list[SkillSpec] | None = None,
     available_skills: dict[str, str] | None = None,
+    custom_agents: dict | None = None,
 ) -> AgentContext:
     """Build an AgentContext from app config.
 
@@ -179,6 +181,23 @@ def make_agent_context(
     if skills:
         injector = SkillInjector()
         system_prompt = injector.inject_skills(system_prompt, skills)
+
+    # Inject available agents into system prompt
+    from wings.agent.subagent import get_agent_types
+
+    all_agents = get_agent_types(custom_agents or {})
+    agent_lines = ["\n## Available Agents\n"]
+    for name, spec in sorted(all_agents.items()):
+        tools_desc = ", ".join(spec.tools) if spec.tools else "all"
+        ro = " [read-only]" if spec.read_only else ""
+        agent_lines.append(
+            f"- **{name}**: {spec.description} (Tools: {tools_desc}){ro}"
+        )
+    agent_lines.append(
+        "\nUse agent(subagent_type=\"<name>\", description=\"...\", prompt=\"...\") "
+        "to spawn one."
+    )
+    system_prompt = system_prompt + "\n".join(agent_lines)
 
     # Inject memory (MEMORY.md from .wings/memory/)
     memory_prompt = load_memory_prompt(Path(cwd))

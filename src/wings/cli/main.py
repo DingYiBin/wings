@@ -179,6 +179,7 @@ def _ctx_kwargs(config, working_dir, model, loop):
         model_override=model,
         skills=getattr(loop, "skills_list", None),
         available_skills=getattr(loop, "available_skills", None),
+        custom_agents=getattr(loop, "custom_agents", None),
     )
 
 
