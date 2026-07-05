@@ -13,3 +13,4 @@ build/
 uv.lock
 .wings/logs/
 reference/
+.wings/config.json

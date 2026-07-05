@@ -112,6 +112,17 @@ class AgentLoop:
         """
         self._assemble_messages(user_input, context)
 
+        # Inject pending background agent results into conversation
+        if hasattr(context.tool_context, "_pending_background"):
+            pending = context.tool_context._pending_background
+            while pending:
+                desc, result = pending.pop(0)
+                self._messages.append(
+                    Message(role=Role.USER, content=[TextBlock(
+                        text=f"[Background agent completed: {desc}]\n\n{result}"
+                    )])
+                )
+
         turn: TurnRecord | None = None
 
         is_first_cycle = True

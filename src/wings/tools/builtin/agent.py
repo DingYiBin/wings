@@ -38,6 +38,11 @@ class AgentInput(BaseModel):
         default="general",
         description="Type of agent to use: general, explore, or plan",
     )
+    run_in_background: bool = Field(
+        default=False,
+        description="Set to true to run this agent in the background. "
+        "You will be notified when it completes.",
+    )
 
 
 def _build_description(custom: dict[str, AgentTypeSpec]) -> str:
@@ -129,6 +134,34 @@ def make_agent_tool(
         if spec is None:
             available = ", ".join(sorted(all_types))
             return f"Error: unknown agent type '{input.subagent_type}'. Available: {available}"
+
+        if input.run_in_background:
+            import asyncio
+
+            # Store pending results on the tool context for retrieval
+            pending = getattr(context, "_pending_background", None)
+            if pending is None:
+                pending = []
+                object.__setattr__(context, "_pending_background", pending)
+
+            async def _run_bg():
+                result = await run_subagent(
+                    prompt=input.prompt,
+                    agent_type=agent_type,
+                    query_engine=query_engine,
+                    model_registry=model_registry,
+                    tool_registry=tool_registry,
+                    model_selector=model_selector,
+                    working_dir=context.working_dir,
+                    custom_agents=custom,
+                )
+                pending.append((input.description, result))
+
+            asyncio.create_task(_run_bg())
+            return (
+                f"Background agent launched: {input.description}. "
+                f"You will be notified when it completes."
+            )
 
         return await run_subagent(
             prompt=input.prompt,

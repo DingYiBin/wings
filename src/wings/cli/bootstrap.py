@@ -15,6 +15,7 @@ from wings.config.settings import AppConfig
 from wings.hooks.runner import HookRunner
 from wings.hooks.types import HookConfig
 from wings.mcp.loader import load_mcp_tools
+from wings.memory.extractor import maybe_extract_memories
 from wings.memory.loader import load_memory_prompt
 from wings.models.anthropic import AnthropicProvider
 from wings.models.openai import OpenAIProvider
@@ -173,6 +174,23 @@ async def create_session(
     loop.pool_manager = pool_mgr  # type: ignore[attr-defined]
     loop.custom_agents = custom_agents  # type: ignore[attr-defined]
 
+    # Memory extraction callback — called from CLI after each turn
+    loop._turn_count = 0  # type: ignore[attr-defined]
+
+    async def _extract_after_turn(messages_text: str) -> None:
+        loop._turn_count += 1  # type: ignore[attr-defined]
+        if loop._turn_count % 5 == 0:  # type: ignore[attr-defined]
+            await maybe_extract_memories(
+                messages_text=messages_text,
+                working_dir=str(cwd),
+                query_engine=engine,
+                model_registry=registry,
+                tool_registry=tools,
+                model_selector=pool_mgr,
+            )
+
+    loop.extract_memories = _extract_after_turn  # type: ignore[attr-defined]
+
     return loop, config
 
 
@@ -209,6 +227,20 @@ def make_agent_context(
         system_prompt = f"{env_info}\n\n{system_prompt}"
     else:
         system_prompt = env_info
+
+    # Core behavioral guidelines (injected first, before skills/memory)
+    system_prompt = (
+        system_prompt
+        + "\n\n## Guidelines\n"
+        "- Work autonomously — use tools to gather information, then answer.\n"
+        "- For time-sensitive queries (stock prices, news, weather): 2-3 search "
+        "attempts are enough. Answer with what you have and acknowledge "
+        "uncertainty rather than searching indefinitely.\n"
+        "- If web_fetch returns 403 or timeout twice from the same domain, stop "
+        "trying that domain. Work with the information you already have.\n"
+        "- When you have enough information to give a useful answer, answer "
+        "directly rather than seeking perfection."
+    )
 
     # Inject available skills into system prompt
     if skills:

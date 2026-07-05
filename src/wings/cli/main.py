@@ -464,6 +464,13 @@ async def _run_chat(working_dir: Path, model: str | None, log: bool) -> None:
                     _display_tool_event(event)
             nickname = loop.last_model.split("/")[0] if loop.last_model else ""
             typer.echo(f"\n  [{nickname}]")
+
+            # Auto-extract memories after turn (every 5 turns)
+            extractor = getattr(loop, "extract_memories", None)
+            if extractor:
+                # Pass both user question and model's final answer
+                context = f"User: {user_input}\n\nAssistant answered with the content above."
+                await extractor(context)
         except Exception as e:
             typer.echo(f"\nError: {e}", err=True)
 
