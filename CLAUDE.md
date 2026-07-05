@@ -28,6 +28,11 @@ wings chat                   # interactive REPL
 wings run "prompt"           # single turn
 wings chat --log             # with logging to .wings/logs/
 
+# Chat commands
+/pool                        # view and adjust API candidate pools
+/pool up|down <api>          # adjust score by ±0.5
+ctrl+o                       # expand truncated tool result in pager
+
 # Init reference repos (required for /init)
 bash scripts/init-references.sh
 ```
