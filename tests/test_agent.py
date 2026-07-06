@@ -1,6 +1,6 @@
 """Tests for the agent module — handoff detection and core loop."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
 import pytest
@@ -10,20 +10,17 @@ from wings.agent.loop import AgentContext, AgentLoop
 from wings.messages.types import (
     Message,
     Role,
-    StopReason,
     TextBlock,
     TextDelta,
-    ToolResultBlock,
     ToolUseBlock,
 )
-from wings.models.protocol import ModelConfig, ModelResponse, TokenUsage
+from wings.models.protocol import ModelConfig
 from wings.models.registry import ModelRegistry
 from wings.permissions.pipeline import PermissionPipeline
 from wings.permissions.rules import PermissionRules
 from wings.query.engine import QueryEngine
-from wings.tools.base import ToolContext, ToolResult
+from wings.tools.base import ToolResult
 from wings.tools.registry import ToolRegistry
-
 
 # -- HandoffDetector -----------------------------------------------------------
 
@@ -31,7 +28,7 @@ def make_turn(turn_id: int, model_id: str, summary: str = "") -> TurnRecord:
     return TurnRecord(
         turn_id=turn_id,
         model_id=model_id,
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         user_input_summary=summary,
         summary=summary,
     )
@@ -364,3 +361,60 @@ async def test_loop_system_prompt_injected_once(engine_registry_provider):
         if m.role == Role.SYSTEM
     )
     assert system_count == 1
+
+
+# -- Token budget & truncation -------------------------------------------------
+
+
+def test_needs_compact_false_for_short_history(engine_registry_provider):
+    """Few messages should never trigger compaction."""
+    engine, model_registry, _ = engine_registry_provider
+    tools = ToolRegistry()
+    pipeline = PermissionPipeline(PermissionRules())
+    loop = AgentLoop(engine, tools, pipeline, _MockSelector(), model_registry)
+    cfg = ModelConfig(model="test/model", api_key="sk-test", context_window=200_000)
+    ctx = AgentContext(task_type="main")
+    loop._messages = [
+        Message(role=Role.USER, content=[TextBlock(text="hi")]),
+        Message(role=Role.ASSISTANT, content=[TextBlock(text="hello")]),
+    ]
+    assert not loop._needs_compact(ctx, cfg)
+
+
+def test_needs_compact_true_when_over_threshold():
+    """Large message history should trigger compaction."""
+    selector = _MockSelector()
+    registry = ModelRegistry(selector)
+    provider = AsyncMock()
+    provider.provider_name = "test"
+    provider.stream = _make_stream()
+    registry.register("test/model", provider, config=ModelConfig(model="test/model", api_key="sk-test"))
+    engine = QueryEngine(registry)
+
+    loop = AgentLoop(engine, ToolRegistry(), PermissionPipeline(PermissionRules()), selector, registry)
+    cfg = ModelConfig(model="test/model", api_key="sk-test", context_window=10_000)
+    ctx = AgentContext(task_type="main")
+    # 8 messages of ~5000 chars each = ~10000 tokens, exceeds 80% of 10k
+    loop._messages = [
+        Message(role=Role.USER, content=[TextBlock(text="x" * 5000)])
+        for _ in range(8)
+    ]
+    assert loop._needs_compact(ctx, cfg)
+
+
+def test_truncate_tool_result_under_limit():
+    """Short output passes through unchanged."""
+    loop = AgentLoop.__new__(AgentLoop)  # bypass __init__
+    loop.MAX_TOOL_RESULT_CHARS = 100
+    assert loop._truncate_tool_result("short") == "short"
+
+
+def test_truncate_tool_result_over_limit():
+    """Long output gets truncated with a notice."""
+    loop = AgentLoop.__new__(AgentLoop)
+    loop.MAX_TOOL_RESULT_CHARS = 100
+    long_output = "x" * 500
+    result = loop._truncate_tool_result(long_output)
+    assert len(result) < len(long_output)
+    assert "truncated" in result
+    assert "500 total" in result

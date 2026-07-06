@@ -12,8 +12,9 @@ draw.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator
+from typing import Any
 
 from wings.agent.handoff import HandoffDetector, TurnRecord
 from wings.messages.types import (
@@ -35,6 +36,7 @@ from wings.models.registry import ModelRegistry
 from wings.permissions.pipeline import PermissionPipeline
 from wings.permissions.rules import suggest_scope
 from wings.query.engine import QueryEngine
+from wings.query.token_budget import TokenBudget
 from wings.routing.protocol import ModelSelector
 from wings.tools.base import ToolContext
 from wings.tools.registry import ToolRegistry
@@ -57,6 +59,11 @@ class AgentLoop:
 
     One AgentLoop per session. Owns turn history and handoff detection.
     """
+
+    # Single tool results larger than this are truncated before entering
+    # the message history, preventing one huge file read from consuming
+    # the entire context window.
+    MAX_TOOL_RESULT_CHARS = 20_000
 
     def __init__(
         self,
@@ -163,6 +170,10 @@ class AgentLoop:
                         )
 
                 self._turn_history.append(turn)
+
+            # -- Check token budget, compact if needed --
+            if self._needs_compact(context, cfg):
+                await self._compact_messages(context, cfg)
 
             # Stream phase — collect deltas (real-time) and final blocks
             tool_use_blocks: list[ToolUseBlock] = []
@@ -328,7 +339,7 @@ class AgentLoop:
 
                     tr = ToolResultBlock(
                         tool_use_id=block.id,
-                        content=tool_result.output,
+                        content=self._truncate_tool_result(tool_result.output),
                         is_error=tool_result.error is not None,
                     )
                     tool_results.append(tr)
@@ -386,6 +397,49 @@ class AgentLoop:
 
     def _select_model(self, context: AgentContext) -> str:
         return self._selector.select(context.task_type, context.model_override)
+
+    def _truncate_tool_result(self, output: str) -> str:
+        """Truncate oversized tool output to protect context window."""
+        if len(output) <= self.MAX_TOOL_RESULT_CHARS:
+            return output
+        return (
+            output[: self.MAX_TOOL_RESULT_CHARS]
+            + f"\n\n... [truncated: {len(output)} total chars, "
+            f"showing first {self.MAX_TOOL_RESULT_CHARS}]"
+        )
+
+    def _needs_compact(self, context: AgentContext, cfg: ModelConfig) -> bool:
+        """Check if message history exceeds token budget."""
+        if len(self._messages) < 6:
+            return False  # not enough history to bother
+        budget = TokenBudget(
+            context_window=cfg.context_window,
+            system_prompt_tokens=len(context.system_prompt) // TokenBudget.CHARS_PER_TOKEN,
+        )
+        return budget.needs_compact(self._messages)
+
+    async def _compact_messages(
+        self, context: AgentContext, cfg: ModelConfig
+    ) -> None:
+        """Compact message history by summarizing older messages."""
+        from wings.services.compact import compact_messages
+
+        model = self._select_model(context)
+        self._messages = await compact_messages(
+            self._messages,
+            query_engine=self._query_engine,
+            model=model,
+            config=cfg,
+        )
+        if self._logger is not None:
+            self._logger.record_cycle(
+                model=model,
+                context=context.task_type,
+                message_count=len(self._messages),
+                input_summary="[compaction performed]",
+                response={"content": []},
+                tool_calls=[],
+            )
 
     def _assemble_messages(self, user_input: str, context: AgentContext) -> None:
         if context.system_prompt and not self._messages:

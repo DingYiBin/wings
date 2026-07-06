@@ -105,6 +105,7 @@ async def create_session(
             escalated_max_tokens=cfg.escalated_max_tokens,
             thinking=cfg.thinking,
             thinking_budget=cfg.thinking_budget,
+            context_window=cfg.context_window,
         )
         registry.register(api_id, provider, config=model_config)
         pool_mgr.register_api(api_id)

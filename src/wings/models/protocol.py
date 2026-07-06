@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, AsyncIterator, Protocol
+from collections.abc import AsyncIterator
+from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
 from wings.messages.types import Message, MessageContent, StopReason, StreamEvent
-
 
 # -- Config -------------------------------------------------------------------
 
@@ -23,6 +23,7 @@ class ModelConfig(BaseModel):
     thinking_budget: int | None = None  # None = auto: max_tokens - 1
     api_key: str = ""
     base_url: str | None = None
+    context_window: int = 200_000  # input context window (tokens)
 
 
 # -- Response -----------------------------------------------------------------

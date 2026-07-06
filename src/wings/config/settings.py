@@ -16,7 +16,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from wings.routing.types import PoolConfig
 
-
 # -- Default system prompt (identity section) --------------------------------
 
 _DEFAULT_PERSONALITY = """You are Wings, a multi-model AI agent CLI.
@@ -54,6 +53,7 @@ class ProviderConfig(BaseModel):
     escalated_max_tokens: int = 64_000  # retry limit on max_tokens hit
     thinking: bool = True  # enable extended thinking
     thinking_budget: int | None = None  # None = auto: max_tokens - 1
+    context_window: int = 200_000  # input context window (tokens)
 
 
 # -- Global settings ----------------------------------------------------------
