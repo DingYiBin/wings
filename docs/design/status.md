@@ -10,7 +10,7 @@
 | routing | ✅ | 5 | 30 | API 候选池 + softmax 加权随机选择 + 任务继承链 |
 | models | ✅ | 5 | 21 | Anthropic/OpenAI Provider, adaptive thinking, escalation |
 | tools | ✅ | 13 | 34 | 11 内置工具: read/write/edit/bash/glob/grep/skill_view/agent/web_fetch/web_search/bing_search |
-| query | ⚠️ | 2 | 13 | 指数退避重试, token 预算 (TokenBudget 类存在但**未接入 AgentLoop**) |
+| query | ✅ | 2 | 13 | 指数退避重试, token 预算 (已接入 AgentLoop + compaction) |
 | permissions | ✅ | 2 | 7 | 5 阶段管道: rules → scoped → classify → hooks → ask |
 | agent | ✅ | 4 | 23 | AgentLoop per-call 模型选择, handoff, subagent (3 builtin + custom) |
 | config | ✅ | 2 | 13 | 全局 + 项目 JSON 配置, deep merge |
@@ -20,7 +20,7 @@
 | hooks | ✅ | 3 | — | Shell 命令 PreToolUse/PostToolUse, 集成 PermissionPipeline |
 | mcp | ✅ | 2 | — | stdio transport, mcp__server__tool 命名, 自动注册 |
 
-**总计**: 58 源文件, ~6500 行代码, 248 测试, 13 模块
+**总计**: 58 源文件, ~7000 行代码, 283 测试, 13 模块
 
 ## 内置工具 (11个)
 
@@ -55,32 +55,20 @@
 3. **缺少测试覆盖**: hooks, mcp, memory extraction 没有单元测试。
 4. ~~**extractor.py 未使用 import**~~ ✅ 误报 — `ModelRegistry`, `ModelSelector` 用作类型注解
 5. ~~**cli/__init__.py**: 空文件~~ ✅ 已删除 (commit `9a0e16d`)
-6. **TokenBudget 未接入**: `query/token_budget.py` 有完整实现但 AgentLoop 未调用, 也没有 compaction 服务
+6. ~~**TokenBudget 未接入**~~ ✅ 已修复 (commit `7a1e653`, 接入 AgentLoop + compaction 服务)
 
 ## 下一步开发计划
 
 > 详见 [`docs/design/dev-plan.md`](dev-plan.md)
 
-### 阶段 1: Token Budget 集成 (最高优先级)
-- [ ] ProviderConfig 加 `context_window` 字段
-- [ ] ModelConfig 传递 context_window
-- [ ] AgentLoop 每次 API call 前检查 `needs_compact()`
-- [ ] 大 tool result 截断 (防止单次调用撑爆 context)
-
-### 阶段 2: Compaction 服务
-- [ ] `services/compact.py` — 摘要 prompt + 消息重组
-- [ ] 触发后调用模型生成摘要, 替换历史消息
-- [ ] 保留 system_prompt + 摘要 + 最近 N 条消息
-
-### 阶段 3: 代码质量
-- [ ] 给 hooks, mcp 添加基本单元测试
-- [ ] bare except 审计改进 (非 web 模块加日志)
-
-### 阶段 4: 功能增强
+### 阶段 4: 功能增强 (待做)
 - [ ] web_search `allowed_domains` / `blocked_domains` 过滤
 - [ ] web_fetch 预批准域名列表
 - [ ] 更多内置 skills (从 opensquilla 的 ~70 个中挑选)
 - [ ] Plugin 系统（加载外部 Python 包提供 tools/hooks）
+
+### 阶段 5: Orchestrator-Worker 架构重构
+> 详见 [`docs/design/orchestrator-design.md`](orchestrator-design.md)
 
 ### P5: 未来方向
 - [ ] Fork subagent（上下文继承, 最大化 prompt cache 命中）

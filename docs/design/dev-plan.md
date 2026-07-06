@@ -1,140 +1,83 @@
-# 开发计划 — Token Budget + Compaction + 代码质量
+# 开发计划
 
 > 创建: 2026-07-06
-> 状态: 进行中
+> 最后更新: 2026-07-06
 
-## 背景
+## 已完成
 
-用户实测发现 token_budget 集成是必须的。当前 `src/wings/query/token_budget.py` 有完整的 `TokenBudget` 类（4 字符/token 估算、`needs_compact()` 80% 阈值），但**完全没接入** AgentLoop 或 API 调用，也没有 compaction 服务。
+### 阶段 1+2: Token Budget + Compaction (`7a1e653`)
 
-## 阶段 1: Token Budget 集成
+**背景**: 用户实测发现 token_budget 集成是必须的。`TokenBudget` 类存在但未接入 AgentLoop，也没有 compaction 服务。
 
-**目标**: AgentLoop 每次 API call 前检查 context 用量,超阈值触发 compaction。
+**已实现**:
+- `ProviderConfig` / `ModelConfig` 加 `context_window` 字段（默认 200K），bootstrap.py 注册时传递
+- `AgentLoop.run()` while 循环顶部检查 `needs_compact()`，超 80% 阈值触发 compaction
+- 新建 `src/wings/services/compact.py` — `compact_messages()` 摘要旧消息，保留 system prompt + 最近 6 条
+- `AgentLoop._compact_messages()` 调用 compaction 服务
+- 大 tool result 超 20K 字符自动截断（`MAX_TOOL_RESULT_CHARS`）
+- 9 个新测试（5 compaction + 4 token budget/truncation）
 
-### 1.1 ProviderConfig 加 context_window
+### 阶段 3: 代码质量 (`889e99a`)
 
-`src/wings/config/settings.py` — `ProviderConfig` 加字段:
-```python
-context_window: int = 200_000  # 默认现代模型上下文窗口
-```
+**已实现**:
+- 26 个新测试：hooks（15 个，覆盖 allow/deny/matcher/JSON override/post-tool-use/serialise_input）+ mcp（11 个，覆盖 config/tool adapter/error handling/loader edge cases）
+- **修复真实 bug**: `_make_mcp_tool` 的 `description` 参数被类属性同名遮蔽导致 `NameError`——测试发现的，用 locals 捕获修复
 
-### 1.2 ModelConfig 传递 context_window
+**未做**: bare except 加日志（11 处中 web 模块的合理，其他优先级低，暂跳过）
 
-`src/wings/models/protocol.py` — `ModelConfig` 加字段:
-```python
-context_window: int = 200_000
-```
+## 当前测试状态
 
-`src/wings/cli/bootstrap.py` — 注册 provider 时把 `context_window` 从 ProviderConfig 传到 ModelConfig。
+- 283 tests passing
+- 13 模块全部 ✅
+- `query` 模块从 ⚠️ 升级为 ✅（TokenBudget 已接入）
 
-### 1.3 AgentLoop 集成 TokenBudget
+## 下一步开发计划
 
-`src/wings/agent/loop.py` — `run()` 的 while 循环顶部:
-```python
-# 构建 TokenBudget (从当前 model 的 config)
-budget = TokenBudget(
-    context_window=cfg.context_window,
-    system_prompt_tokens=len(context.system_prompt) // 4,
-)
-if budget.needs_compact(self._messages):
-    await self._compact_messages(context)
-```
+### 阶段 4: 功能增强（待做，按优先级排序）
 
-### 1.4 大 tool result 截断
+#### 4.1 web_search 域名过滤
+- `allowed_domains` / `blocked_domains` 参数
+- 在 `web_search.py` 和 `bing_search.py` 的结果过滤层实现
+- config.json 可配全局默认过滤
 
-在 AgentLoop 收集 tool_results 时,单个 result 超过阈值(如 20K 字符)则截断:
-```python
-MAX_TOOL_RESULT_CHARS = 20_000
-if len(tool_result.output) > MAX_TOOL_RESULT_CHARS:
-    output = tool_result.output[:MAX_TOOL_RESULT_CHARS] + f"\n... [truncated, {len(tool_result.output)} total chars]"
-```
+#### 4.2 web_fetch 预批准域名列表
+- 类似 claude-code 的 ~100 个信任域
+- 预批准域自动跳过权限询问
+- config.json 可配 (`trusted_domains`)
 
-## 阶段 2: Compaction 服务
+#### 4.3 更多内置 skills
+- 当前只有 3 个：commit / review-pr / simplify
+- 从 opensquilla 的 ~70 个中挑选高价值的（如 pdf、test、document 等）
+- 放入 `src/wings/skills/builtin/`
 
-**目标**: `needs_compact()` 返回 True 时,摘要历史消息,释放 context。
+#### 4.4 Plugin 系统
+- 加载外部 Python 包提供 tools/hooks
+- 入口点：`wings.plugin` group
+- 类似 claude-code 的 plugin 机制
 
-### 2.1 新建 `src/wings/services/compact.py`
+### 阶段 5: Orchestrator-Worker 架构重构（重大方向）
 
-```python
-COMPACT_PROMPT = """\
-Review the conversation history below and produce a concise summary
-that preserves all information needed to continue the task:
+> 详见 [`docs/design/orchestrator-design.md`](orchestrator-design.md)
 
-- User's original request and goals
-- Key decisions made
-- Files read/modified (with paths)
-- Tool results that informed decisions
-- Current progress and pending steps
-- Any errors or blockers encountered
+将主 session 从扁平 agent loop 改为纯 orchestrator。主 agent 不再持有任何工具（仅 `agent` 工具），所有工具操作通过 subagent 分发执行。
 
-Be specific about file paths, function names, and technical details.
-Do not include full file contents — reference them by path.
-"""
+核心目标：
+- **Context 不再膨胀**：主 session 只有 subagent 摘要，不是原始文件内容
+- **多 API 池语义清晰**：`main` 池 = 规划模型，`subagent/<type>` 池 = 执行模型
+- **显式失败恢复**：subagent 失败上报 → 主 agent 重新规划 → 换 subagent 重试
 
-async def compact_messages(
-    messages: list[Message],
-    *,
-    query_engine: QueryEngine,
-    model: str,
-    config: ModelConfig,
-    keep_recent: int = 4,  # 保留最近 N 条消息不摘要
-) -> list[Message]:
-    """Compact message history by summarizing older messages.
+实现分 5 阶段（工具集裁剪 → 报告结构化 → 失败重规划 → 池语义重定义 → 移除扁平模式），保留 `orchestrator_mode` 开关以便对比和回退。
 
-    Returns new message list: [system_prompt, summary_message, *recent_messages]
-    """
-```
+### P5: 远期方向
 
-### 2.2 摘要流程
-
-1. 分离 system_prompt（第一条 system 消息）+ 最近 N 条消息（保留原文）
-2. 中间消息拼成文本,作为 compact prompt 的输入
-3. 调用模型生成摘要
-4. 重组: `[system_prompt, UserMessage("## Conversation summary\n\n{summary}"), *recent_messages]`
-
-### 2.3 AgentLoop 调用 compaction
-
-`src/wings/agent/loop.py` — 添加 `_compact_messages()` 方法:
-```python
-async def _compact_messages(self, context: AgentContext) -> None:
-    self._messages = await compact_messages(
-        self._messages,
-        query_engine=self._query_engine,
-        model=self._select_model(context),
-        config=self._model_registry.build_config(self._select_model(context)),
-    )
-    if self._logger:
-        self._logger.record_cycle(model="compact", context="compact", ...)
-```
-
-## 阶段 3: 代码质量
-
-### 3.1 hooks 单元测试
-`tests/test_hooks.py`:
-- PreToolUse exit code 2 → block
-- PreToolUse stdout JSON override → allow
-- PostToolUse 执行确认
-- timeout 行为
-
-### 3.2 mcp 单元测试
-`tests/test_mcp.py`:
-- MCPServerConfig 解析
-- tool schema 转换
-- _McpToolAdapter 调用 (mock stdio)
-
-### 3.3 bare except 改进
-非 web 模块（agent/loop, query/engine, mcp/loader）的 `except Exception` 加 `logging.warning()`。
-
-## 阶段 4: 功能增强 (低优先级)
-
-- web_search `allowed_domains` / `blocked_domains`
-- web_fetch 预批准域名列表
-- 更多内置 skills
-- Plugin 系统
+- Fork subagent（上下文继承，最大化 prompt cache 命中）
+- 终端 TUI 升级（Rich 替代当前简单输出）
+- 配置迁移工具
+- MCP 传输扩展（SSE/HTTP，不只是 stdio）
 
 ## 验证标准
 
-- [ ] `uv run pytest tests/ -q` 全过
-- [ ] `uv run mypy src/` 无新错误
-- [ ] `uv run ruff check src/ tests/` 无新错误
+- [x] `uv run pytest tests/ -q` 全过（283 passing）
+- [x] `uv run mypy src/` 无新错误（仅预存的 settings.py 2 个）
+- [x] `uv run ruff check src/ tests/` 无新错误（仅预存的 bootstrap.py line-length）
 - [ ] 手动测试: 长对话触发 compaction, 摘要后能继续正常工作
