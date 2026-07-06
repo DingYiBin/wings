@@ -1,6 +1,6 @@
 # Wings 项目实现状态
 
-> 最后更新: 2026-07-05
+> 最后更新: 2026-07-06
 
 ## 模块完成度
 
@@ -10,7 +10,7 @@
 | routing | ✅ | 5 | 30 | API 候选池 + softmax 加权随机选择 + 任务继承链 |
 | models | ✅ | 5 | 21 | Anthropic/OpenAI Provider, adaptive thinking, escalation |
 | tools | ✅ | 13 | 34 | 11 内置工具: read/write/edit/bash/glob/grep/skill_view/agent/web_fetch/web_search/bing_search |
-| query | ✅ | 2 | 13 | 指数退避重试, token 预算 |
+| query | ⚠️ | 2 | 13 | 指数退避重试, token 预算 (TokenBudget 类存在但**未接入 AgentLoop**) |
 | permissions | ✅ | 2 | 7 | 5 阶段管道: rules → scoped → classify → hooks → ask |
 | agent | ✅ | 4 | 23 | AgentLoop per-call 模型选择, handoff, subagent (3 builtin + custom) |
 | config | ✅ | 2 | 13 | 全局 + 项目 JSON 配置, deep merge |
@@ -20,7 +20,7 @@
 | hooks | ✅ | 3 | — | Shell 命令 PreToolUse/PostToolUse, 集成 PermissionPipeline |
 | mcp | ✅ | 2 | — | stdio transport, mcp__server__tool 命名, 自动注册 |
 
-**总计**: 58 源文件, ~6500 行代码, 194 测试, 13 模块
+**总计**: 58 源文件, ~6500 行代码, 248 测试, 13 模块
 
 ## 内置工具 (11个)
 
@@ -50,23 +50,35 @@
 
 ## 已知问题 (代码质量)
 
-1. **bootstrap.py monkey-patching**: 9 处 `# type: ignore` 通过动态属性给 AgentLoop 注入状态。应改为正式字段。
-2. **bare except**: 16 处 `except Exception` 吞异常无日志。Web fetch/search 里合理，其他可改进。
+1. ~~**bootstrap.py monkey-patching**~~ ✅ 已修复 (commit `9a0e16d`, 改为正式 dataclass 字段)
+2. **bare except**: 11 处 `except Exception` 分布在 cli/main(4), query/engine(2), mcp/loader(2), agent/loop(1), agent_loader(1), hooks/runner(1)。Web/fetch/search 里的合理，其他可改进。
 3. **缺少测试覆盖**: hooks, mcp, memory extraction 没有单元测试。
-4. **extractor.py 未使用 import**: `ModelRegistry`, `ModelSelector` import 了但未使用。
-5. **cli/__init__.py**: 空文件，无作用。
+4. ~~**extractor.py 未使用 import**~~ ✅ 误报 — `ModelRegistry`, `ModelSelector` 用作类型注解
+5. ~~**cli/__init__.py**: 空文件~~ ✅ 已删除 (commit `9a0e16d`)
+6. **TokenBudget 未接入**: `query/token_budget.py` 有完整实现但 AgentLoop 未调用, 也没有 compaction 服务
 
 ## 下一步开发计划
 
-### P4: 代码质量改进
-- [ ] 修复 extractor.py 未使用的 import
-- [ ] 给 hooks, mcp 添加基本单元测试
-- [ ] 清理 AgentLoop monkey-patching (改为正式 dataclass 字段)
-- [ ] 删除空文件 cli/__init__.py
+> 详见 [`docs/design/dev-plan.md`](dev-plan.md)
 
-### P4: 功能增强
-- [ ] web_search 支持 `allowed_domains` / `blocked_domains` 过滤
-- [ ] web_fetch 预批准域名列表（类似 claude-code 的 ~100 个信任域）
+### 阶段 1: Token Budget 集成 (最高优先级)
+- [ ] ProviderConfig 加 `context_window` 字段
+- [ ] ModelConfig 传递 context_window
+- [ ] AgentLoop 每次 API call 前检查 `needs_compact()`
+- [ ] 大 tool result 截断 (防止单次调用撑爆 context)
+
+### 阶段 2: Compaction 服务
+- [ ] `services/compact.py` — 摘要 prompt + 消息重组
+- [ ] 触发后调用模型生成摘要, 替换历史消息
+- [ ] 保留 system_prompt + 摘要 + 最近 N 条消息
+
+### 阶段 3: 代码质量
+- [ ] 给 hooks, mcp 添加基本单元测试
+- [ ] bare except 审计改进 (非 web 模块加日志)
+
+### 阶段 4: 功能增强
+- [ ] web_search `allowed_domains` / `blocked_domains` 过滤
+- [ ] web_fetch 预批准域名列表
 - [ ] 更多内置 skills (从 opensquilla 的 ~70 个中挑选)
 - [ ] Plugin 系统（加载外部 Python 包提供 tools/hooks）
 
