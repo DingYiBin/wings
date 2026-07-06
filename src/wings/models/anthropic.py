@@ -94,6 +94,12 @@ class AnthropicProvider:
             and kwargs["max_tokens"] < config.escalated_max_tokens
         ):
             kwargs["max_tokens"] = config.escalated_max_tokens
+            # Recalculate thinking budget for escalated max_tokens
+            if "thinking" in kwargs and "budget_tokens" in kwargs["thinking"]:
+                escalated_budget = config.thinking_budget or (config.escalated_max_tokens - 1)
+                kwargs["thinking"]["budget_tokens"] = min(
+                    escalated_budget, config.escalated_max_tokens - 1,
+                )
             with client.messages.stream(**kwargs) as stream2:
                 for event in stream2:
                     if event.type == "content_block_delta":
@@ -162,14 +168,16 @@ class AnthropicProvider:
         if config.top_p is not None:
             kwargs["top_p"] = config.top_p
         if config.thinking:
-            if config.adaptive_thinking:
-                # Adaptive thinking — model decides when and how much to think.
-                # No budget_tokens needed (claude-code style for Opus 4.6+).
-                kwargs["thinking"] = {"type": "enabled"}
+            # Always set budget_tokens. claude-code formula:
+            # budget = min(max_tokens - 1, user_budget)
+            # API requires max_tokens > budget_tokens.
+            max_tk = kwargs["max_tokens"]
+            default_budget = max_tk - 1 if max_tk and max_tk > 1 else 7999
+            if config.thinking_budget is not None:
+                budget = min(config.thinking_budget, default_budget)
             else:
-                # Explicit budget — user controls the thinking token allocation.
-                budget = config.thinking_budget or config.max_tokens // 2
-                kwargs["thinking"] = {"type": "enabled", "budget_tokens": budget}
+                budget = default_budget
+            kwargs["thinking"] = {"type": "enabled", "budget_tokens": budget}
         return kwargs
 
     def _split_system(

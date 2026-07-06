@@ -20,8 +20,7 @@ class ModelConfig(BaseModel):
     escalated_max_tokens: int = 64_000  # retry cap on max_tokens hit
     top_p: float | None = None
     thinking: bool = True
-    adaptive_thinking: bool = True  # use adaptive thinking (no budget needed)
-    thinking_budget: int | None = None  # only when adaptive=false
+    thinking_budget: int | None = None  # None = auto: max_tokens - 1
     api_key: str = ""
     base_url: str | None = None
 

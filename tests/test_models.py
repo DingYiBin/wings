@@ -36,7 +36,6 @@ def test_model_config_defaults():
     assert config.temperature is None
     assert config.max_tokens == 8_000
     assert config.thinking is True
-    assert config.adaptive_thinking is True
 
 
 def test_token_usage_model():
