@@ -75,3 +75,16 @@
 - [ ] 终端 TUI 升级（Rich 替代 Typer 的简单输出）
 - [ ] Summer 配置迁移工具（全局/项目配置管理）
 - [ ] MCP 传输扩展（SSE/HTTP transport, 不只是 stdio）
+
+### Orchestrator-Worker 架构重构（重大方向）
+
+> 详见 [`docs/design/orchestrator-design.md`](orchestrator-design.md)
+
+将主 session 从扁平 agent loop 改为纯 orchestrator：主 agent 不再持有任何工具（仅 `agent` 工具），所有工具操作通过 subagent 分发执行。主 session 中只保留 subagent 的结构化报告，不再累积底层 tool result。
+
+核心目标：
+- **Context 不再膨胀**：主 session 只有 subagent 摘要，不是原始文件内容
+- **多 API 池语义清晰**：`main` 池 = 规划模型，`subagent/<type>` 池 = 执行模型
+- **显式失败恢复**：subagent 失败上报 → 主 agent 重新规划 → 换 subagent 重试
+
+实现分 5 阶段（工具集裁剪 → 报告结构化 → 失败重规划 → 池语义重定义 → 移除扁平模式），保留 `orchestrator_mode` 开关以便对比和回退。
