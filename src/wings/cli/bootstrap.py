@@ -212,18 +212,7 @@ def make_agent_context(
         available_skills: Name -> content mapping for skill_view tool.
     """
     cwd = str(working_dir or Path.cwd())
-    system_prompt = config.global_settings.personality or ""
-
-    # Inject environment information
-    env_info = (
-        f"Working directory: {cwd}\n"
-        f"Operating system: {platform.system()}\n"
-        f"Current date: {datetime.now().strftime('%Y-%m-%d')}"
-    )
-    if system_prompt:
-        system_prompt = f"{env_info}\n\n{system_prompt}"
-    else:
-        system_prompt = env_info
+    system_prompt = config.global_settings.personality
 
     # Core behavioral guidelines (injected first, before skills/memory)
     system_prompt = (
@@ -264,6 +253,18 @@ def make_agent_context(
     # Inject memory (MEMORY.md from .wings/memory/)
     memory_prompt = load_memory_prompt(Path(cwd))
     system_prompt = f"{system_prompt}\n\n{memory_prompt}"
+
+    # Environment information — placed at the END of system prompt, mirroring
+    # claude-code's getSystemPrompt() order where computeEnvInfo() comes after
+    # the dynamic sections (memory, MCP, scratchpad) and before the trailing
+    # mode sections.
+    env_info = (
+        "# Environment\n"
+        f"Working directory: {cwd}\n"
+        f"Operating system: {platform.system()}\n"
+        f"Current date: {datetime.now().strftime('%Y-%m-%d')}"
+    )
+    system_prompt = f"{system_prompt}\n\n{env_info}"
 
     return AgentContext(
         task_type=task_type,

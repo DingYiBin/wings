@@ -15,7 +15,7 @@ def test_global_settings_defaults():
     assert settings.providers == {}
     assert isinstance(settings.routing, PoolConfig)
     assert settings.theme == "dark"
-    assert settings.personality is None
+    assert "You are Wings" in settings.personality
     assert settings.model is None
     assert settings.allowed_tools == []
     assert settings.denied_tools == []
@@ -117,7 +117,7 @@ def test_load_walks_up_for_project_config(tmp_path):
 def test_load_no_project_config(tmp_path):
     settings = GlobalSettings.load(tmp_path)
     assert settings.model is None
-    assert settings.personality is None
+    assert "You are Wings" in settings.personality
 
 
 def test_load_project_providers_override_global(tmp_path):

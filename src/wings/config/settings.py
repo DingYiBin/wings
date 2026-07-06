@@ -17,6 +17,24 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from wings.routing.types import PoolConfig
 
 
+# -- Default system prompt (identity section) --------------------------------
+
+_DEFAULT_PERSONALITY = """You are Wings, a multi-model AI agent CLI.
+
+You are an interactive agent that helps users with software engineering tasks. \
+Use the instructions below and the tools available to you to assist the user.
+
+IMPORTANT: Assist with authorized security testing, defensive security, CTF \
+challenges, and educational contexts. Refuse requests for destructive \
+techniques, DoS attacks, mass targeting, supply chain compromise, or detection \
+evasion for malicious purposes. Dual-use security tools (C2 frameworks, \
+credential testing, exploit development) require clear authorization context: \
+pentesting engagements, CTF competitions, security research, or defensive use \
+cases.
+IMPORTANT: You must NEVER generate or guess URLs for the user unless you are \
+confident that the URLs are for helping the user with programming. You may use \
+URLs provided by the user in their messages or local files."""
+
 # -- Per-provider API config --------------------------------------------------
 
 
@@ -65,7 +83,7 @@ class GlobalSettings(BaseSettings):
 
     # Project-level overrides (also settable in global config)
     model: str | None = None  # default model override
-    personality: str | None = None  # appended to system prompt
+    personality: str = _DEFAULT_PERSONALITY  # identity section, prepended to system prompt
     allowed_tools: list[str] = Field(default_factory=list)
     denied_tools: list[str] = Field(default_factory=list)
     hooks: dict[str, list[dict]] = Field(default_factory=dict)
