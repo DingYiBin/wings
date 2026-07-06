@@ -20,13 +20,23 @@ def _make_mcp_tool(
 ) -> Tool:
     """Create a wings Tool that proxies to an MCP server tool."""
 
+    # Capture in locals to avoid class-body scope shadowing the params.
+    _name = f"mcp__{server_name}__{tool_name}"
+    _desc = f"[MCP:{server_name}] {description}"
+    _hint = f"mcp_{server_name}_{tool_name}"
+    _schema = input_schema
+    _cmd = server_command
+    _args = server_args
+    _env = server_env
+    _srv = server_name
+
     class _McpToolAdapter:
-        name = f"mcp__{server_name}__{tool_name}"
-        description = f"[MCP:{server_name}] {description}"
-        search_hint = f"mcp_{server_name}_{tool_name}"
+        name = _name
+        description = _desc
+        search_hint = _hint
 
         def input_schema(self) -> dict[str, Any]:
-            return input_schema
+            return _schema
 
         async def call(self, input: Any, context: ToolContext) -> ToolResult:
             args = input if isinstance(input, dict) else (
@@ -34,12 +44,12 @@ def _make_mcp_tool(
             )
             try:
                 output = await call_mcp_tool(
-                    server_name=server_name,
+                    server_name=_srv,
                     tool_name=tool_name,
                     arguments=args,
-                    command=server_command,
-                    args=server_args,
-                    env=server_env,
+                    command=_cmd,
+                    args=_args,
+                    env=_env,
                 )
                 return ToolResult(output=output)
             except Exception as e:
