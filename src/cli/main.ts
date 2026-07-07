@@ -7,6 +7,7 @@
 
 import { createInterface } from "node:readline";
 import { createSession, makeAgentContext } from "./bootstrap.ts";
+import { promptPermission } from "./permission.tsx";
 
 const GREEN = "\x1b[32m";
 const CYAN = "\x1b[36m";
@@ -17,35 +18,6 @@ const BOLD = "\x1b[1m";
 const DIM = "\x1b[2m";
 
 function dim(s: string) { return `${DIM}${s}${RESET}`; }
-
-/**
- * Show a permission prompt and wait for user response.
- *
- * Uses a temporary readline interface so it doesn't conflict with the
- * main REPL loop.  Requires Enter (unlike claude-code's single-key raw
- * mode, which isn't available in Bun).
- */
-async function promptPermission(
-  toolName: string,
-  toolInput: Record<string, unknown>,
-  scope?: string,
-): Promise<string> {
-  const desc = JSON.stringify(toolInput).slice(0, 120);
-  process.stdout.write(`\n${YELLOW}  🔒 ${BOLD}${toolName}${RESET}${YELLOW}?${RESET} ${dim(desc)}`);
-  if (scope) process.stdout.write(`\n${dim("     scope: " + scope)}`);
-
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const answer = await new Promise<string>((resolve) => {
-    rl.question(` ${GREEN}[y=allow / n=deny / a=allow always]${RESET} `, (a) => {
-      resolve(a.trim().toLowerCase());
-    });
-  });
-  rl.close();
-
-  if (answer === "y" || answer === "yes") return "allow";
-  if (answer === "a" || answer === "always") return "allow_always";
-  return "deny";
-}
 
 /** Truncate a string for display. */
 function trunc(s: string, n: number): string {
