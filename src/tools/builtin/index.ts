@@ -1,3 +1,4 @@
+export { makeAgentTool } from "./agent.ts";
 export { readTool } from "./read.ts";
 export { writeTool } from "./write.ts";
 export { editTool } from "./edit.ts";
