@@ -1,15 +1,14 @@
 /**
  * Wings CLI — chat + run commands.
  *
- * Minimal version: uses readline for REPL. Full Ink/React TUI planned for
- * Phase 7 polish pass.
+ * Permission prompts use raw stdin keypress detection (single key y/n/a,
+ * no Enter needed), matching claude-code's permission dialog behavior.
  */
 
 import { createInterface } from "node:readline";
 import { createSession, makeAgentContext } from "./bootstrap.ts";
 
 const GREEN = "\x1b[32m";
-const BLUE = "\x1b[34m";
 const CYAN = "\x1b[36m";
 const YELLOW = "\x1b[33m";
 const RED = "\x1b[31m";
@@ -18,6 +17,40 @@ const BOLD = "\x1b[1m";
 const DIM = "\x1b[2m";
 
 function dim(s: string) { return `${DIM}${s}${RESET}`; }
+
+/**
+ * Show a permission prompt and wait for user response.
+ *
+ * Uses a temporary readline interface so it doesn't conflict with the
+ * main REPL loop.  Requires Enter (unlike claude-code's single-key raw
+ * mode, which isn't available in Bun).
+ */
+async function promptPermission(
+  toolName: string,
+  toolInput: Record<string, unknown>,
+  scope?: string,
+): Promise<string> {
+  const desc = JSON.stringify(toolInput).slice(0, 120);
+  process.stdout.write(`\n${YELLOW}  🔒 ${BOLD}${toolName}${RESET}${YELLOW}?${RESET} ${dim(desc)}`);
+  if (scope) process.stdout.write(`\n${dim("     scope: " + scope)}`);
+
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await new Promise<string>((resolve) => {
+    rl.question(` ${GREEN}[y=allow / n=deny / a=allow always]${RESET} `, (a) => {
+      resolve(a.trim().toLowerCase());
+    });
+  });
+  rl.close();
+
+  if (answer === "y" || answer === "yes") return "allow";
+  if (answer === "a" || answer === "always") return "allow_always";
+  return "deny";
+}
+
+/** Truncate a string for display. */
+function trunc(s: string, n: number): string {
+  return s.length <= n ? s : s.slice(0, n) + dim("…");
+}
 
 /** Run a single-turn request. */
 export async function runSingle(
@@ -36,20 +69,20 @@ export async function runSingle(
         process.stdout.write((event as any).text);
         break;
       case "tool_use":
-        console.log(`${dim("\n  ⚙")}  ${CYAN}${event.name}${RESET} ${dim(JSON.stringify(event.input).slice(0, 100))}`);
+        console.log(`${dim("\n  ⚙")}  ${CYAN}${event.name}${RESET} ${dim(trunc(JSON.stringify(event.input), 100))}`);
         break;
       case "tool_result":
         if ((event as any).is_error) {
-          console.log(`${dim("  ↳")}  ${RED}error${RESET} ${dim((event as any).content.slice(0, 100))}`);
+          console.log(`${dim("  ↳")}  ${RED}error${RESET} ${dim(trunc((event as any).content, 120))}`);
         }
         break;
       case "permission_request":
-        const pr = event;
-        console.log(`\n${YELLOW}  🔒 permission${RESET} ${pr.tool_name} ${dim(JSON.stringify(pr.tool_input).slice(0, 80))}`);
+        const resp = await promptPermission(event.tool_name, event.tool_input, event.scope);
+        loop.setPermissionResponse(resp);
         break;
     }
   }
-  console.log(""); // trailing newline
+  console.log("");
 }
 
 /** Start an interactive chat session. */
@@ -71,26 +104,22 @@ export async function runChat(
     prompt: `${GREEN}▸${RESET} `,
   });
 
-  const ask = (): Promise<string> => new Promise((resolve) => {
-    rl.question("", (answer) => resolve(answer));
-  });
-
   rl.prompt();
+
   rl.on("line", async (line) => {
     const input = line.trim();
-    if (!input) {
-      rl.prompt();
-      return;
-    }
+    if (!input) { rl.prompt(); return; }
 
     // Slash commands.
     if (input.startsWith("/")) {
-      await handleCommand(input, loop, poolMgr, config, ctx);
+      await handleCommand(input, loop, poolMgr, config);
       rl.prompt();
       return;
     }
 
-    // Normal turn.
+    // Normal turn — pause readline so we own stdin for permissions.
+    rl.pause();
+
     try {
       for await (const event of loop.run(input, ctx)) {
         switch (event.type) {
@@ -98,29 +127,21 @@ export async function runChat(
             process.stdout.write((event as any).text);
             break;
           case "tool_use":
-            console.log(`${dim("\n  ⚙")}  ${CYAN}${event.name}${RESET} ${dim(JSON.stringify(event.input).slice(0, 100))}`);
+            console.log(`${dim("\n  ⚙")}  ${CYAN}${event.name}${RESET} ${dim(trunc(JSON.stringify(event.input), 100))}`);
             break;
           case "tool_result":
             if ((event as any).is_error) {
-              console.log(`${dim("  ↳")}  ${RED}error${RESET} ${dim((event as any).content.slice(0, 120))}`);
+              console.log(`${dim("  ↳")}  ${RED}error${RESET} ${dim(trunc((event as any).content, 120))}`);
             } else {
-              console.log(`${dim("  ↳")}  ${dim((event as any).content.slice(0, 120))}`);
+              console.log(`${dim("  ↳")}  ${dim(trunc((event as any).content, 120))}`);
             }
             break;
-          case "permission_request":
+          case "permission_request": {
             const pr = event;
-            console.log(`\n${YELLOW}  🔒 Allow${RESET} ${BOLD}${pr.tool_name}${RESET}? ${dim(JSON.stringify(pr.tool_input).slice(0, 80))}`);
-            if (pr.scope) console.log(dim(`     scope: ${pr.scope}`));
-            const answer = await ask();
-            const resp = answer.trim().toLowerCase();
-            if (resp === "y" || resp === "yes") {
-              loop.setPermissionResponse("allow");
-            } else if (resp === "a" || resp === "always") {
-              loop.setPermissionResponse("allow_always");
-            } else {
-              loop.setPermissionResponse("deny");
-            }
+            const resp = await promptPermission(pr.tool_name, pr.tool_input, pr.scope);
+            loop.setPermissionResponse(resp);
             break;
+          }
           case "subagent_start":
             console.log(`\n${dim("  ┌ subagent")} ${CYAN}${(event as any).agent_type}${RESET} ${dim((event as any).description)}`);
             break;
@@ -132,10 +153,13 @@ export async function runChat(
             break;
         }
       }
-      console.log(""); // trailing newline
+      console.log("");
     } catch (e) {
       console.error(`${RED}Error:${RESET} ${(e as Error).message}`);
     }
+
+    // Resume readline for next input.
+    rl.resume();
     rl.prompt();
   });
 
@@ -150,7 +174,6 @@ async function handleCommand(
   loop: any,
   poolMgr: any,
   config: any,
-  _ctx: any,
 ): Promise<void> {
   const parts = cmd.split(/\s+/);
   const name = parts[0]!;
