@@ -32,12 +32,12 @@
 | Phase 2: models (anthropic + openai) | ✅ | 20 (77 total) | `92b957e` |
 | Phase 3: tools framework + 9 builtins | ✅ | 35 (112 total) | `16b52f0` |
 | Phase 4: query + permissions | ✅ | 32 (144 total) | `1fc2c09` |
-| Phase 5: agent loop + subagent + compaction | 🔲 | — | — |
-| Phase 6: config + skills + memory + hooks + mcp | 🔲 | — | — |
-| Phase 7: CLI + Ink REPL | 🔲 | — | — |
+| Phase 5: agent loop + subagent + compaction | ✅ | 36 (180 total) | `c2e1148` |
+| Phase 6: config + skills + memory + hooks + mcp | ✅ | 15 (195 total) | `1b113b5` |
+| Phase 7: CLI + bootstrap (readline REPL) | ✅ | — | _(pending commit)_ |
 | Phase 8: remove Python + cleanup | 🔲 | — | — |
 
-**TS 进度**: 144 测试, 40 源文件, Phases 1-4 完成。
+**TS 进度**: 195 测试, 12 测试文件, ~70 源文件, Phases 1-7 完成。
 
 ## 内置工具 (11个)
 

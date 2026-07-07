@@ -122,10 +122,11 @@ async *run(user_input, context, config?): AsyncGenerator<StreamEvent> {
 - `src/mcp/` — stdio transport + 工具适配
 - 对应 5 个测试文件
 
-### Phase 7: CLI + Ink REPL + bootstrap 🔲
-- `src/cli/{bootstrap,main,logging}.ts` — 组合根 + 入口
-- `src/cli/REPL.tsx` + `components/{Spinner,PermissionRequest,ToolResultDisplay,MessageList,PromptInput}.tsx`
-- `src/index.ts`
+### Phase 7: CLI + bootstrap ✅
+- **[done]** `src/cli/{bootstrap,main}.ts` — 组合根 + 入口
+- **[done]** `src/index.ts` — `wings chat` / `wings run` 可用
+- **[done]** Minimal REPL (readline-based), `/pool`, `/help` commands
+- Ink/React TUI 保留为后续优化
 
 ### Phase 8: 移除 Python + 收尾 🔲
 - 删除 `src/wings/`、`tests/`（Python）、`pyproject.toml`、`uv.lock`
