@@ -6,7 +6,7 @@
  * the provider's job) or model selection (that's ModelSelector).
  */
 
-import type { Message, StreamEvent } from "../messages/types.ts";
+import type { Message, MessageContent, StreamEvent } from "../messages/types.ts";
 import type { ModelConfig, ModelProvider, ModelResponse } from "../models/protocol.ts";
 import type { ModelRegistry } from "../models/registry.ts";
 
@@ -55,7 +55,7 @@ export class QueryEngine {
     model: string,
     tools: Record<string, unknown>[] | null,
     config: ModelConfig,
-  ): AsyncGenerator<StreamEvent | import("../messages/types.ts").MessageContent> {
+  ): AsyncGenerator<StreamEvent | MessageContent> {
     const provider = this._registry.get(model);
 
     let lastError: unknown = null;
@@ -78,15 +78,13 @@ export class QueryEngine {
 
   private _isRetriable(exc: unknown): boolean {
     const e = exc as any;
+    // Anthropic/OpenAI SDK errors use `status`.
     const status = e?.status_code ?? e?.status;
     if (typeof status === "number" && RETRIABLE_STATUSES.has(status)) return true;
     const response = e?.response;
     const httpStatus = response?.status_code ?? response?.status;
     if (typeof httpStatus === "number" && RETRIABLE_STATUSES.has(httpStatus)) return true;
-    // Network / connection errors are retriable.
-    const name = e?.name ?? "";
-    if (["ConnectError", "ReadError", "RemoteProtocolError", "TypeError"].includes(name)) return true;
-    // fetch() throws TypeError on network failure.
+    // fetch() throws TypeError on network/connection failures.
     if (e instanceof TypeError) return true;
     return false;
   }

@@ -37,28 +37,30 @@ function isBlockedHost(hostname: string): boolean {
 }
 
 function decodeContent(raw: Uint8Array): string | null {
-  const buf = Buffer.from(raw);
-  // Try UTF-8 first (covers most modern sites).
+  // Try UTF-8 first (covers most modern sites). Use TextDecoder with fatal:true
+  // so invalid sequences cause an error, letting us fall back to other encodings.
   try {
-    return buf.toString("utf8");
+    return new TextDecoder("utf-8", { fatal: true }).decode(raw);
   } catch {
     // fall through
   }
-  // Try Chinese encodings via iconv-lite if available; otherwise latin-1.
+  // Try Chinese encodings (common for financial/news sites).
   for (const enc of ["gb18030", "gbk", "big5", "gb2312"] as const) {
     try {
-      // Node's Buffer only supports utf8/latin1/ascii/hex/base64; use
-      // TextDecoder for the rest. Cast to bypass the strict Encoding union.
       return new (TextDecoder as any)(enc, { fatal: true }).decode(raw);
     } catch {
       continue;
     }
   }
-  // Last resort: latin-1 never fails.
+  // Last resort: UTF-8 without fatal, then latin-1.
   try {
-    return buf.toString("latin1");
+    return new TextDecoder("utf-8").decode(raw);
   } catch {
-    return null;
+    try {
+      return Buffer.from(raw).toString("latin1");
+    } catch {
+      return null;
+    }
   }
 }
 

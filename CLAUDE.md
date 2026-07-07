@@ -5,6 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Essential commands
 
 ```bash
+# Python (existing)
 # Install (including dev deps)
 uv sync --extra dev
 
@@ -27,6 +28,13 @@ uv run mypy src/
 wings chat                   # interactive REPL
 wings run "prompt"           # single turn
 wings chat --log             # with logging to .wings/logs/
+
+# TypeScript (rewrite in progress)
+bun test                          # run all TS tests (144 passing)
+bun test tests/ts/                # same, scoped
+bun x tsc --noEmit                # type-check
+bun run src/index.ts chat          # REPL (WIP)
+bun run src/index.ts run "prompt"  # single turn (WIP)
 
 # Chat commands
 /pool                        # view and adjust API candidate pools

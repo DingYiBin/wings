@@ -85,52 +85,49 @@ async *run(user_input, context, config?): AsyncGenerator<StreamEvent> {
 
 ## 8 个阶段（每阶段一次 commit）
 
-### Phase 1: 项目初始化 + messages + routing
-- 创建 `package.json`/`tsconfig.json`/`bunfig.toml`
-- `src/messages/{types,normalize}.ts` — 类型 + Anthropic/OpenAI 双向转换
-- `src/routing/{types,selector,manager,tasks,protocol}.ts` — softmax 选择、池管理、任务继承链
-- `tests/messages.test.ts`, `tests/routing.test.ts`
-- **参考**：无（routing 是 wings 独有）
+### Phase 1: 项目初始化 + messages + routing ✅ `4ce6745`
+- **[done]** 创建 `package.json`/`tsconfig.json`/`bunfig.toml`
+- **[done]** `src/messages/{types,normalize}.ts` — 类型 + Anthropic/OpenAI 双向转换
+- **[done]** `src/routing/{types,selector,manager,tasks,protocol}.ts` — softmax 选择、池管理、任务继承链
+- **[done]** `tests/ts/messages.test.ts`, `tests/ts/routing.test.ts` — 57 tests
 
-### Phase 2: models
-- `src/models/{protocol,anthropic,openai,registry,capabilities}.ts`
-- AnthropicProvider：流式 + max_tokens 升级（8K→64K）
-- OpenAIProvider：async streaming
-- `tests/models.test.ts`
-- **参考**：`reference/claude-code/src/services/api/claude.ts` 的 SDK 用法
+### Phase 2: models ✅ `92b957e`
+- **[done]** `src/models/{protocol,anthropic,openai,registry,capabilities}.ts`
+- **[done]** AnthropicProvider：流式 + max_tokens 升级（8K→64K）
+- **[done]** OpenAIProvider：async streaming
+- **[done]** `tests/ts/models.test.ts` — 77 total tests
 
-### Phase 3: tools 框架 + 内置工具
-- `src/tools/{types,registry}.ts` — `buildTool()` + Zod schema
-- 10 个内置工具：read/write/edit/bash/glob/grep/skill_view/agent/web_fetch/web_search
-- `tests/tools.test.ts`
-- **参考**：`reference/claude-code/src/Tool.ts`（buildTool 模式），各 `tools/FileReadTool/` 等
+### Phase 3: tools 框架 + 内置工具 ✅ `16b52f0`
+- **[done]** `src/tools/{types,registry}.ts` — `buildTool()` + Zod schema
+- **[done]** 9 个内置工具：read/write/edit/bash/glob/grep/skill_view/web_fetch/web_search
+- **[done]** agent 工具推迟到 Phase 5（依赖 subagent 模块）
+- **[done]** `tests/ts/tools.test.ts` — 112 total tests
 
-### Phase 4: query + permissions
-- `src/query/{engine,token_budget}.ts` — 重试逻辑 + token 预算
-- `src/permissions/{rules,pipeline}.ts` — 4 阶段管道
-- `tests/query.test.ts`, `tests/permissions.test.ts`
+### Phase 4: query + permissions ✅ `1fc2c09`
+- **[done]** `src/query/{engine,token_budget}.ts` — 重试逻辑 + token 预算
+- **[done]** `src/permissions/{rules,pipeline}.ts` — 4 阶段管道
+- **[done]** `tests/ts/query.test.ts`, `tests/ts/permissions.test.ts` — 144 total tests
 
-### Phase 5: agent loop + subagent + compaction
+### Phase 5: agent loop + subagent + compaction 🔲
 - `src/agent/{loop,handoff,subagent,agent_loader}.ts`
 - `src/services/compact.ts`
+- `src/tools/builtin/agent.ts` — agent 工具
 - `tests/agent.test.ts`, `tests/subagent.test.ts`, `tests/compact.test.ts`
 
-### Phase 6: config + skills + memory + hooks + mcp
+### Phase 6: config + skills + memory + hooks + mcp 🔲
 - `src/config/settings.ts` — 2 文件 deep merge（无 pydantic-settings）
 - `src/skills/` — 3 层加载、SKILL.md frontmatter
 - `src/memory/` — MEMORY.md + 4 类型 + 提取器
 - `src/hooks/` — shell 命令钩子
 - `src/mcp/` — stdio transport + 工具适配
 - 对应 5 个测试文件
-- **参考**：`reference/claude-code/src/services/mcp/`，`reference/claude-code/src/memdir/`
 
-### Phase 7: CLI + Ink REPL + bootstrap
+### Phase 7: CLI + Ink REPL + bootstrap 🔲
 - `src/cli/{bootstrap,main,logging}.ts` — 组合根 + 入口
 - `src/cli/REPL.tsx` + `components/{Spinner,PermissionRequest,ToolResultDisplay,MessageList,PromptInput}.tsx`
 - `src/index.ts`
-- **参考**：`reference/claude-code/src/screens/REPL.tsx`（但大幅简化，目标 ~500 LOC）
 
-### Phase 8: 移除 Python + 收尾
+### Phase 8: 移除 Python + 收尾 🔲
 - 删除 `src/wings/`、`tests/`（Python）、`pyproject.toml`、`uv.lock`
 - 更新 README
 - 全量测试 `bun test`

@@ -107,6 +107,12 @@ export type StopReason =
   | "tool_use"
   | "stop_sequence";
 
+// -- Wire types -------------------------------------------------------------
+// Loose provider-native dict types used by providers and normalizers.
+
+export type WireMessage = Record<string, any>;
+export type WireBlock = Record<string, any>;
+
 // -- Type guards ------------------------------------------------------------
 
 export const isTextBlock = (b: MessageContent): b is TextBlock =>

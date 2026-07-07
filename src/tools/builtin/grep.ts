@@ -1,7 +1,7 @@
 /** Regular expression content search. */
 
 import { existsSync, statSync, readFileSync, readdirSync } from "node:fs";
-import { isAbsolute, join, relative } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 import { z } from "zod";
 
@@ -18,11 +18,6 @@ interface GrepInput {
   head_limit?: number | null;
 }
 
-function isInVcsDir(filepath: string, base: string): boolean {
-  const rel = relative(base, filepath);
-  const parts = rel.split("/");
-  return parts.some((p) => VCS_DIRS.has(p));
-}
 
 /** Recursively collect files under base, optionally filtered by glob pattern. */
 function collectFiles(base: string, globPattern: string | null): string[] {
@@ -36,7 +31,6 @@ function collectFiles(base: string, globPattern: string | null): string[] {
     }
     for (const entry of entries) {
       const name: string = entry.name as unknown as string;
-      if (name.startsWith(".")) continue;
       const full = join(dir, name);
       if (entry.isDirectory()) {
         if (!VCS_DIRS.has(name)) walk(full);
@@ -134,10 +128,12 @@ export const grepTool = buildTool({
         continue;
       }
 
-      // Find all matches
+      // Find all matches. Strip sticky flag (y) and ensure global (g) for exec loop.
+      let baseFlags = regex.flags.replace("y", "");
+      if (!baseFlags.includes("g")) baseFlags += "g";
+      const globalRegex = new RegExp(regex.source, baseFlags);
       const matches: Array<{ index: number }> = [];
       let m: RegExpExecArray | null;
-      const globalRegex = new RegExp(regex.source, regex.flags.includes("g") ? regex.flags : regex.flags + "g");
       while ((m = globalRegex.exec(text)) !== null) {
         matches.push({ index: m.index });
         if (m.index === globalRegex.lastIndex) globalRegex.lastIndex++;
@@ -169,10 +165,6 @@ export const grepTool = buildTool({
 
     if (outputLines.length === 0) {
       return "(no matches)";
-    }
-
-    if (input.head_limit) {
-      outputLines.length = Math.min(outputLines.length, input.head_limit);
     }
 
     // Summary line matching claude-code: "Found N matches across M files"

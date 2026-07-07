@@ -13,11 +13,6 @@ export interface PoolEntry {
   score: number;
 }
 
-export interface ScoreMask {
-  /** api_id → score delta. -Infinity = disabled for this task type. Absent = 0. */
-  adjustments: Record<string, number>;
-}
-
 export interface PoolConfig {
   version: 2;
   /** Global pool. */

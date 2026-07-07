@@ -16,13 +16,13 @@ const DENY_PATTERNS: RegExp[] = [
   /\(\)\s*\{.*:.*\|.*:.*&.*\}/, // Fork bomb variants
 ];
 
-function isSleepCommand(cmd: string): boolean | null {
+function isSleepCommand(cmd: string): boolean {
   const trimmed = cmd.trim();
   let m = /^sleep\s+(\d+)/.exec(trimmed);
   if (m) return parseInt(m[1]!, 10) >= 2;
   m = /^sleep\s+(\d+\.?\d*)/.exec(trimmed);
   if (m) return parseFloat(m[1]!) >= 2.0;
-  return null;
+  return false;
 }
 
 function checkDenylist(cmd: string): string | null {
@@ -60,9 +60,9 @@ function runShell(cmd: string, cwd: string, env: Record<string, string> | undefi
       clearTimeout(timer);
       resolve({ stdout, stderr, code, timedOut });
     });
-    child.on("error", () => {
+    child.on("error", (err) => {
       clearTimeout(timer);
-      resolve({ stdout, stderr, code: null, timedOut });
+      resolve({ stdout, stderr: stderr || err.message, code: null, timedOut });
     });
   });
 }
@@ -84,9 +84,8 @@ export const bashTool = buildTool({
     const denyError = checkDenylist(cmd);
     if (denyError) return denyError;
 
-    // Block sleep
-    const isSleep = isSleepCommand(cmd);
-    if (isSleep) {
+    // Block sleep >= 2s
+    if (isSleepCommand(cmd)) {
       return "Error: sleep is not allowed. Use a non-blocking approach instead.";
     }
 

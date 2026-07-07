@@ -6,14 +6,8 @@
  * Message representation so the agent loop never deals with provider quirks.
  */
 
-import type { Message, MessageContent, Role } from "./types.ts";
+import type { Message, MessageContent, Role, WireBlock, WireMessage } from "./types.ts";
 import { TextBlock, ToolResultBlock, ToolUseBlock } from "./types.ts";
-
-// -- Wire types (loose, provider-native dicts) ------------------------------
-
-type Wire = Record<string, any>;
-type WireMessage = Wire;
-type WireBlock = Wire;
 
 // -- Anthropic ---------------------------------------------------------------
 

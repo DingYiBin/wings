@@ -18,12 +18,10 @@ import type {
   ToolUseBlock,
 } from "../messages/types.ts";
 import { TextDelta } from "../messages/types.ts";
+import type { WireMessage } from "../messages/types.ts";
 import type { ModelConfig, ModelProvider, ModelResponse } from "./protocol.ts";
 
-// -- Loose wire types --------------------------------------------------------
-
 type Wire = Record<string, any>;
-type WireMessage = Wire;
 
 export class OpenAIProvider implements ModelProvider {
   readonly provider_name = "openai";

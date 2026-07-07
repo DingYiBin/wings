@@ -1,6 +1,6 @@
 /** Read a file from the local filesystem. */
 
-import { existsSync, statSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { isAbsolute, join, extname } from "node:path";
 
 import { z } from "zod";
@@ -53,12 +53,17 @@ function isBinaryByExtension(path: string): boolean {
 }
 
 function isBinaryByContent(path: string): boolean {
-  /** Check if a file contains NUL bytes (strong indicator of binary). */
+  /** Check if a file contains NUL bytes (strong indicator of binary).
+   * Only reads the first MAX_SAMPLE bytes to avoid loading large files. */
   try {
-    const fd = readFileSync(path, { flag: "r" });
-    // Read only the first MAX_SAMPLE bytes for the NUL check.
-    const sample = fd.subarray(0, MAX_SAMPLE);
-    return sample.includes(0);
+    const fd = openSync(path, "r");
+    const buf = Buffer.alloc(MAX_SAMPLE);
+    const bytesRead = readSync(fd, buf, 0, MAX_SAMPLE, 0);
+    closeSync(fd);
+    for (let i = 0; i < bytesRead; i++) {
+      if (buf[i] === 0) return true;
+    }
+    return false;
   } catch {
     return false;
   }

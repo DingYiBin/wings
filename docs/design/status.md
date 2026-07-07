@@ -1,8 +1,8 @@
 # Wings 项目实现状态
 
-> 最后更新: 2026-07-06
+> 最后更新: 2026-07-07
 
-## 模块完成度
+## Python 实现（已完成）
 
 | 模块 | 状态 | 文件数 | 测试数 | 说明 |
 |------|------|--------|--------|------|
@@ -20,7 +20,24 @@
 | hooks | ✅ | 3 | — | Shell 命令 PreToolUse/PostToolUse, 集成 PermissionPipeline |
 | mcp | ✅ | 2 | — | stdio transport, mcp__server__tool 命名, 自动注册 |
 
-**总计**: 58 源文件, ~7000 行代码, 283 测试, 13 模块
+**Python 总计**: 58 源文件, ~7000 行代码, 283 测试, 13 模块
+
+## TypeScript 重写 (Bun, 进行中)
+
+> 计划文档: [`docs/design/ts-rewrite-plan.md`](ts-rewrite-plan.md)
+
+| 阶段 | 状态 | 测试数 | Commit |
+|------|------|--------|--------|
+| Phase 1: project init + messages + routing | ✅ | 57 | `4ce6745` |
+| Phase 2: models (anthropic + openai) | ✅ | 20 (77 total) | `92b957e` |
+| Phase 3: tools framework + 9 builtins | ✅ | 35 (112 total) | `16b52f0` |
+| Phase 4: query + permissions | ✅ | 32 (144 total) | `1fc2c09` |
+| Phase 5: agent loop + subagent + compaction | 🔲 | — | — |
+| Phase 6: config + skills + memory + hooks + mcp | 🔲 | — | — |
+| Phase 7: CLI + Ink REPL | 🔲 | — | — |
+| Phase 8: remove Python + cleanup | 🔲 | — | — |
+
+**TS 进度**: 144 测试, 40 源文件, Phases 1-4 完成。
 
 ## 内置工具 (11个)
 

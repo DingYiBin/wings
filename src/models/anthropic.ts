@@ -9,6 +9,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 
 import { toAnthropic } from "../messages/normalize.ts";
+import type { WireBlock, WireMessage } from "../messages/types.ts";
 import type {
   Message,
   MessageContent,
@@ -22,11 +23,7 @@ import type {
 } from "../messages/types.ts";
 import type { ModelConfig, ModelProvider, ModelResponse } from "./protocol.ts";
 
-// -- Loose wire types (provider-native dicts) --------------------------------
-
 type Wire = Record<string, any>;
-type WireMessage = Wire;
-type WireBlock = Wire;
 
 class StopReasonMap {
   static map(raw: string | null | undefined): StopReason {
