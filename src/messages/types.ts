@@ -27,6 +27,12 @@ export interface ToolUseBlock {
   input: Record<string, unknown>;
 }
 
+export interface ThinkingBlock {
+  type: "thinking";
+  thinking: string;
+  signature: string;
+}
+
 export interface ToolResultBlock {
   type: "tool_result";
   tool_use_id: string;
@@ -34,7 +40,7 @@ export interface ToolResultBlock {
   is_error?: boolean;
 }
 
-export type MessageContent = TextBlock | ToolUseBlock | ToolResultBlock;
+export type MessageContent = TextBlock | ThinkingBlock | ToolUseBlock | ToolResultBlock;
 
 // -- Message ----------------------------------------------------------------
 

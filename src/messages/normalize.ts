@@ -63,6 +63,8 @@ export function toAnthropic(message: Message): WireMessage {
   for (const block of message.content) {
     if (block.type === "text") {
       blocks.push({ type: "text", text: block.text });
+    } else if (block.type === "thinking") {
+      blocks.push({ type: "thinking", thinking: block.thinking, signature: block.signature });
     } else if (block.type === "tool_use") {
       blocks.push({
         type: "tool_use",

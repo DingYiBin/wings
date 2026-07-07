@@ -18,6 +18,7 @@ import type {
   StopReason,
   TextBlock,
   TextDelta,
+  ThinkingBlock,
   ThinkingDelta,
   ToolUseBlock,
 } from "../messages/types.ts";
@@ -121,6 +122,12 @@ export class AnthropicProvider implements ModelProvider {
         const bt = block?.type;
         if (bt === "text") {
           yield { type: "text", text: block.text } satisfies TextBlock;
+        } else if (bt === "thinking") {
+          yield {
+            type: "thinking",
+            thinking: block.thinking ?? "",
+            signature: block.signature ?? "",
+          } satisfies ThinkingBlock;
         } else if (bt === "tool_use") {
           yield {
             type: "tool_use",
@@ -149,6 +156,12 @@ export class AnthropicProvider implements ModelProvider {
       const bt = block?.type;
       if (bt === "text") {
         yield { type: "text", text: block.text } satisfies TextBlock;
+      } else if (bt === "thinking") {
+        yield {
+          type: "thinking",
+          thinking: block.thinking ?? "",
+          signature: block.signature ?? "",
+        } satisfies ThinkingBlock;
       } else if (bt === "tool_use") {
         yield {
           type: "tool_use",
@@ -220,6 +233,12 @@ export class AnthropicProvider implements ModelProvider {
       const blockType: string = block?.type ?? "";
       if (blockType === "text") {
         result.push({ type: "text", text: block.text } satisfies TextBlock);
+      } else if (blockType === "thinking") {
+        result.push({
+          type: "thinking",
+          thinking: block.thinking ?? "",
+          signature: block.signature ?? "",
+        } satisfies ThinkingBlock);
       } else if (blockType === "tool_use") {
         result.push({
           type: "tool_use",

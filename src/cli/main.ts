@@ -22,9 +22,9 @@ function dim(s: string) { return `${DIM}${s}${RESET}`; }
 /** Run a single-turn request. */
 export async function runSingle(
   prompt: string,
-  opts: { workingDir?: string; model?: string | null } = {},
+  opts: { workingDir?: string; model?: string | null; logger?: { recordCycle(opts: Record<string, unknown>): void } | null } = {},
 ): Promise<void> {
-  const { loop, config } = await createSession(opts.workingDir);
+  const { loop, config } = await createSession(opts.workingDir, opts.logger);
   const ctx = makeAgentContext(config, {
     workingDir: opts.workingDir,
     modelOverride: opts.model ?? null,
@@ -54,9 +54,9 @@ export async function runSingle(
 
 /** Start an interactive chat session. */
 export async function runChat(
-  opts: { workingDir?: string; model?: string | null } = {},
+  opts: { workingDir?: string; model?: string | null; logger?: { recordCycle(opts: Record<string, unknown>): void } | null } = {},
 ): Promise<void> {
-  const { loop, config, poolMgr } = await createSession(opts.workingDir);
+  const { loop, config, poolMgr } = await createSession(opts.workingDir, opts.logger);
   const ctx = makeAgentContext(config, {
     workingDir: opts.workingDir,
     modelOverride: opts.model ?? null,

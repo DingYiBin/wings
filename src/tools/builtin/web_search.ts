@@ -1,4 +1,4 @@
-/** WebSearch tool — search the web via DuckDuckGo HTML scraping. */
+/** WebSearch tool — search the web via DuckDuckGo HTML. */
 
 import { z } from "zod";
 
@@ -10,16 +10,15 @@ interface SearchResult {
   body: string;
 }
 
-/** Search via DuckDuckGo HTML endpoint (no API key required). */
 async function searchDdgs(query: string, maxResults: number): Promise<SearchResult[]> {
   const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15000);
+    const timer = setTimeout(() => controller.abort(), 10_000);
     const response = await fetch(url, {
       signal: controller.signal,
       headers: {
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) wings/0.1",
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 wings/0.1",
         Accept: "text/html",
       },
     });
@@ -33,44 +32,63 @@ async function searchDdgs(query: string, maxResults: number): Promise<SearchResu
 }
 
 function parseDdgsHtml(html: string, maxResults: number): SearchResult[] {
+  // DDG HTML format (classes changed over time):
+  // <a rel="nofollow" class="result__a" href="...">title</a>
+  // <a class="result__snippet" ...>snippet text</a>
+  // Also try: <a class="result-link" href="..."> and <td class="result-snippet">
   const results: SearchResult[] = [];
-  // DuckDuckGo HTML results: <a class="result__a" href="...">title</a>
-  // and <a class="result__snippet" ...>body</a>
-  const linkRegex = /<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g;
-  const snippetRegex = /<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/a>/g;
-  const titles: Array<{ href: string; title: string }> = [];
-  let m: RegExpExecArray | null;
-  while ((m = linkRegex.exec(html)) !== null) {
-    titles.push({ href: m[1]!, title: stripTags(m[2]!) });
+
+  // Try multiple link patterns.
+  let links: Array<{ href: string; title: string }> = [];
+  for (const re of [
+    /<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g,
+    /<a[^>]*class="[^"]*result-link[^"]*"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g,
+    /<a[^>]*rel="nofollow"[^>]*class="[^"]*result[^"]*"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g,
+  ]) {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(html)) !== null) {
+      links.push({ href: m[1]!, title: stripTags(m[2]!) });
+    }
+    if (links.length > 0) break;
   }
-  const bodies: string[] = [];
-  while ((m = snippetRegex.exec(html)) !== null) {
-    bodies.push(stripTags(m[1]!));
+
+  // Try multiple snippet patterns.
+  let bodies: string[] = [];
+  for (const re of [
+    /<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/a>/g,
+    /<td[^>]*class="[^"]*result-snippet[^"]*"[^>]*>([\s\S]*?)<\/td>/g,
+  ]) {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(html)) !== null) {
+      bodies.push(stripTags(m[1]!));
+    }
+    if (bodies.length > 0) break;
   }
-  for (let i = 0; i < Math.min(titles.length, maxResults); i++) {
+
+  for (let i = 0; i < Math.min(links.length, maxResults); i++) {
     results.push({
-      title: titles[i]!.title,
-      href: decodeDdgHref(titles[i]!.href),
+      title: links[i]!.title || "Untitled",
+      href: decodeDdgHref(links[i]!.href),
       body: bodies[i] ?? "",
     });
   }
+
+  // If no results from HTML parsing, return empty.
   return results;
 }
 
 function stripTags(s: string): string {
-  return s.replace(/<[^>]*>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#x27;/g, "'").trim();
+  return s.replace(/<[^>]*>/g, "")
+    .replace(/&amp;/g, "&").replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">").replace(/&quot;/g, '"')
+    .replace(/&#x27;/g, "'").replace(/&#39;/g, "'")
+    .trim();
 }
 
 function decodeDdgHref(href: string): string {
-  // DDG wraps links as //duckduckgo.com/l/?uddg=<encoded>
   const match = /uddg=([^&]+)/.exec(href);
   if (match) {
-    try {
-      return decodeURIComponent(match[1]!);
-    } catch {
-      return href;
-    }
+    try { return decodeURIComponent(match[1]!); } catch { return href; }
   }
   return href.startsWith("//") ? "https:" + href : href;
 }
@@ -78,9 +96,9 @@ function decodeDdgHref(href: string): string {
 export const webSearchTool = buildTool({
   name: "web_search",
   description:
-    "Allows Claude to search the web and use the results to inform responses. " +
+    "Allows web search and uses results to inform responses. " +
     "Provides up-to-date information for current events and recent data.",
-  search_hint: "web_search query='python documentation' max_results=5",
+  search_hint: "web_search query='search terms' max_results=5",
   is_read_only: true,
   inputSchema: z.object({
     query: z.string().min(2).describe("The search query to use"),
@@ -94,21 +112,26 @@ export const webSearchTool = buildTool({
     const maxResults = input.max_results ?? 10;
 
     let results = await searchDdgs(query, maxResults);
-    let backend = "DuckDuckGo";
     if (results.length === 0) {
-      // No Bing fallback implemented yet in TS rewrite — DDG only.
-      backend = "DuckDuckGo (no results)";
+      // Try alternative: Bing search via web_fetch (not implemented yet).
+      // Return a helpful message suggesting alternatives.
+      return [
+        `No search results for '${query}'. DuckDuckGo may be unreachable.`,
+        "",
+        "Troubleshooting:",
+        "- Try a broader or different query",
+        "- DuckDuckGo may not be available in your region",
+        "- web_search uses DuckDuckGo; consider configuring a Bing API key for fallback",
+        "",
+        "As an alternative, you can try:",
+        "- web_fetch(url=\"https://www.google.com/search?q=...\") for structured results",
+      ].join("\n");
     }
 
-    if (results.length === 0) {
-      return `No results found for '${query}'. Try a broader or different query.`;
-    }
-
-    const lines = [`Search: "${query}" — ${results.length} results (${backend})`, ""];
+    const lines = [`Search: "${query}" — ${results.length} results (DuckDuckGo)`, ""];
     for (let i = 0; i < results.length; i++) {
       const r = results[i]!;
-      const title = r.title || "Untitled";
-      lines.push(`${i + 1}. [${title}](${r.href})`);
+      lines.push(`${i + 1}. [${r.title || "Untitled"}](${r.href})`);
       if (r.body) lines.push(`   ${r.body}`);
       lines.push("");
     }

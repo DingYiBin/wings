@@ -77,8 +77,14 @@ export class AgentLoop {
   availableSkills: Record<string, string> = {};
   poolManager: unknown = null;
   customAgents: Record<string, unknown> = {};
-  private _turnCount = 0;
   extractMemories: unknown = null;
+
+  // Optional logger — set by CLI when --log is enabled.
+  private _logger: { recordCycle(opts: Record<string, unknown>): void } | null = null;
+
+  setLogger(logger: { recordCycle(opts: Record<string, unknown>): void } | null): void {
+    this._logger = logger;
+  }
 
   get messages(): Message[] {
     return this._messages;
@@ -183,6 +189,7 @@ export class AgentLoop {
       // Stream phase — collect deltas and final blocks.
       const toolUseBlocks: ToolUseBlock[] = [];
       const textBlocks: TextBlock[] = [];
+      const thinkingBlocks: import("../messages/types.ts").ThinkingBlock[] = [];
       const cycleToolCalls: string[] = [];
       let streamedText = false;
       const thinkingParts: string[] = [];
@@ -207,7 +214,34 @@ export class AgentLoop {
           }
         } else if (event.type === "tool_use") {
           toolUseBlocks.push(event as unknown as ToolUseBlock);
+        } else if (event.type === "thinking") {
+          // Preserve thinking blocks in message history.
+          // DeepSeek and compatibles require thinking content to be
+          // passed back in subsequent API requests.
+          thinkingBlocks.push(event as unknown as import("../messages/types.ts").ThinkingBlock);
         }
+      }
+
+      // Log first response cycle.
+      if (this._logger && isFirstCycle) {
+        let sysPrompt = "";
+        const first = this._messages[0];
+        if (first?.role === "system") {
+          for (const b of first.content) {
+            if (b.type === "text") sysPrompt = b.text;
+            break;
+          }
+        }
+        this._logger.recordCycle({
+          model,
+          context: context.task_type,
+          message_count: this._messages.length,
+          input_summary: userInput,
+          system_prompt: sysPrompt,
+          response: { content: [...textBlocks, ...toolUseBlocks] },
+          tool_calls: [],
+          thinking: thinkingParts.length > 0 ? thinkingParts.join("") : null,
+        });
       }
 
       // Execute tools.
@@ -218,6 +252,7 @@ export class AgentLoop {
         }
 
         const assistantContent: MessageContent[] = [
+          ...thinkingBlocks,
           ...textBlocks,
           ...toolUseBlocks,
         ];
@@ -373,6 +408,19 @@ export class AgentLoop {
           content: toolResults,
         });
 
+        // Log tool execution cycle.
+        if (this._logger && cycleToolCalls.length > 0) {
+          this._logger.recordCycle({
+            model,
+            context: context.task_type,
+            message_count: this._messages.length,
+            input_summary: `[tool results: ${cycleToolCalls.join(", ")}]`,
+            response: { content: toolUseBlocks },
+            tool_calls: cycleToolCalls,
+            tool_results: toolResults.map((tr) => tr.content),
+          });
+        }
+
         // If user denied permission, stop the turn.
         if (permissionDenied) {
           turn.summary = "permission denied by user";
@@ -384,10 +432,10 @@ export class AgentLoop {
       }
 
       // No tools — end turn.
-      if (textBlocks.length > 0) {
+      if (textBlocks.length > 0 || thinkingBlocks.length > 0) {
         this._messages.push({
           role: "assistant",
-          content: textBlocks,
+          content: [...thinkingBlocks, ...textBlocks],
         });
       }
       turn.summary = this._lastAssistantText().slice(0, 200);
