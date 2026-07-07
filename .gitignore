@@ -15,3 +15,9 @@ uv.lock
 reference/
 .wings/config.json
 .claude/settings*
+
+# TypeScript / Bun
+node_modules/
+bun.lock
+*.tsbuildinfo
+dist/

@@ -1,0 +1,5 @@
+# Bun configuration for Wings
+
+[test]
+# bun test discovery root — scope to our own tests so reference/ is excluded
+root = "tests/ts"
