@@ -361,11 +361,16 @@ export class AgentLoop {
             const capture = (evt: unknown) => {
               const e = evt as StreamEvent;
               subagentEvents.push(e);
-              // Write text deltas directly to stdout for real-time progress
-              // in raw mode REPL. Also fires for subagent_start/end signals.
-              if (e.type === "text_delta") {
-                try { process.stdout.write((e as any).text ?? ""); } catch {}
-              }
+              // Write subagent events to stdout in real-time so the user
+              // sees progress during long subagent execution.
+              try {
+                if (e.type === "text_delta") {
+                  process.stdout.write((e as any).text ?? "");
+                } else if (e.type === "tool_use") {
+                  const short = JSON.stringify(e.input).slice(0, 80);
+                  process.stdout.write(`\n  sub ${e.name} ${short}\n`);
+                }
+              } catch {}
             };
             context.tool_context.event_callback = capture;
             const saStart: SubAgentStart = {
