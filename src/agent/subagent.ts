@@ -196,14 +196,15 @@ export async function runSubagent(
 
   // Run to completion.
   let finalText = "";
-  for await (const event of subagentLoop.run(prompt, ctx)) {
-    if (eventCallback) eventCallback(event);
-    if (
-      event.type === "text_delta"
-    ) {
-      // TypeScript: check for 'text' property on the event.
-      finalText += (event as any).text ?? "";
+  try {
+    for await (const event of subagentLoop.run(prompt, ctx)) {
+      if (eventCallback) await eventCallback(event);
+      if (event.type === "text_delta") {
+        finalText += (event as any).text ?? "";
+      }
     }
+  } catch (e) {
+    return `Subagent error: ${(e as Error).message}`;
   }
   return finalText.trim();
 }
