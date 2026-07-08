@@ -308,6 +308,17 @@ export class AgentLoop {
 
           if (permResult === "ask") {
             // Interactive approval.
+            // IMPORTANT: set up the permission Promise BEFORE yielding.
+            // The CLI (doTurn) uses blocking /dev/tty reads for the permission
+            // prompt, which means it calls setPermissionResponse immediately
+            // after the user answers — before the generator gets a chance to
+            // advance past this yield. If _permResolve isn't set yet, the
+            // response is silently lost and the agent loop deadlocks.
+            const permPromise = new Promise<string>((resolve) => {
+              this._permResolve = resolve;
+            });
+            DLOG("LOOP-AWAIT", "_permResolve set, yielding pr...");
+
             const scope = suggestScope(block.name, block.input);
             const pr: PermissionRequest = {
               type: "permission_request",
@@ -317,11 +328,9 @@ export class AgentLoop {
             };
             yield pr;
 
-            // Wait for user response (Promise resolver).
-            DLOG("LOOP-AWAIT", "setting up permResolve, waiting...");
-            const response = await new Promise<string>((resolve) => {
-              this._permResolve = resolve;
-            });
+            // Wait for user response.
+            DLOG("LOOP-AWAIT", "awaiting permPromise...");
+            const response = await permPromise;
             DLOG("LOOP-AWAIT", "resolved:", response, "continuing tool exec...");
 
             if (response === "allow_always") {
