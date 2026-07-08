@@ -31,11 +31,13 @@ wings chat --log             # with logging to .wings/logs/
 
 # TypeScript (rewrite in progress — 195 tests, 7/8 phases)
 bun test                          # run all TS tests (195 passing)
-bun test tests/ts/                # same, scoped
 bun x tsc --noEmit                # type-check
-bun run src/index.ts chat          # interactive REPL (readline-based)
-bun run src/index.ts run "prompt"  # single turn
-bun run src/index.ts chat -m anthropic/claude-sonnet-4-6  # with model override
+
+# Run (Node.js)
+node --import tsx src/index.ts chat          # interactive REPL
+node --import tsx src/index.ts run "prompt"  # single turn
+node --import tsx src/index.ts chat --log    # with logging to .wings/logs/
+node --import tsx src/index.ts chat -m anthropic/claude-sonnet-4-6
 
 # Chat commands
 /pool                        # view and adjust API candidate pools

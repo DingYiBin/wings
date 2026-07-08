@@ -232,6 +232,7 @@ export class AgentLoop {
             break;
           }
         }
+        const cycleTools = toolUseBlocks.map((b) => b.name);
         this._logger.recordCycle({
           model,
           context: context.task_type,
@@ -239,7 +240,7 @@ export class AgentLoop {
           input_summary: userInput,
           system_prompt: sysPrompt,
           response: { content: [...textBlocks, ...toolUseBlocks] },
-          tool_calls: [],
+          tool_calls: cycleTools,
           thinking: thinkingParts.length > 0 ? thinkingParts.join("") : null,
         });
       }
