@@ -133,21 +133,42 @@ export function makeAgentTool(opts: {
         );
       }
 
-      const result = await Promise.race([
-        runSubagent(input.prompt, agentType, {
-          queryEngine,
-          modelRegistry,
-          toolRegistry,
-          modelSelector,
-          workingDir: context.working_dir,
-          eventCallback: context.event_callback as ((e: unknown) => void) | null,
-          customAgents: custom,
-        }),
-        new Promise<string>((_, reject) =>
-          setTimeout(() => reject(new Error("subagent timed out after 120s")), 120_000),
-        ),
-      ]);
-      return result;
+      // Inactivity timeout: if no event for 2 min, abort the subagent.
+      const IDLE_TIMEOUT = 120_000;
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      let timeoutReject: ((_: Error) => void) | null = null;
+      const timeoutPromise = new Promise<string>((_, reject) => { timeoutReject = reject; });
+
+      const resetIdle = () => {
+        clearTimeout(timeoutId);
+        timeoutId = setTimeout(() => {
+          timeoutReject?.(new Error("subagent timed out (no activity for 2 minutes)"));
+        }, IDLE_TIMEOUT);
+      };
+
+      const cb = context.event_callback as ((e: unknown) => void) | null;
+      const eventCallback = (e: unknown) => { resetIdle(); if (cb) return cb(e); };
+
+      resetIdle();
+      try {
+        const result = await Promise.race([
+          runSubagent(input.prompt, agentType, {
+            queryEngine,
+            modelRegistry,
+            toolRegistry,
+            modelSelector,
+            workingDir: context.working_dir,
+            eventCallback,
+            customAgents: custom,
+          }),
+          timeoutPromise,
+        ]);
+        return result;
+      } catch (e) {
+        return `Subagent error: ${(e as Error).message}`;
+      } finally {
+        clearTimeout(timeoutId);
+      }
     },
   });
 }
