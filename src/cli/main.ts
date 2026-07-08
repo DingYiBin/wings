@@ -1,9 +1,8 @@
 /**
  * Wings CLI — chat REPL + single-turn (run).
  *
- * Uses node:readline. Permission prompts use the same readline instance
- * via question(), which pauses the emitter and waits for the next line
- * event without conflict.
+ * Uses node:readline for input. Permission prompts use raw mode
+ * for arrow-key navigation (matching claude-code's permission dialog).
  */
 
 import { createInterface } from "node:readline";
@@ -20,24 +19,139 @@ const DIM = "\x1b[2m";
 function dim(s: string) { return `${DIM}${s}${RESET}`; }
 function trunc(s: string, n: number): string { return s.length <= n ? s : s.slice(0, n); }
 
-// -- Permission prompt (uses the main readline instance) --
+// -- Arrow-key permission prompt (raw mode) --
 
-function showPermPrompt(
-  toolName: string, toolInput: Record<string, unknown>, scope?: string,
-): void {
-  const desc = JSON.stringify(toolInput).slice(0, 120);
-  process.stdout.write(`\n${YELLOW}  🔒 ${BOLD}${toolName}${RESET} — ${dim(desc)}\n`);
-  if (scope) process.stdout.write(`  ${dim("scope: " + scope)}\n`);
-  process.stdout.write(`  ${dim("1.")} Yes\n`);
-  process.stdout.write(`  ${dim("2.")} Yes, and don't ask again\n`);
-  process.stdout.write(`  ${dim("3.")} No\n`);
+const HIDE_CURSOR = "\x1b[?25l";
+const SHOW_CURSOR = "\x1b[?25h";
+
+function buildPermOptions(toolName: string, scope?: string) {
+  return [
+    { value: "allow", label: "Yes" },
+    {
+      value: "allow_always",
+      label: scope
+        ? `Yes, and don't ask again for ${toolName}(${scope})`
+        : `Yes, and don't ask again for ${toolName}`,
+    },
+    { value: "deny", label: "No, tell Wings what to do differently" },
+  ];
 }
 
-function parsePermAnswer(answer: string): string {
-  const a = answer.trim().toLowerCase();
-  if (a === "1" || a === "y" || a === "yes") return "allow";
-  if (a === "2" || a === "a" || a === "always") return "allow_always";
-  return "deny";
+/** Render the permission dialog at the current cursor position. Returns lines rendered. */
+function renderPermDialog(
+  toolInput: Record<string, unknown>,
+  options: ReturnType<typeof buildPermOptions>,
+  selected: number,
+): number {
+  const desc = JSON.stringify(toolInput).slice(0, 76);
+  const lines: string[] = [];
+  lines.push(`\n  ${YELLOW}┌${RESET} Permission ${dim("─".repeat(62))}`);
+  lines.push(`  │ ${dim(desc)}`);
+  lines.push(`  │`);
+  for (let i = 0; i < options.length; i++) {
+    const isSel = i === selected;
+    lines.push(`  │ ${isSel ? `${BOLD}❯ ` : "  "}${isSel ? options[i]!.label : dim(options[i]!.label)}`);
+  }
+  lines.push(`  │`);
+  lines.push(`  │ ${dim("↑↓ navigate  ·  Enter select  ·  y=allow  n=deny  esc=deny")}`);
+  lines.push(`  ${dim("└" + "─".repeat(68))}`);
+  process.stdout.write(lines.join("\n"));
+  return lines.length;
+}
+
+/**
+ * Show an arrow-key-navigable permission prompt using raw stdin mode.
+ * Pauses readline, enables raw mode, renders the dialog, and returns
+ * the user's choice. Restores readline state on exit.
+ */
+async function promptPermissionRaw(
+  rl: { pause: () => void; resume: () => void; prompt: () => void },
+  toolName: string,
+  toolInput: Record<string, unknown>,
+  scope?: string,
+): Promise<string> {
+  const options = buildPermOptions(toolName, scope);
+  let selected = 0;
+
+  // Pause readline and take over stdin.
+  rl.pause();
+  process.stdin.setRawMode(true);
+  process.stdout.write(HIDE_CURSOR);
+
+  // Render initial dialog.
+  let renderedLines = renderPermDialog(toolInput, options, selected);
+
+  const result = await new Promise<string>((resolve) => {
+    const onData = (buf: Buffer) => {
+      const str = buf.toString("utf-8");
+
+      for (let i = 0; i < str.length; i++) {
+        const code = str.charCodeAt(i);
+
+        // Arrow up / k
+        if (str.slice(i).startsWith("\x1b[A") || str[i] === "k") {
+          if (str.slice(i).startsWith("\x1b[A")) i += 2;
+          selected = (selected - 1 + options.length) % options.length;
+          process.stdout.write(`\x1b[${renderedLines}A`);
+          renderedLines = renderPermDialog(toolInput, options, selected);
+          continue;
+        }
+        // Arrow down / j
+        if (str.slice(i).startsWith("\x1b[B") || str[i] === "j") {
+          if (str.slice(i).startsWith("\x1b[B")) i += 2;
+          selected = (selected + 1) % options.length;
+          process.stdout.write(`\x1b[${renderedLines}A`);
+          renderedLines = renderPermDialog(toolInput, options, selected);
+          continue;
+        }
+        // Enter
+        if (code === 0x0d) {
+          cleanup();
+          resolve(options[selected]!.value);
+          return;
+        }
+        // y = allow
+        if (str[i] === "y" || str[i] === "Y") {
+          cleanup();
+          resolve("allow");
+          return;
+        }
+        // n = deny
+        if (str[i] === "n" || str[i] === "N") {
+          cleanup();
+          resolve("deny");
+          return;
+        }
+        // Esc / Ctrl+C = deny
+        if (code === 0x1b || code === 0x03) {
+          cleanup();
+          resolve("deny");
+          return;
+        }
+        // 1/2/3 number keys
+        if (code >= 0x31 && code <= 0x33) {
+          const idx = code - 0x31;
+          cleanup();
+          resolve(options[idx]!.value);
+          return;
+        }
+      }
+    };
+
+    const cleanup = () => {
+      process.stdin.removeListener("data", onData);
+      process.stdin.setRawMode(false);
+      process.stdout.write(SHOW_CURSOR);
+      // Clear the dialog.
+      process.stdout.write(`\x1b[${renderedLines}A\x1b[J`);
+      rl.resume();
+      rl.prompt();
+    };
+
+    process.stdin.on("data", onData);
+  });
+
+  return result;
 }
 
 // -- Single-turn --
@@ -55,11 +169,10 @@ export async function runSingle(
       case "tool_use": process.stdout.write(`${dim("\n  ⚙")}  ${CYAN}${event.name}${RESET} ${dim(trunc(JSON.stringify(event.input), 100))}\n`); break;
       case "tool_result": if ((event as any).is_error) process.stdout.write(`${dim("  ↳")}  ${RED}error${RESET} ${dim(trunc((event as any).content, 120))}\n`); break;
       case "permission_request": {
-        showPermPrompt(event.tool_name, event.tool_input, event.scope);
-        const rl = createInterface({ input: process.stdin, output: process.stdout });
-        const answer = await new Promise<string>((r) => rl.question(`  ${GREEN}>${RESET} `, (a) => r(a)));
-        rl.close();
-        loop.setPermissionResponse(parsePermAnswer(answer));
+        // runSingle has no rl — create a temporary one.
+        const tmpRl = createInterface({ input: process.stdin, output: process.stdout });
+        loop.setPermissionResponse(await promptPermissionRaw(tmpRl, event.tool_name, event.tool_input, event.scope));
+        tmpRl.close();
         break;
       }
     }
@@ -110,12 +223,9 @@ export async function runChat(
             if (tr.is_error) console.log(`${dim("  ↳")}  ${RED}error${RESET} ${dim(trunc(tr.content, 120))}`);
             break;
           }
-          case "permission_request": {
-            showPermPrompt(event.tool_name, event.tool_input, event.scope);
-            const answer = await ask(`  ${GREEN}>${RESET} `);
-            loop.setPermissionResponse(parsePermAnswer(answer));
+          case "permission_request":
+            loop.setPermissionResponse(await promptPermissionRaw(rl, event.tool_name, event.tool_input, event.scope));
             break;
-          }
           case "subagent_start": console.log(`\n${dim("  ┌ subagent")} ${CYAN}${(event as any).agent_type}${RESET} ${dim((event as any).description)}`); break;
           case "subagent_end": console.log(`${dim("  └ done")}`); break;
         }
