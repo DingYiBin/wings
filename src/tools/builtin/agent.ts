@@ -133,15 +133,21 @@ export function makeAgentTool(opts: {
         );
       }
 
-      return await runSubagent(input.prompt, agentType, {
-        queryEngine,
-        modelRegistry,
-        toolRegistry,
-        modelSelector,
-        workingDir: context.working_dir,
-        eventCallback: context.event_callback as ((e: unknown) => void) | null,
-        customAgents: custom,
-      });
+      const result = await Promise.race([
+        runSubagent(input.prompt, agentType, {
+          queryEngine,
+          modelRegistry,
+          toolRegistry,
+          modelSelector,
+          workingDir: context.working_dir,
+          eventCallback: context.event_callback as ((e: unknown) => void) | null,
+          customAgents: custom,
+        }),
+        new Promise<string>((_, reject) =>
+          setTimeout(() => reject(new Error("subagent timed out after 120s")), 120_000),
+        ),
+      ]);
+      return result;
     },
   });
 }

@@ -333,10 +333,18 @@ export class AgentLoop {
           cycleToolCalls.push(block.name);
           turn.tool_calls.push(block.name);
 
-          // Agent tool: set up subagent event capture.
+          // Agent tool: set up subagent event capture with real-time yield.
           const subagentEvents: StreamEvent[] = [];
           if (block.name === "agent") {
-            const capture = (evt: unknown) => subagentEvents.push(evt as StreamEvent);
+            const capture = (evt: unknown) => {
+              const e = evt as StreamEvent;
+              subagentEvents.push(e);
+              // Write text deltas directly to stdout for real-time progress
+              // in raw mode REPL. Also fires for subagent_start/end signals.
+              if (e.type === "text_delta") {
+                try { process.stdout.write((e as any).text ?? ""); } catch {}
+              }
+            };
             context.tool_context.event_callback = capture;
             const saStart: SubAgentStart = {
               type: "subagent_start",
