@@ -228,7 +228,7 @@ export async function runChat(
         switch (event.type) {
           case "text_delta": write((event as any).text); break;
           case "tool_use": write(`${dim("\r\n  ⚙")}  ${CYAN}${event.name}${RESET} ${dim(trunc(JSON.stringify(event.input), 100))}\r\n`); break;
-          case "tool_result": { const tr = event as any; if (tr.is_error) write(`${dim("  ↳")}  ${RED}error${RESET} ${dim(trunc(tr.content, 120))}\r\n`); break; }
+          case "tool_result": { const tr = event as any; const len = (tr.content ?? "").length; if (tr.is_error) write(`${dim("  ↳")}  ${RED}error${RESET} ${dim(trunc(tr.content, 120))}\r\n`); else write(`${dim("  ↳")}  ${dim(len + " chars")}\r\n`); break; }
           case "permission_request":
             loop.setPermissionResponse(await promptPermission(event.tool_name, event.tool_input, event.scope));
             break;
