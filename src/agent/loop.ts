@@ -113,6 +113,9 @@ export class AgentLoop {
 
   /** Set the user's response to a pending permission request. */
   setPermissionResponse(response: string): void {
+    if (process.env["WINGS_DEBUG"] === "1") {
+      process.stderr.write(`[LOOP] setPermissionResponse(${response}) _permResolve=${!!this._permResolve}\n`);
+    }
     this._permResolve?.(response);
   }
 
@@ -307,9 +310,15 @@ export class AgentLoop {
             yield pr;
 
             // Wait for user response (Promise resolver).
+            if (process.env["WINGS_DEBUG"] === "1") {
+              process.stderr.write("[LOOP] awaiting permission response...\n");
+            }
             const response = await new Promise<string>((resolve) => {
               this._permResolve = resolve;
             });
+            if (process.env["WINGS_DEBUG"] === "1") {
+              process.stderr.write(`[LOOP] permission resolved: ${response}\n`);
+            }
 
             if (response === "allow_always") {
               (this._permissionPipeline as any)._rules.addAllow(

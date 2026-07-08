@@ -23,6 +23,14 @@ function trunc(s: string, n: number): string { return s.length <= n ? s : s.slic
 const encoder = new TextEncoder();
 const write = (s: string) => { process.stdout.write(encoder.encode(s)); };
 
+// Debug logger — writes to stderr so it doesn't interfere with ANSI rendering.
+const DEBUG = process.env["WINGS_DEBUG"] === "1";
+function dbg(tag: string, ...args: unknown[]) {
+  if (!DEBUG) return;
+  const ts = new Date().toISOString().slice(11, 23);
+  process.stderr.write(encoder.encode(`[${ts}] ${tag} ${args.map(String).join(" ")}\n`));
+}
+
 // -- Raw stdin helpers --
 
 function enterRawMode(): boolean {
@@ -83,6 +91,7 @@ function renderPerm(input: Record<string, unknown>, options: typeof permOptions,
 }
 
 function handlePermInput(key: string) {
+  dbg("PERM-KEY", JSON.stringify(key));
   const code = key.charCodeAt(0);
   if (key === "\x1b[A" || key === "k") {
     permSelected = (permSelected - 1 + permOptions.length) % permOptions.length;
@@ -94,15 +103,21 @@ function handlePermInput(key: string) {
     permRendered = renderPerm(JSON.parse(permInput), permOptions, permSelected);
   } else if (code === 0x0d) {
     const r = permResolve; permResolve = null;
-    r!(permOptions[permSelected]!.value);
+    const val = permOptions[permSelected]!.value;
+    dbg("PERM-RESOLVE", "enter", val);
+    r!(val);
   } else if (key === "y" || key === "Y") {
     const r = permResolve; permResolve = null;
+    dbg("PERM-RESOLVE", "y", "allow");
     r!("allow");
   } else if (key === "n" || key === "N" || code === 0x1b || code === 0x03) {
     const r = permResolve; permResolve = null;
+    dbg("PERM-RESOLVE", "n/esc", "deny");
     r!("deny");
   } else if (code >= 0x31 && code <= 0x33) {
     const r = permResolve; permResolve = null;
+    const val = permOptions[code - 0x31]!.value;
+    dbg("PERM-RESOLVE", "num", val);
     r!(permOptions[code - 0x31]!.value);
   }
 }
@@ -172,6 +187,7 @@ export async function runChat(
   const doTurn = async (line: string) => {
     const text = line.trim();
     if (!text) { write(PROMPT); return; }
+    dbg("TURN", "start", JSON.stringify(text.slice(0, 40)));
     running = true;
 
     if (text.startsWith("/")) {
@@ -183,26 +199,29 @@ export async function runChat(
 
     try {
       for await (const event of loop.run(text, ctx)) {
+        dbg("EVENT", event.type);
         switch (event.type) {
           case "text_delta": write((event as any).text); break;
           case "tool_use": write(`${dim("\r\n  ⚙")}  ${CYAN}${event.name}${RESET} ${dim(trunc(JSON.stringify(event.input), 100))}\r\n`); break;
           case "tool_result": {
             const tr = event as any;
+            dbg("EVENT", "tool_result isError=", tr.is_error, "len=", (tr.content ?? "").length);
             if (tr.is_error) write(`${dim("  ↳")}  ${RED}error${RESET} ${dim(trunc(tr.content, 120))}\r\n`);
             break;
           }
           case "permission_request": {
-            // Clear current line and show permission dialog.
+            dbg("PERM", "showing dialog for", event.tool_name);
             write(`\x1b[2K\r`);
             const inputJson = JSON.stringify(event.tool_input);
             permInput = inputJson;
             permOptions = buildPermOptions(event.tool_name, event.scope);
             permSelected = 0;
             permRendered = renderPerm(event.tool_input, permOptions, 0);
-            // Wait for user choice.
+            dbg("PERM", "waiting for user input...");
             const response = await new Promise<string>((r) => { permResolve = r; });
+            dbg("PERM", "got response", response);
             loop.setPermissionResponse(response);
-            // Clear dialog and restore prompt.
+            dbg("PERM", "setPermissionResponse done");
             write(`\x1b[${permRendered}A\x1b[J\r\n${PROMPT}`);
             break;
           }
@@ -210,12 +229,15 @@ export async function runChat(
           case "subagent_end": write(`${dim("  └ done")}\r\n`); break;
         }
       }
+      dbg("TURN", "agent loop ended");
       write("\r\n");
     } catch (e) {
+      dbg("TURN", "error", (e as Error).message);
       write(`${RED}Error:${RESET} ${(e as Error).message}\r\n`);
     }
     write(PROMPT);
     running = false;
+    dbg("TURN", "done");
   };
 
   // Single data handler: routes to permission or line editing.
@@ -224,16 +246,12 @@ export async function runChat(
     leftover = "";
 
     if (permResolve) {
-      // Permission mode: check for arrow-key sequences.
-      // Try to match complete sequences first.
+      dbg("DATA", "perm-mode", JSON.stringify(rawStr.slice(0,20)));
       let i = 0;
       while (i < rawStr.length) {
         const rest = rawStr.slice(i);
-        // Arrow up: ESC [ A
         if (rest.startsWith("\x1b[A")) { handlePermInput("\x1b[A"); i += 3; continue; }
-        // Arrow down: ESC [ B
         if (rest.startsWith("\x1b[B")) { handlePermInput("\x1b[B"); i += 3; continue; }
-        // Single char.
         handlePermInput(rest[0]!);
         i++;
       }
