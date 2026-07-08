@@ -91,7 +91,7 @@ export async function createSession(
   const userSkillsDir = join(homedir(), ".wings", "skills");
   const projectSkillsDir = join(wd, ".wings", "skills");
   // builtin skills — look relative to this file's package.
-  const builtinDir = join(import.meta.dir, "..", "..", "skills", "builtin");
+  const builtinDir = join(import.meta.dirname!, "..", "..", "skills", "builtin");
   const loader = new SkillLoader({
     userDir: userSkillsDir,
     projectDir: projectSkillsDir,

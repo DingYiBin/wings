@@ -1,11 +1,81 @@
 /** Fast file pattern matching. */
 
-import { existsSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { isAbsolute, join, relative, sep } from "node:path";
 
 import { z } from "zod";
 
 import { buildTool } from "../types.ts";
+
+/** Convert a glob pattern to a regex. Supports *, **, ?, {a,b}, [abc]. */
+function globToRegex(pattern: string): RegExp {
+  // Normalize separators.
+  pattern = pattern.replace(/\\/g, "/");
+  let rx = "^";
+  let i = 0;
+  while (i < pattern.length) {
+    const c = pattern[i]!;
+    if (c === "*") {
+      if (pattern[i + 1] === "*") {
+        // ** matches any path
+        if (pattern[i + 2] === "/" || i + 2 >= pattern.length) {
+          rx += ".*";
+          i += pattern[i + 2] === "/" ? 3 : 2;
+          continue;
+        }
+      }
+      rx += "[^/]*";
+    } else if (c === "?") {
+      rx += "[^/]";
+    } else if (c === "{") {
+      const end = pattern.indexOf("}", i);
+      if (end === -1) { rx += "\\{"; }
+      else {
+        const opts = pattern.slice(i + 1, end).split(",").map((s) => s.trim());
+        rx += `(?:${opts.join("|")})`;
+        i = end;
+      }
+    } else if (c === "[") {
+      const end = pattern.indexOf("]", i);
+      if (end === -1) { rx += "\\["; }
+      else { rx += pattern.slice(i, end + 1); i = end; }
+    } else if (".^$\\+()|".includes(c)) {
+      rx += "\\" + c;
+    } else {
+      rx += c;
+    }
+    i++;
+  }
+  rx += "$";
+  return new RegExp(rx);
+}
+
+/** Walk directory tree recursively and return files matching the glob pattern. */
+function walkAndMatch(base: string, pattern: string): string[] {
+  const regex = globToRegex(pattern);
+  const results: string[] = [];
+
+  function walk(dir: string) {
+    let entries: import("node:fs").Dirent[];
+    try { entries = readdirSync(dir, { withFileTypes: true }) as any; }
+    catch { return; }
+    for (const e of entries) {
+      const name: string = e.name as any;
+      if (name.startsWith(".")) continue;
+      const full = join(dir, name);
+      if (e.isDirectory()) {
+        walk(full);
+      } else if (e.isFile()) {
+        const rel = relative(base, full).replace(/\\/g, "/");
+        if (regex.test(rel)) {
+          results.push(full);
+        }
+      }
+    }
+  }
+  walk(base);
+  return results.sort();
+}
 
 export const globTool = buildTool({
   name: "glob",
@@ -23,14 +93,8 @@ export const globTool = buildTool({
       return `Error: directory not found: ${base}`;
     }
 
-    // Use Bun's Glob for matching.
-    const Glob = (await import("bun")).Glob;
-    const g = new Glob(input.pattern);
-    const matches: string[] = [];
-    for await (const match of g.scan({ cwd: base, onlyFiles: true })) {
-      matches.push(match);
-    }
-    matches.sort();
+    // Walk directory tree and match against glob pattern.
+    const matches = walkAndMatch(base, input.pattern);
 
     if (matches.length === 0) {
       return `No files matched '${input.pattern}' in ${base}`;

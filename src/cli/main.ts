@@ -1,13 +1,10 @@
 /**
- * Wings CLI — chat + run commands.
- *
- * Permission prompts use raw stdin keypress detection (single key y/n/a,
- * no Enter needed), matching claude-code's permission dialog behavior.
+ * Wings CLI — single-turn (run) command. Uses readline for permission prompts.
+ * Interactive chat REPL is in ink-app.tsx.
  */
 
 import { createInterface } from "node:readline";
 import { createSession, makeAgentContext } from "./bootstrap.ts";
-import { promptPermission } from "./permission.tsx";
 
 const GREEN = "\x1b[32m";
 const CYAN = "\x1b[36m";
@@ -22,6 +19,25 @@ function dim(s: string) { return `${DIM}${s}${RESET}`; }
 /** Truncate a string for display. */
 function trunc(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n) + dim("…");
+}
+
+/** Simple permission prompt for single-turn mode. */
+async function promptPermission(
+  toolName: string, toolInput: Record<string, unknown>, scope?: string,
+): Promise<string> {
+  const desc = JSON.stringify(toolInput).slice(0, 120);
+  console.log(`\n${YELLOW}  🔒 ${BOLD}${toolName}${RESET} — ${dim(desc)}`);
+  if (scope) console.log(`  ${dim("scope: " + scope)}`);
+  console.log(`  ${dim("1.")} Yes`);
+  console.log(`  ${dim("2.")} Yes, and don't ask again`);
+  console.log(`  ${dim("3.")} No`);
+
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await new Promise<string>((r) => rl.question(`  ${GREEN}>${RESET} `, (a) => r(a.trim().toLowerCase())));
+  rl.close();
+  if (answer === "1" || answer === "y" || answer === "yes") return "allow";
+  if (answer === "2" || answer === "a" || answer === "always") return "allow_always";
+  return "deny";
 }
 
 /** Run a single-turn request. */

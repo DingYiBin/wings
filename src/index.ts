@@ -1,12 +1,11 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S npx tsx
 /**
  * Wings CLI entry point.
  *
  * Usage:
- *   wings chat              # interactive REPL
- *   wings chat --log        # with logging to .wings/logs/
+ *   wings chat              # interactive REPL (Ink if TTY, readline fallback)
  *   wings run "prompt"      # single turn
- *   wings run "prompt" --log
+ *   wings chat --log        # with logging to .wings/logs/
  */
 
 import { runChat, runSingle } from "./cli/main.ts";
@@ -14,36 +13,41 @@ import { TurnLogger } from "./cli/logging.ts";
 
 const args = process.argv.slice(2);
 const command = args[0];
-
-// Parse flags from remaining args (after command).
 const rest = args.slice(1);
+
 const hasLog = rest.includes("--log");
 const modelIdx = rest.indexOf("-m") !== -1 ? rest.indexOf("-m") : rest.indexOf("--model");
 const model = modelIdx !== -1 ? rest[modelIdx + 1] : null;
 
-function makeLogger(workingDir?: string): TurnLogger | null {
-  return hasLog ? new TurnLogger(workingDir ?? process.cwd()) : null;
+function hasTty(): boolean {
+  return process.stdin.isTTY === true && typeof process.stdin.setRawMode === "function";
 }
 
 if (!command || command === "chat") {
-  const logger = makeLogger();
+  const logger = hasLog ? new TurnLogger(process.cwd()) : null;
   if (logger) console.log(`Logging to ${logger.path}`);
-  await runChat({ model, logger });
+
+  if (hasTty()) {
+    // Ink REPL (Node.js with real TTY).
+    const { runInkApp } = await import("./cli/ink-app.tsx");
+    await runInkApp();
+  } else {
+    // Fallback: readline REPL.
+    await runChat({ model, logger });
+  }
 } else if (command === "run") {
-  // Extract prompt: args after "run", minus flags.
   const prompt = rest
     .filter((a, i) => {
-      if (a === "--log") return false;
-      if (a === "-m" || a === "--model") return false;
+      if (a === "--log" || a === "-m" || a === "--model") return false;
       if (i > 0 && (rest[i - 1] === "-m" || rest[i - 1] === "--model")) return false;
       return true;
     })
     .join(" ");
   if (!prompt.trim()) {
-    console.error("Usage: wings run [-m model] [--log] \"prompt\"");
+    console.error("Usage: wings run [-m model] \"prompt\"");
     process.exit(1);
   }
-  const logger = makeLogger();
+  const logger = hasLog ? new TurnLogger(process.cwd()) : null;
   if (logger) console.log(`Logging to ${logger.path}`);
   await runSingle(prompt.trim(), { model, logger });
 } else {

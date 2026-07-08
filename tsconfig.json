@@ -3,6 +3,7 @@
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
     "jsx": "react-jsx",
     "strict": true,
     "esModuleInterop": true,
@@ -15,13 +16,12 @@
     "paths": {
       "src/*": ["./src/*"]
     },
-    "types": ["bun-types"],
+    "types": ["node"],
     "lib": ["ESNext"],
-    "allowImportingTsExtensions": true,
     "noEmit": true,
     "verbatimModuleSyntax": false,
     "isolatedModules": true
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts"],
-  "exclude": ["node_modules", "dist", "src/wings", "tests/__pycache__"]
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "exclude": ["node_modules", "dist", "src/wings", "tests"]
 }
