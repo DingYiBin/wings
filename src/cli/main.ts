@@ -96,6 +96,7 @@ export async function runChat(
       handleCommand(text, loop, poolMgr, config);
       writeOut(PROMPT);
       running = false;
+      setTimeout(poll, 10);
       return;
     }
 
@@ -124,6 +125,7 @@ export async function runChat(
     }
     writeOut(PROMPT);
     running = false;
+    setTimeout(poll, 10);
   };
 
   // Raw stdin read loop — terminal handles IME composition.
