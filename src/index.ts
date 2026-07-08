@@ -29,10 +29,16 @@ if (!command || command === "chat") {
 
   if (hasTty()) {
     // Ink REPL (Node.js with real TTY).
-    const { runInkApp } = await import("./cli/ink-app.tsx");
-    await runInkApp();
+    try {
+      const { runInkApp } = await import("./cli/ink-app.tsx");
+      await runInkApp();
+    } catch (e) {
+      if (logger) console.log(`Logging to ${logger.path}`);
+      // Fallback to raw-stdin REPL on Ink failure.
+      await runChat({ model, logger });
+    }
   } else {
-    // Fallback: readline REPL.
+    // No TTY: use raw-stdin REPL.
     await runChat({ model, logger });
   }
 } else if (command === "run") {

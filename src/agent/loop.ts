@@ -222,14 +222,15 @@ export class AgentLoop {
         }
       }
 
-      // Log first response cycle.
-      if (this._logger && isFirstCycle) {
+      // Log every API cycle.
+      if (this._logger) {
         let sysPrompt = "";
-        const first = this._messages[0];
-        if (first?.role === "system") {
-          for (const b of first.content) {
-            if (b.type === "text") sysPrompt = b.text;
-            break;
+        if (isFirstCycle) {
+          const first = this._messages[0];
+          if (first?.role === "system") {
+            for (const b of first.content) {
+              if (b.type === "text") { sysPrompt = b.text; break; }
+            }
           }
         }
         const cycleTools = toolUseBlocks.map((b) => b.name);
@@ -237,7 +238,7 @@ export class AgentLoop {
           model,
           context: context.task_type,
           message_count: this._messages.length,
-          input_summary: userInput,
+          input_summary: isFirstCycle ? userInput : `[tool results: ${cycleTools.join(", ") || "none"}]`,
           system_prompt: sysPrompt,
           response: { content: [...textBlocks, ...toolUseBlocks] },
           tool_calls: cycleTools,
