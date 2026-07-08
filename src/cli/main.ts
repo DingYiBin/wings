@@ -5,8 +5,17 @@
  * Permission prompts read directly from /dev/tty for reliability.
  */
 
-import { openSync, readSync, closeSync } from "node:fs";
+import { openSync, readSync, closeSync, appendFileSync } from "node:fs";
 import { createSession, makeAgentContext } from "./bootstrap.ts";
+
+// -- Debug log to file (survives terminal corruption) --
+const DLOG = process.env["WINGS_DEBUG"]
+  ? (tag: string, ...args: unknown[]) => {
+      const ts = new Date().toISOString().slice(11, 23);
+      const msg = `[${ts}] ${tag} ${args.map(String).join(" ")}\n`;
+      try { appendFileSync("/tmp/wings-debug.log", msg); } catch {}
+    }
+  : (..._: unknown[]) => {};
 
 const GREEN = "\x1b[32m";
 const CYAN = "\x1b[36m";
@@ -99,14 +108,15 @@ async function promptPermission(
   toolInput: Record<string, unknown>,
   scope?: string,
 ): Promise<string> {
+  DLOG("PERM-START", toolName);
   const options = buildPermOptions(toolName, scope);
   let selected = 0;
 
-  // Try to open /dev/tty for raw keyboard reading.
   let ttyFd = -1;
-  try { ttyFd = openSync("/dev/tty", "r"); } catch { ttyFd = -1; }
+  try { ttyFd = openSync("/dev/tty", "r"); DLOG("PERM-TTY", "opened fd=" + ttyFd); } catch { ttyFd = -1; }
 
   if (ttyFd < 0) {
+    DLOG("PERM-FALLBACK", "no /dev/tty");
     // Fallback: use readline.
     const { createInterface } = await import("node:readline");
     const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -150,15 +160,10 @@ async function promptPermission(
           i += 2; continue;
         }
         // Enter
-        if (code === 0x0d) { closeSync(ttyFd); write(SHOW_CURSOR); write(`\x1b[${rendered}A\x1b[J`); return options[selected]!.value; }
-        // y
-        if (ch === "y" || ch === "Y") { closeSync(ttyFd); write(SHOW_CURSOR); write(`\x1b[${rendered}A\x1b[J`); return "allow"; }
-        // n / Esc / Ctrl+C
-        if (ch === "n" || ch === "N" || code === 0x1b || code === 0x03) {
-          closeSync(ttyFd); write(SHOW_CURSOR); write(`\x1b[${rendered}A\x1b[J`); return "deny";
-        }
-        // 1/2/3
-        if (code >= 0x31 && code <= 0x33) { closeSync(ttyFd); write(SHOW_CURSOR); write(`\x1b[${rendered}A\x1b[J`); return options[code - 0x31]!.value; }
+        if (code === 0x0d) { const val = options[selected]!.value; DLOG("PERM-CHOICE", "enter ->", val); closeSync(ttyFd); write(SHOW_CURSOR); write(`\x1b[${rendered}A\x1b[J`); return val; }
+        if (ch === "y" || ch === "Y") { DLOG("PERM-CHOICE", "y -> allow"); closeSync(ttyFd); write(SHOW_CURSOR); write(`\x1b[${rendered}A\x1b[J`); return "allow"; }
+        if (ch === "n" || ch === "N" || code === 0x1b || code === 0x03) { DLOG("PERM-CHOICE", "n/esc -> deny"); closeSync(ttyFd); write(SHOW_CURSOR); write(`\x1b[${rendered}A\x1b[J`); return "deny"; }
+        if (code >= 0x31 && code <= 0x33) { const val = options[code - 0x31]!.value; DLOG("PERM-CHOICE", "num ->", val); closeSync(ttyFd); write(SHOW_CURSOR); write(`\x1b[${rendered}A\x1b[J`); return val; }
         // j / k
         if (ch === "j") { selected = (selected + 1) % options.length; write(`\x1b[${rendered}A`); rendered = renderPermDialog(toolInput, options, selected); }
         if (ch === "k") { selected = (selected - 1 + options.length) % options.length; write(`\x1b[${rendered}A`); rendered = renderPermDialog(toolInput, options, selected); }
@@ -230,7 +235,11 @@ export async function runChat(
           case "tool_use": write(`${dim("\r\n  ⚙")}  ${CYAN}${event.name}${RESET} ${dim(trunc(JSON.stringify(event.input), 100))}\r\n`); break;
           case "tool_result": { const tr = event as any; const len = (tr.content ?? "").length; if (tr.is_error) write(`${dim("  ↳")}  ${RED}error${RESET} ${dim(trunc(tr.content, 120))}\r\n`); else write(`${dim("  ↳")}  ${dim(len + " chars")}\r\n`); break; }
           case "permission_request":
-            loop.setPermissionResponse(await promptPermission(event.tool_name, event.tool_input, event.scope));
+            DLOG("DO-PERM", "calling promptPermission...");
+            const permResp = await promptPermission(event.tool_name, event.tool_input, event.scope);
+            DLOG("DO-PERM", "got", permResp, "calling setPermissionResponse...");
+            loop.setPermissionResponse(permResp);
+            DLOG("DO-PERM", "setPermissionResponse returned, continuing loop...");
             break;
           case "subagent_start": write(`\r\n${dim("  ┌ subagent")} ${CYAN}${(event as any).agent_type}${RESET} ${dim((event as any).description)}\r\n`); break;
           case "subagent_end": write(`${dim("  └ done")}\r\n`); break;

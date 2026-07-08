@@ -10,6 +10,16 @@
  * draw.
  */
 
+import { appendFileSync } from "node:fs";
+
+// Debug logger to file.
+const DLOG = process.env["WINGS_DEBUG"]
+  ? (tag: string, ...args: unknown[]) => {
+      const ts = new Date().toISOString().slice(11, 23);
+      try { appendFileSync("/tmp/wings-debug.log", `[${ts}] ${tag} ${args.map(String).join(" ")}\n`); } catch {}
+    }
+  : (..._: unknown[]) => {};
+
 import { HandoffDetector, makeTurnRecord, type TurnRecord } from "./handoff.ts";
 import type {
   Message,
@@ -113,9 +123,7 @@ export class AgentLoop {
 
   /** Set the user's response to a pending permission request. */
   setPermissionResponse(response: string): void {
-    if (process.env["WINGS_DEBUG"] === "1") {
-      process.stderr.write(`[LOOP] setPermissionResponse(${response}) _permResolve=${!!this._permResolve}\n`);
-    }
+    DLOG("LOOP-SETPERM", response, "_permResolve=" + !!this._permResolve);
     this._permResolve?.(response);
   }
 
@@ -310,15 +318,11 @@ export class AgentLoop {
             yield pr;
 
             // Wait for user response (Promise resolver).
-            if (process.env["WINGS_DEBUG"] === "1") {
-              process.stderr.write("[LOOP] awaiting permission response...\n");
-            }
+            DLOG("LOOP-AWAIT", "setting up permResolve, waiting...");
             const response = await new Promise<string>((resolve) => {
               this._permResolve = resolve;
             });
-            if (process.env["WINGS_DEBUG"] === "1") {
-              process.stderr.write(`[LOOP] permission resolved: ${response}\n`);
-            }
+            DLOG("LOOP-AWAIT", "resolved:", response, "continuing tool exec...");
 
             if (response === "allow_always") {
               (this._permissionPipeline as any)._rules.addAllow(
@@ -365,10 +369,12 @@ export class AgentLoop {
 
           let toolResult: import("../tools/types.ts").ToolResult;
           try {
+            DLOG("LOOP-EXEC", "executing tool:", block.name);
             toolResult = await (tool as unknown as import("../tools/types.ts").Tool).call(
               block.input,
               context.tool_context,
             );
+            DLOG("LOOP-EXEC", "tool done:", block.name);
           } catch (exc) {
             const tr: ToolResultBlock = {
               type: "tool_result",
