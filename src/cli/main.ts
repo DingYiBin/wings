@@ -183,12 +183,6 @@ export async function runChat(
 
     try {
       for await (const event of loop.run(text, ctx)) {
-        if (permResolve) {
-          // We're inside a permission prompt — handle it in the data handler.
-          // The loop.waitPermission() should be handled by the agent loop.
-          // Events during permission are ignored (we only show the dialog).
-          continue;
-        }
         switch (event.type) {
           case "text_delta": write((event as any).text); break;
           case "tool_use": write(`${dim("\r\n  ⚙")}  ${CYAN}${event.name}${RESET} ${dim(trunc(JSON.stringify(event.input), 100))}\r\n`); break;
