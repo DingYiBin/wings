@@ -1,11 +1,11 @@
-#!/usr/bin/env -S npx tsx
+#!/usr/bin/env node
 /**
  * Wings CLI entry point.
  *
  * Usage:
- *   wings chat              # interactive REPL (Ink if TTY, readline fallback)
- *   wings run "prompt"      # single turn
- *   wings chat --log        # with logging to .wings/logs/
+ *   node --import tsx src/index.ts chat          # interactive REPL
+ *   node --import tsx src/index.ts run "prompt"  # single turn
+ *   node --import tsx src/index.ts chat --log    # with logging to .wings/logs/
  */
 
 import { runChat, runSingle } from "./cli/main.ts";
@@ -19,28 +19,10 @@ const hasLog = rest.includes("--log");
 const modelIdx = rest.indexOf("-m") !== -1 ? rest.indexOf("-m") : rest.indexOf("--model");
 const model = modelIdx !== -1 ? rest[modelIdx + 1] : null;
 
-function hasTty(): boolean {
-  return process.stdin.isTTY === true && typeof process.stdin.setRawMode === "function";
-}
-
 if (!command || command === "chat") {
   const logger = hasLog ? new TurnLogger(process.cwd()) : null;
   if (logger) console.log(`Logging to ${logger.path}`);
-
-  if (hasTty()) {
-    // Ink REPL (Node.js with real TTY).
-    try {
-      const { runInkApp } = await import("./cli/ink-app.tsx");
-      await runInkApp();
-    } catch (e) {
-      if (logger) console.log(`Logging to ${logger.path}`);
-      // Fallback to raw-stdin REPL on Ink failure.
-      await runChat({ model, logger });
-    }
-  } else {
-    // No TTY: use raw-stdin REPL.
-    await runChat({ model, logger });
-  }
+  await runChat({ model, logger });
 } else if (command === "run") {
   const prompt = rest
     .filter((a, i) => {
@@ -50,7 +32,7 @@ if (!command || command === "chat") {
     })
     .join(" ");
   if (!prompt.trim()) {
-    console.error("Usage: wings run [-m model] \"prompt\"");
+    console.error("Usage: node --import tsx src/index.ts run [-m model] \"prompt\"");
     process.exit(1);
   }
   const logger = hasLog ? new TurnLogger(process.cwd()) : null;
@@ -58,6 +40,6 @@ if (!command || command === "chat") {
   await runSingle(prompt.trim(), { model, logger });
 } else {
   console.error(`Unknown command: ${command}`);
-  console.error("Usage: wings chat | wings run \"prompt\"");
+  console.error("Usage: node --import tsx src/index.ts chat | run \"prompt\"");
   process.exit(1);
 }
