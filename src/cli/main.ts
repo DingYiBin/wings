@@ -8,6 +8,7 @@
 import { openSync, readSync, closeSync, appendFileSync } from "node:fs";
 import { createSession, makeAgentContext } from "./bootstrap.ts";
 import { shouldExtractMemory, recordExtraction, extractSessionMemory } from "../services/session-memory.ts";
+import { activeChild } from "../tools/builtin/bash.ts";
 
 // -- Debug log to file (survives terminal corruption) --
 const DLOG = process.env["WINGS_DEBUG"]
@@ -345,7 +346,11 @@ export async function runChat(
   process.stdin.on("data", (data: Buffer) => {
     if (running) {
       const raw = data.toString("utf-8");
-      if (raw === "\x1b" || raw === "\x03") { (loop as any)._aborted = true; }
+      if (raw === "\x1b" || raw === "\x03" ||
+          (raw.includes("\x1b") && !raw.includes("\x1b[") && !raw.includes("\x1bO"))) {
+        (loop as any)._aborted = true;
+        if (activeChild) { activeChild.kill("SIGKILL"); }
+      }
       return;
     }
     const rawStr = data.toString("utf-8");

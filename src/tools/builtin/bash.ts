@@ -1,10 +1,13 @@
 /** Execute shell commands. */
 
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 
 import { z } from "zod";
 
 import { buildTool } from "../types.ts";
+
+// Track the active child process so ESC can kill it.
+export let activeChild: ChildProcess | null = null;
 
 // Commands/patterns that are always denied
 const DENY_PATTERNS: RegExp[] = [
@@ -47,6 +50,7 @@ function runShell(cmd: string, cwd: string, env: Record<string, string> | undefi
       cwd,
       env: env ? { ...process.env, ...env } : process.env,
     });
+    activeChild = child;
     let stdout = "";
     let stderr = "";
     let timedOut = false;
@@ -56,12 +60,13 @@ function runShell(cmd: string, cwd: string, env: Record<string, string> | undefi
     }, timeoutMs);
     child.stdout?.on("data", (d) => { stdout += d; });
     child.stderr?.on("data", (d) => { stderr += d; });
+    const cleanup = () => { clearTimeout(timer); activeChild = null; };
     child.on("close", (code) => {
-      clearTimeout(timer);
+      cleanup();
       resolve({ stdout, stderr, code, timedOut });
     });
     child.on("error", (err) => {
-      clearTimeout(timer);
+      cleanup();
       resolve({ stdout, stderr: stderr || err.message, code: null, timedOut });
     });
   });
