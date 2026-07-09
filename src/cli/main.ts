@@ -9,6 +9,7 @@ import { openSync, readSync, closeSync, appendFileSync, existsSync, readFileSync
 import { join as pathJoin } from "node:path";
 import { homedir } from "node:os";
 import { createSession, makeAgentContext } from "./bootstrap.ts";
+import type { SkillSpec } from "../skills/types.ts";
 import { shouldExtractMemory, recordExtraction, extractSessionMemory } from "../services/session-memory.ts";
 import { activeChild } from "../tools/builtin/bash.ts";
 
@@ -312,11 +313,38 @@ export async function runChat(
     saveHistoryEntry(text);
     running = true;
 
-    if (text.startsWith("/")) { handleCommand(text, poolMgr); write(`\r\x1b[K${PROMPT}`); running = false; return; }
+    // Resolve what to run this turn. A slash command is either a built-in
+    // (/help, /pool) or a skill invocation (/<skill-name> [args]) — mirrors
+    // Python main.py:430-448, where a matched skill rewrites the prompt and
+    // runs under task_type=skill/<name>.
+    let turnText = text;
+    let turnCtx = ctx;
+    if (text.startsWith("/")) {
+      const parts = text.slice(1).split(/\s+/);
+      const cmd = parts[0] ?? "";
+      if (cmd === "help" || cmd === "h" || cmd === "pool") {
+        handleCommand(text, poolMgr);
+        write(`\r\x1b[K${PROMPT}`);
+        running = false;
+        return;
+      }
+      const loader = (loop as any).skillLoader;
+      const skill = loader?.getByName(cmd) as SkillSpec | undefined;
+      if (skill) {
+        const args = parts.slice(1).join(" ").trim();
+        turnText = `[Skill: ${skill.name}]\n\n${skill.content}\n\n---\n\nUser request: ${args || "Run this skill"}`;
+        turnCtx = makeAgentContext(config, { workingDir: opts.workingDir, modelOverride: opts.model ?? null, customAgents: (loop as any).customAgents ?? null, skills: (loop as any).skillsList ?? [], taskType: `skill/${skill.name}` });
+      } else {
+        write(dim(`Unknown command or skill: /${cmd}. Type /help.\r\n`));
+        write(`\r\x1b[K${PROMPT}`);
+        running = false;
+        return;
+      }
+    }
 
     let prevEvent = "";
     try {
-      for await (const event of loop.run(text, ctx)) {
+      for await (const event of loop.run(turnText, turnCtx)) {
         switch (event.type) {
           case "text_delta":
             if (prevEvent === "tool_result") write(`\r\n${dim("  ──────")}\r\n`);
@@ -339,7 +367,7 @@ export async function runChat(
       write("\r\n");
       writeModelTag(loop);
     } catch (e) { write(`${RED}Error:${RESET} ${(e as Error).message}\r\n`); }
-    await maybeExtract(loop, text);
+    await maybeExtract(loop, turnText);
     tryExtractSessionMemory(opts.workingDir ?? process.cwd(), loop, engine, modelRegistry, toolRegistry, poolMgr);
     write(`\r\x1b[K${PROMPT}`);
     running = false;
