@@ -85,6 +85,7 @@ export class AgentLoop {
   // CLI-accessible state.
   skillLoader: unknown = null;
   availableSkills: Record<string, string> = {};
+  skillsList: unknown = null;
   poolManager: unknown = null;
   customAgents: Record<string, unknown> = {};
   extractMemories: unknown = null;

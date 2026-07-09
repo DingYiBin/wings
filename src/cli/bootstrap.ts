@@ -31,6 +31,7 @@ import { QueryEngine } from "../query/engine.ts";
 import { APIPoolManager } from "../routing/manager.ts";
 import type { ModelSelector } from "../routing/protocol.ts";
 import { SkillLoader } from "../skills/loader.ts";
+import { SkillInjector } from "../skills/injector.ts";
 import type { SkillSpec } from "../skills/types.ts";
 import { makeToolContext, type Tool } from "../tools/types.ts";
 import { ToolRegistry } from "../tools/registry.ts";
@@ -158,6 +159,7 @@ export async function createSession(
   if (logger) loop.setLogger(logger);
   (loop as any).skillLoader = loader;
   (loop as any).availableSkills = availableSkills;
+  (loop as any).skillsList = skillsList;
   (loop as any).poolManager = poolMgr;
   (loop as any).customAgents = customAgents;
 
@@ -208,12 +210,9 @@ export function makeAgentContext(
     "- When you have enough information to give a useful answer, answer directly.",
   ].join("\n");
 
-  // Inject available skills.
+  // Inject available skills as a structured <available_skills> block.
   if (skills.length > 0) {
-    const skillLines = skills
-      .filter((s) => !s.disable_model_invocation)
-      .map((s) => `- ${s.name}: ${s.description || s.content.slice(0, 200)}`);
-    systemPrompt += "\n\n## Available Skills\n" + skillLines.join("\n");
+    systemPrompt = new SkillInjector().injectSkills(systemPrompt, skills);
   }
 
   // Inject available agents (builtins + project/user custom agents).
