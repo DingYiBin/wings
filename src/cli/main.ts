@@ -320,9 +320,9 @@ export async function runChat(
 
   process.stdin.on("data", (data: Buffer) => {
     if (running) {
-      // ESC or Ctrl+C to abort running agent.
+      // Solo ESC or Ctrl+C to abort running agent (not arrow/delete sequences).
       const raw = data.toString("utf-8");
-      if (raw === "\x1b" || raw.startsWith("\x1b[") || raw === "\x03") {
+      if (raw === "\x1b" || raw === "\x03") {
         (loop as any)._aborted = true;
       }
       return;
@@ -363,25 +363,25 @@ export async function runChat(
         const line = buffer; buffer = ""; cursor = 0;
         write("\r\n"); doTurn(line); return;
       }
-      // Backspace: delete before cursor.
-      if (code === 0x7f) {
+      // Delete key: ESC [ 3 ~
+      if (rest.startsWith("\x1b[3~")) {
+        if (cursor < buffer.length) {
+          const after = buffer.slice(cursor);
+          const seg = new Intl.Segmenter("en", { granularity: "grapheme" });
+          const graphemes = [...seg.segment(after)];
+          buffer = buffer.slice(0, cursor) + graphemes.slice(1).map(x => x.segment).join("");
+          renderLine();
+        }
+        i += 3; continue;
+      }
+      // Backspace (DEL=127 or Ctrl+H=8): delete before cursor.
+      if (code === 0x7f || code === 0x08) {
         if (cursor > 0) {
           const before = buffer.slice(0, cursor);
           const newBefore = graphemeBackspace(before);
           const removed = before.length - newBefore.length;
           buffer = newBefore + buffer.slice(cursor);
           cursor -= removed;
-          renderLine();
-        }
-        continue;
-      }
-      // Delete (DEL): delete at cursor.
-      if (code === 0x08) {
-        if (cursor < buffer.length) {
-          const after = buffer.slice(cursor);
-          const seg = new Intl.Segmenter("en", { granularity: "grapheme" });
-          const graphemes = [...seg.segment(after)];
-          buffer = buffer.slice(0, cursor) + graphemes.slice(1).map(x => x.segment).join("");
           renderLine();
         }
         continue;
