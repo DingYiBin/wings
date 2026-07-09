@@ -338,6 +338,30 @@ export async function runChat(
   // Double-tap Ctrl+C tracking.
   let lastCtrlC = 0;
 
+  // -- Display width helper (CJK chars are 2 columns wide) --
+  function charWidth(code: number): number {
+    if (code >= 0x1100 && code <= 0x115f) return 2;
+    if (code >= 0x2329 && code <= 0x232a) return 2;
+    if (code >= 0x2e80 && code <= 0xa4cf) return 2;
+    if (code >= 0xac00 && code <= 0xd7a3) return 2;
+    if (code >= 0xf900 && code <= 0xfaff) return 2;
+    if (code >= 0xfe10 && code <= 0xfe19) return 2;
+    if (code >= 0xfe30 && code <= 0xfe6f) return 2;
+    if (code >= 0xff00 && code <= 0xff60) return 2;
+    if (code >= 0xffe0 && code <= 0xffe6) return 2;
+    if (code >= 0x1f300 && code <= 0x1f64f) return 2;
+    if (code >= 0x1f900 && code <= 0x1f9ff) return 2;
+    return 1;
+  }
+  function displayWidth(s: string): number {
+    let w = 0;
+    for (const ch of s) w += charWidth(ch.charCodeAt(0));
+    return w;
+  }
+  function cursorCharPos(): number {
+    return displayWidth(PROMPT) + displayWidth(buffer.slice(0, cursor));
+  }
+
   // -- Word boundary helper --
   const wordLeft = (s: string, pos: number): number => {
     // Skip whitespace, then skip non-whitespace.
@@ -353,12 +377,38 @@ export async function runChat(
     return p;
   };
 
-  // -- Render line: prompt + full text, cursor at correct position --
+  // -- Render with multi-line support and CJK-aware cursor positioning --
   const renderLine = () => {
-    write(`\r\x1b[K${PROMPT}${buffer}`);
-    // Move cursor back to the right spot after the prompt text.
-    if (cursor < buffer.length) {
-      write(`\x1b[${buffer.length - cursor}D`);
+    const cols = process.stdout.columns || 80;
+    const text = PROMPT + buffer;
+    const textW = displayWidth(text);
+    const cursorW = cursorCharPos();
+
+    // Clear the input area: move up to cover old render, then clear to end.
+    const oldLines = Math.max(1, Math.ceil(textW / cols));
+    if (oldLines > 1) write(`\x1b[${oldLines - 1}A`);
+    write(`\r\x1b[0J`);
+
+    // Write the full line.
+    write(text);
+
+    // Move cursor to the correct visual position.
+    // After writing text, cursor is at end. We need to go back.
+    const afterW = textW - cursorW;
+    if (afterW > 0) {
+      // Cursor is on the last line of text at column textW%cols.
+      // Move up and left to reach cursor position.
+      const endLine = Math.floor(textW / cols);
+      const cursorLine = Math.floor(cursorW / cols);
+      const linesBack = endLine - cursorLine;
+      if (linesBack > 0) {
+        write(`\x1b[${linesBack}A`);
+      }
+      // Move to column cursorW % cols on this line.
+      const col = cursorW % cols;
+      if (col > 0 || linesBack > 0) {
+        write(`\r\x1b[${col}C`);
+      }
     }
   };
 
