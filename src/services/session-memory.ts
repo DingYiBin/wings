@@ -20,15 +20,10 @@ import type { ModelSelector } from "../routing/protocol.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { Message } from "../messages/types.ts";
 
-// -- Paths --
+// -- Paths (delegated to session-paths.ts) --
 
-export function getSessionMemoryDir(workingDir: string): string {
-  return join(workingDir, ".wings", "session-memory");
-}
-
-export function getSessionMemoryPath(workingDir: string): string {
-  return join(getSessionMemoryDir(workingDir), "summary.md");
-}
+import { getSessionMemoryDir, getSessionMemoryPath } from "./session-paths.ts";
+export { getSessionMemoryDir, getSessionMemoryPath };
 
 // -- Default template (matches claude-code) --
 
@@ -123,18 +118,18 @@ export function estimateMessagesTokens(messages: Message[]): number {
 
 // -- File I/O --
 
-export function setupSessionMemoryFile(workingDir: string): string {
-  const dir = getSessionMemoryDir(workingDir);
+export function setupSessionMemoryFile(): string {
+  const dir = getSessionMemoryDir();
   mkdirSync(dir, { recursive: true });
-  const path = getSessionMemoryPath(workingDir);
+  const path = getSessionMemoryPath();
   if (!existsSync(path)) {
     writeFileSync(path, DEFAULT_TEMPLATE);
   }
   return path;
 }
 
-export function readSessionMemory(workingDir: string): string | null {
-  const path = getSessionMemoryPath(workingDir);
+export function readSessionMemory(): string | null {
+  const path = getSessionMemoryPath();
   if (!existsSync(path)) return null;
   try { return readFileSync(path, "utf-8"); } catch { return null; }
 }
@@ -223,7 +218,7 @@ export interface ExtractOpts {
 export async function extractSessionMemory(opts: ExtractOpts): Promise<boolean> {
   if (extractionInProgress) return false;
 
-  const memPath = setupSessionMemoryFile(opts.workingDir);
+  const memPath = setupSessionMemoryFile();
   const currentNotes = readFileSync(memPath, "utf-8");
   const prompt = buildUpdatePrompt(currentNotes, memPath);
 
@@ -257,10 +252,8 @@ export async function extractSessionMemory(opts: ExtractOpts): Promise<boolean> 
  * Build a compact summary message from session memory.
  * Mirrors claude-code's getCompactUserSummaryMessage.
  */
-export function buildSessionMemoryCompactMessage(
-  workingDir: string,
-): string | null {
-  const content = readSessionMemory(workingDir);
+export function buildSessionMemoryCompactMessage(): string | null {
+  const content = readSessionMemory();
   if (!content || isSessionMemoryEmpty(content)) return null;
 
   return [

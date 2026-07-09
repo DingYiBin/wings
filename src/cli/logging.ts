@@ -1,12 +1,14 @@
 /**
- * Request/response logger — writes session transcripts to .wings/logs/.
+ * Request/response logger — writes session transcripts to
+ * ~/.wings/sessions/<hash>/logs/.
  *
  * Ported from src/wings/cli/logging.py.
  */
 
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { getSessionLogDir } from "../services/session-paths.ts";
 
 export class TurnLogger {
   private _dir: string;
@@ -15,9 +17,8 @@ export class TurnLogger {
   private _cycleCount = 0;
   private _sessionStart: number;
 
-  constructor(workingDir: string) {
-    this._dir = join(workingDir, ".wings", "logs");
-    mkdirSync(this._dir, { recursive: true });
+  constructor() {
+    this._dir = getSessionLogDir();
     this._path = this._makePath();
     this._sessionStart = Date.now();
   }

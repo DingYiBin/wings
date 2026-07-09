@@ -284,17 +284,17 @@ describe("Compaction triggers", () => {
     expect((loop as any)._needsCompact(new AgentContext(), cfg)).toBe(true);
   });
 
-  test("persistToolResult under limit", () => {
-    const result = (AgentLoop as any)._persistToolResult("short", "id1", 1000);
+  test("persistToolResult under limit", async () => {
+    const result = await (AgentLoop as any)._persistToolResult("short", "id1", 1000);
     expect(result).toBe("short");
   });
 
-  test("persistToolResult over limit writes to file", () => {
+  test("persistToolResult over limit writes to file", async () => {
     const output = "line1\nline2\n" + "x".repeat(50000);
-    const result = (AgentLoop as any)._persistToolResult(output, "id2", 10);
+    const result = await (AgentLoop as any)._persistToolResult(output, "id2", 10);
     expect(result.length).toBeLessThan(output.length);
     expect(result).toContain("<persisted-output>");
-    expect(result).toContain(".wings/tool-results/id2.txt");
+    expect(result).toContain("tool-results/id2.txt");
     expect(result).toContain("Preview");
   });
 

@@ -20,7 +20,7 @@ const modelIdx = rest.indexOf("-m") !== -1 ? rest.indexOf("-m") : rest.indexOf("
 const model = modelIdx !== -1 ? rest[modelIdx + 1] : null;
 
 if (!command || command === "chat") {
-  const logger = hasLog ? new TurnLogger(process.cwd()) : null;
+  const logger = hasLog ? new TurnLogger() : null;
   if (logger) console.log(`Logging to ${logger.path}`);
 
   // Try Ink if raw mode is available.
@@ -48,7 +48,7 @@ if (!command || command === "chat") {
     console.error("Usage: node --import tsx src/index.ts run [-m model] \"prompt\"");
     process.exit(1);
   }
-  const logger = hasLog ? new TurnLogger(process.cwd()) : null;
+  const logger = hasLog ? new TurnLogger() : null;
   if (logger) console.log(`Logging to ${logger.path}`);
   await runSingle(prompt.trim(), { model, logger });
 } else {

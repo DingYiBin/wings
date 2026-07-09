@@ -20,4 +20,4 @@ reference/
 node_modules/
 bun.lock
 *.tsbuildinfo
-dist/
+dist/.wings/

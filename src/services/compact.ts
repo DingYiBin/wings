@@ -119,12 +119,10 @@ export async function compactMessages(
 
   // 3. Try session memory first (claude-code pattern).
   let summary: string | null = null;
-  if (opts.workingDir) {
-    try {
-      const { buildSessionMemoryCompactMessage } = await import("./session-memory.ts");
-      summary = buildSessionMemoryCompactMessage(opts.workingDir);
-    } catch {}
-  }
+  try {
+    const { buildSessionMemoryCompactMessage } = await import("./session-memory.ts");
+    summary = buildSessionMemoryCompactMessage();
+  } catch {}
 
   // 4. Fall back to model summarization if no session memory.
   if (!summary) {

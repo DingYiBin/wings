@@ -9,3 +9,12 @@ export {
   estimateMessagesTokens,
 } from "./session-memory.ts";
 export type { SessionMemoryConfig, ExtractOpts } from "./session-memory.ts";
+export {
+  getSessionHash,
+  initSessionHash,
+  getSessionDir,
+  getSessionLogDir,
+  getSessionToolResultsDir,
+  getSessionMemoryDir,
+  getSessionMemoryPath,
+} from "./session-paths.ts";

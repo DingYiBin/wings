@@ -471,7 +471,7 @@ export class AgentLoop {
 
           // Persist large results to disk (claude-code pattern).
           const limit = toolResult.max_result_size_chars ?? AgentLoop.MAX_TOOL_RESULT_CHARS;
-          const displayContent = AgentLoop._persistToolResult(
+          const displayContent = await AgentLoop._persistToolResult(
             toolResult.output, block.id, limit,
           );
           // Keep original for aggregate budget enforcement.
@@ -495,7 +495,7 @@ export class AgentLoop {
         }
 
         // Apply per-message aggregate tool result budget.
-        AgentLoop._applyToolResultBudget(toolResults, toolResultOutputs);
+        await AgentLoop._applyToolResultBudget(toolResults, toolResultOutputs);
 
         this._messages.push({
           role: "user",
@@ -548,11 +548,11 @@ export class AgentLoop {
    * Handle a large tool result: persist full output to disk, return a
    * preview for the model. Matches claude-code's maybePersistLargeToolResult.
    */
-  private static _persistToolResult(
+  private static async _persistToolResult(
     output: string,
     toolUseId: string,
     limit: number,
-  ): string {
+  ): Promise<string> {
     if (output.length <= limit) return output;
 
     const preview = output.slice(0, AgentLoop.PREVIEW_CHARS);
@@ -562,8 +562,9 @@ export class AgentLoop {
     const previewText = output.slice(0, cutPoint);
     const hasMore = cutPoint < output.length;
 
-    // Persist to disk.
-    const dir = join(process.cwd(), ".wings", "tool-results");
+    // Persist to disk in session directory.
+    const { getSessionToolResultsDir } = await import("../services/session-paths.ts");
+    const dir = getSessionToolResultsDir();
     let filePath: string;
     try {
       mkdirSync(dir, { recursive: true });
@@ -589,10 +590,10 @@ export class AgentLoop {
    * Apply per-message aggregate budget. If total tool results in one turn
    * exceed MAX_TOOL_RESULTS_PER_MESSAGE_CHARS, persist the largest results.
    */
-  private static _applyToolResultBudget(
+  private static async _applyToolResultBudget(
     results: ToolResultBlock[],
     originalOutputs: Map<string, string>,
-  ): void {
+  ): Promise<void> {
     let total = results.reduce((sum, r) => sum + r.content.length, 0);
     if (total <= AgentLoop.MAX_TOOL_RESULTS_PER_MESSAGE_CHARS) return;
 
@@ -605,7 +606,7 @@ export class AgentLoop {
       if (total <= AgentLoop.MAX_TOOL_RESULTS_PER_MESSAGE_CHARS) break;
       const original = originalOutputs.get(r.tool_use_id);
       if (!original) continue;
-      const persisted = AgentLoop._persistToolResult(
+      const persisted = await AgentLoop._persistToolResult(
         original, r.tool_use_id, 1,
       );
       total = total - len + persisted.length;
@@ -633,7 +634,6 @@ export class AgentLoop {
       queryEngine: this._queryEngine,
       model,
       config: cfg,
-      workingDir: context.tool_context.working_dir,
     });
     if (this._logger) {
       this._logger.recordCycle({
