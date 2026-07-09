@@ -5,7 +5,9 @@
  * Permission prompts read directly from /dev/tty for reliability.
  */
 
-import { openSync, readSync, closeSync, appendFileSync } from "node:fs";
+import { openSync, readSync, closeSync, appendFileSync, existsSync, readFileSync } from "node:fs";
+import { join as pathJoin } from "node:path";
+import { homedir } from "node:os";
 import { createSession, makeAgentContext } from "./bootstrap.ts";
 import { shouldExtractMemory, recordExtraction, extractSessionMemory } from "../services/session-memory.ts";
 import { activeChild } from "../tools/builtin/bash.ts";
@@ -266,14 +268,40 @@ export async function runChat(
   let buffer = "";
   let running = false;
   const PROMPT = `${GREEN}▸${RESET} `;
-  write(PROMPT);
+  write(`\r\x1b[K${PROMPT}`);
+
+  // -- History (cross-session, stored in ~/.wings/sessions/history.jsonl) --
+  const historyFile = pathJoin(homedir(), ".wings", "sessions", "history.jsonl");
+  let history: string[] = [];
+  let historyIdx = 0;
+  try {
+    if (existsSync(historyFile)) {
+      history = readFileSync(historyFile, "utf-8").trim().split("\n")
+        .map(l => { try { return (JSON.parse(l) as any).text as string; } catch { return ""; } })
+        .filter(Boolean);
+    }
+    historyIdx = history.length; // start at "new entry" position
+  } catch {}
+  function saveHistoryEntry(line: string) {
+    try {
+      const { mkdirSync } = require("node:fs") as typeof import("node:fs");
+      mkdirSync(pathJoin(homedir(), ".wings", "sessions"), { recursive: true });
+      appendFileSync(historyFile, JSON.stringify({ text: line }) + "\n");
+    } catch {}
+  }
 
   const doTurn = async (line: string) => {
     const text = line.trim();
-    if (!text) { write(PROMPT); return; }
+    if (!text) { write(`\r\x1b[K${PROMPT}`); return; }
+    // Add to history, remove duplicates.
+    history = history.filter(h => h !== text);
+    history.push(text);
+    if (history.length > 1000) history.shift();
+    historyIdx = history.length;
+    saveHistoryEntry(text);
     running = true;
 
-    if (text.startsWith("/")) { handleCommand(text, poolMgr); write(PROMPT); running = false; return; }
+    if (text.startsWith("/")) { handleCommand(text, poolMgr); write(`\r\x1b[K${PROMPT}`); running = false; return; }
 
     let prevEvent = "";
     try {
@@ -300,9 +328,8 @@ export async function runChat(
       write("\r\n");
     } catch (e) { write(`${RED}Error:${RESET} ${(e as Error).message}\r\n`); }
     await maybeExtract(loop, text);
-    // Fire-and-forget session memory update (mirrors claude-code post-sampling hook).
     tryExtractSessionMemory(opts.workingDir ?? process.cwd(), loop, engine, modelRegistry, toolRegistry, poolMgr);
-    write(PROMPT);
+    write(`\r\x1b[K${PROMPT}`);
     running = false;
   };
 
@@ -359,6 +386,30 @@ export async function runChat(
       const code = ch.charCodeAt(0);
       const rest = rawStr.slice(i);
 
+      // ── History (up/down arrows) ──
+      // ESC [ A = up, ESC [ B = down, Ctrl+P = up, Ctrl+N = down
+      if (rest.startsWith("\x1b[A") || code === 0x10 /* Ctrl+P */) {
+        if (history.length > 0 && historyIdx >= 0) {
+          if (historyIdx === history.length) historyIdx = history.length - 1;
+          else if (historyIdx > 0) historyIdx--;
+          buffer = history[historyIdx] ?? "";
+          cursor = buffer.length;
+          renderLine();
+        }
+        i += code === 0x10 ? 0 : 2; continue;
+      }
+      if (rest.startsWith("\x1b[B") || code === 0x0e /* Ctrl+N */) {
+        if (historyIdx < history.length - 1) {
+          historyIdx++;
+          buffer = history[historyIdx] ?? "";
+        } else {
+          historyIdx = history.length;
+          buffer = "";
+        }
+        cursor = buffer.length;
+        renderLine();
+        i += code === 0x0e ? 0 : 2; continue;
+      }
       // ── Arrow / navigation ──
       if (rest.startsWith("\x1b[D") || code === 0x02 /* Ctrl+B */) {
         cursor = Math.max(0, cursor - 1); renderLine(); i += code === 0x02 ? 0 : 2; continue;
