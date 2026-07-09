@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { SkillLoader } from "../../src/skills/loader.ts";
+import { SkillLoader, parseFrontmatter, parseSkillFile } from "../../src/skills/loader.ts";
 import { SkillInjector } from "../../src/skills/injector.ts";
 import type { SkillSpec } from "../../src/skills/types.ts";
 
@@ -75,6 +75,125 @@ describe("SkillLoader", () => {
   test("getByName returns undefined for missing", () => {
     const loader = new SkillLoader();
     expect(loader.getByName("nonexistent")).toBeUndefined();
+  });
+
+  test("user layer overrides builtin", () => {
+    const base = mkdtempSync(join(tmpdir(), "wings-skills-ub-"));
+    const builtinDir = join(base, "builtin");
+    const userDir = join(base, "user");
+    makeSkillDir(builtinDir, "test", "Builtin body.");
+    makeSkillDir(userDir, "test", "User body.");
+    const loader = new SkillLoader({ builtinDir, userDir });
+    const spec = loader.getByName("test");
+    expect(spec).toBeDefined();
+    expect(spec!.source).toBe("user");
+    expect(spec!.content).toBe("User body.");
+  });
+
+  test("missing dirs are graceful → empty", () => {
+    const loader = new SkillLoader({
+      userDir: "/nonexistent/path",
+      projectDir: "/another/nonexistent",
+    });
+    expect(loader.loadAll()).toEqual([]);
+  });
+
+  test("skips dot-directories", () => {
+    const base = mkdtempSync(join(tmpdir(), "wings-skills-dot-"));
+    makeSkillDir(base, "valid", "Body.");
+    const hidden = join(base, ".hidden");
+    mkdirSync(hidden, { recursive: true });
+    writeFileSync(join(hidden, "SKILL.md"), "---\nname: hidden\ndescription: nope\n---\n\nBody.");
+    const loader = new SkillLoader({ projectDir: base });
+    const skills = loader.loadAll();
+    expect(skills.length).toBe(1);
+    expect(skills[0]!.name).toBe("valid");
+  });
+
+  test("skips dirs without SKILL.md", () => {
+    const base = mkdtempSync(join(tmpdir(), "wings-skills-noskill-"));
+    makeSkillDir(base, "s1", "Body.");
+    mkdirSync(join(base, "empty"), { recursive: true }); // no SKILL.md
+    const loader = new SkillLoader({ projectDir: base });
+    const skills = loader.loadAll();
+    expect(skills.length).toBe(1);
+    expect(skills[0]!.name).toBe("s1");
+  });
+  // NOTE: a "loads real builtin skills" test (asserting skills/builtin holds
+  // commit/review-pr/simplify) lives with the skill-migration PR that creates
+  // skills/builtin; it's omitted here to keep this test-coverage PR
+  // independent of that change.
+});
+
+// -- parseFrontmatter / parseSkillFile edge cases ---------------------------
+
+describe("parseFrontmatter", () => {
+  test("no delimiter → empty fm, body unchanged", () => {
+    const text = "Just plain markdown\n\nNo frontmatter.";
+    const [fm, body] = parseFrontmatter(text);
+    expect(fm).toEqual({});
+    expect(body).toBe(text);
+  });
+
+  test("empty input", () => {
+    const [fm, body] = parseFrontmatter("");
+    expect(fm).toEqual({});
+    expect(body).toBe("");
+  });
+
+  test("invalid yaml → empty fm, body unchanged", () => {
+    const text = "---\n\tinvalid: yaml: indent\n---\n\nBody.";
+    const [fm, body] = parseFrontmatter(text);
+    expect(fm).toEqual({});
+    expect(body).toBe(text);
+  });
+});
+
+describe("parseSkillFile", () => {
+  test("valid skill", () => {
+    const base = mkdtempSync(join(tmpdir(), "wings-parse-valid-"));
+    const skillDir = join(base, "my-skill");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "---\nname: my-skill\ndescription: Does things\n---\n\n## Instructions\n\nDo the thing.");
+    const spec = parseSkillFile(join(skillDir, "SKILL.md"));
+    expect(spec).not.toBeNull();
+    expect(spec!.name).toBe("my-skill");
+    expect(spec!.description).toBe("Does things");
+    expect(spec!.content).toBe("## Instructions\n\nDo the thing.");
+  });
+
+  test("missing name → null", () => {
+    const base = mkdtempSync(join(tmpdir(), "wings-parse-noname-"));
+    const skillDir = join(base, "bad");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "---\ndescription: No name here\n---\n\nBody.");
+    expect(parseSkillFile(join(skillDir, "SKILL.md"))).toBeNull();
+  });
+
+  test("no frontmatter → null", () => {
+    const base = mkdtempSync(join(tmpdir(), "wings-parse-nofm-"));
+    const skillDir = join(base, "no-fm");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "Just markdown, no YAML frontmatter.");
+    expect(parseSkillFile(join(skillDir, "SKILL.md"))).toBeNull();
+  });
+
+  test("empty file → null", () => {
+    const base = mkdtempSync(join(tmpdir(), "wings-parse-empty-"));
+    const skillDir = join(base, "empty");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "");
+    expect(parseSkillFile(join(skillDir, "SKILL.md"))).toBeNull();
+  });
+
+  test("user-invocable: false", () => {
+    const base = mkdtempSync(join(tmpdir(), "wings-parse-uif-"));
+    const skillDir = join(base, "hidden");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "---\nname: hidden\ndescription: d\nuser-invocable: false\n---\n\nBody.");
+    const spec = parseSkillFile(join(skillDir, "SKILL.md"));
+    expect(spec).not.toBeNull();
+    expect(spec!.user_invocable).toBe(false);
   });
 });
 
