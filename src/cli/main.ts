@@ -541,7 +541,7 @@ function handleCommand(cmd: string, poolMgr: any) {
       for (const [id, s] of Object.entries(info as Record<string, any>))
         write(dim(`  ${id}: base=${s.base.toFixed(1)} delta=${s.delta.toFixed(1)} score=${s.effective === -Infinity ? "disabled" : s.effective.toFixed(1)}\r\n`));
     } else if (parts.length === 3 && (parts[1] === "up" || parts[1] === "down")) {
-      parts[1] === "up" ? poolMgr.upvote("main", parts[2]!) : poolMgr.downvote("main", parts[2]!);
+      parts[1] === "up" ? poolMgr.upvote("main", parts[2]!, 0.5) : poolMgr.downvote("main", parts[2]!, 0.5);
       write(dim(`  ${parts[1] === "up" ? "↑" : "↓"} ${parts[2]}\r\n`));
     }
   } else write(dim(`Unknown command: ${name}. Type /help.\r\n`));
