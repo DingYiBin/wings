@@ -101,11 +101,12 @@ export function PromptInput({
 
     // ── Editing ──
     if (key.return) { commit(value); return; }
-    if (key.delete) {
+    if (key.delete || (char === "\x1b[3~")) {
       if (cursor < value.length) setValue(value.slice(0, cursor) + graphemeSlice(value, cursor + 1), cursor);
       return;
     }
-    if (key.backspace || (key.ctrl && char === "h")) {
+    // Backspace: Ink key.backspace, or raw DEL (127), or raw BS (8)
+    if (key.backspace || char === "\x7f" || char === "\x08" || (key.ctrl && char === "h")) {
       if (cursor > 0) {
         const before = value.slice(0, cursor);
         const newBefore = graphemeBackspace(before);

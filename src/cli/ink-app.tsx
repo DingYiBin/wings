@@ -6,13 +6,19 @@ import { setGlobalLogger } from "./hooks.ts";
 
 function ensureStdin(): NodeJS.ReadStream {
   const stdin = process.stdin as any;
-  if (stdin.isTTY && typeof stdin.setRawMode === "function") return stdin;
+  // If setRawMode exists, stdin IS a TTY (even if isTTY is undefined on WSL).
+  if (typeof stdin.setRawMode === "function") {
+    // Patch isTTY if missing so Ink's check passes.
+    if (stdin.isTTY === undefined) {
+      Object.defineProperty(stdin, "isTTY", { get: () => true, configurable: true });
+    }
+    return stdin;
+  }
+  // Fallback: fake TTY via Proxy (piped stdin, etc.).
   return new Proxy(stdin, {
     get(target, prop) {
       if (prop === "isTTY") return true;
-      if (prop === "setRawMode") {
-        return (flag: boolean) => { try { target.setRawMode?.(flag); } catch {} };
-      }
+      if (prop === "setRawMode") return (flag: boolean) => { try { target.setRawMode?.(flag); } catch {} };
       const val = target[prop];
       return typeof val === "function" ? val.bind(target) : val;
     },
