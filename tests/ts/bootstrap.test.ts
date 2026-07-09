@@ -46,10 +46,11 @@ describe("makeAgentContext: agent listing", () => {
     expect(ctx.system_prompt).toContain("**general**");
   });
 
-  test("includes memory prompt section", () => {
+  test("skips memory prompt when no MEMORY.md exists", () => {
     const wd = mkdtempSync(join(tmpdir(), "wings-bootstrap-"));
     const ctx = makeAgentContext(minimalConfig(), { workingDir: wd });
-    expect(ctx.system_prompt).toContain("<system-reminder>");
-    expect(ctx.system_prompt).toContain(".wings/memory");
+    // MEMORY.md doesn't exist in this temp dir, so no memory section is injected.
+    // The <system-reminder> tag from memory should NOT appear.
+    expect(ctx.system_prompt).not.toContain("MEMORY.md");
   });
 });

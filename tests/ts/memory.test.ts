@@ -1,29 +1,31 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, beforeEach } from "bun:test";
 import { mkdtempSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { loadMemory, loadMemoryPrompt } from "../../src/memory/loader.ts";
+import { loadMemory, loadMemoryPrompt, setMemoryHomeDir, getProjectMemoryDir } from "../../src/memory/loader.ts";
 import { maybeExtractMemories } from "../../src/memory/extractor.ts";
 
-function makeMemoryDir(base: string, memoryName: string, type: string, body: string) {
-  const memDir = join(base, ".wings", "memory");
+let tmpHome: string;
+
+beforeEach(() => {
+  tmpHome = mkdtempSync(join(tmpdir(), "wings-mem-home-"));
+  setMemoryHomeDir(tmpHome);
+});
+
+function makeMemoryDir(wd: string, memoryName: string, type: string, body: string) {
+  const memDir = getProjectMemoryDir(wd);
   mkdirSync(memDir, { recursive: true });
   const fileName = `${memoryName}.md`;
   const content = [
-    "---",
-    `name: ${memoryName}`,
-    `description: test entry`,
-    `type: ${type}`,
-    "---",
-    body,
+    "---", `name: ${memoryName}`, `description: test entry`, `type: ${type}`, "---", body,
   ].join("\n");
   writeFileSync(join(memDir, fileName), content);
   return fileName;
 }
 
-function writeMemoryIndex(base: string, entries: Array<{ title: string; file: string }>) {
-  const memDir = join(base, ".wings", "memory");
+function writeMemoryIndex(wd: string, entries: Array<{ title: string; file: string }>) {
+  const memDir = getProjectMemoryDir(wd);
   mkdirSync(memDir, { recursive: true });
   const lines = entries.map((e) => `- [${e.title}](${e.file})`).join("\n");
   writeFileSync(join(memDir, "MEMORY.md"), lines);
@@ -39,7 +41,6 @@ describe("loadMemory", () => {
     const tmp = mkdtempSync(join(tmpdir(), "wings-mem-"));
     const fileName = makeMemoryDir(tmp, "user_role", "user", "I am a developer.");
     writeMemoryIndex(tmp, [{ title: "user_role", file: fileName }]);
-
     const result = loadMemory(tmp);
     expect(result.entries.length).toBe(1);
     expect(result.entries[0]!.name).toBe("user_role");
@@ -51,11 +52,7 @@ describe("loadMemory", () => {
     const tmp = mkdtempSync(join(tmpdir(), "wings-mem-"));
     const f1 = makeMemoryDir(tmp, "user_role", "user", "dev");
     const f2 = makeMemoryDir(tmp, "feedback_testing", "feedback", "use real DB");
-    writeMemoryIndex(tmp, [
-      { title: "user_role", file: f1 },
-      { title: "feedback_testing", file: f2 },
-    ]);
-
+    writeMemoryIndex(tmp, [{ title: "user_role", file: f1 }, { title: "feedback_testing", file: f2 }]);
     const result = loadMemory(tmp);
     expect(result.entries.length).toBe(2);
   });
@@ -64,39 +61,31 @@ describe("loadMemory", () => {
     const tmp = mkdtempSync(join(tmpdir(), "wings-mem-"));
     const fileName = makeMemoryDir(tmp, "bad_entry", "invalid_type", "body");
     writeMemoryIndex(tmp, [{ title: "bad_entry", file: fileName }]);
-
     const result = loadMemory(tmp);
     expect(result.entries.length).toBe(0);
   });
 });
 
 describe("loadMemoryPrompt", () => {
-  test("creates memory dir and returns guidance with placeholder substituted", () => {
+  test("returns empty string when no MEMORY.md exists", () => {
     const tmp = mkdtempSync(join(tmpdir(), "wings-mem-"));
     const prompt = loadMemoryPrompt(tmp);
-    // Guidance is wrapped in a system-reminder block.
-    expect(prompt.startsWith("<system-reminder>")).toBe(true);
-    expect(prompt.endsWith("</system-reminder>")).toBe(true);
-    // The {memory_dir} placeholder must be fully replaced with the real path.
-    expect(prompt).not.toContain("{memory_dir}");
-    expect(prompt).toContain(tmp);
-    // The memory directory was created.
-    expect(existsSync(join(tmp, ".wings", "memory"))).toBe(true);
+    expect(prompt).toBe("");
   });
 
-  test("appends MEMORY.md index content when present", () => {
+  test("returns guidance when MEMORY.md exists", () => {
     const tmp = mkdtempSync(join(tmpdir(), "wings-mem-"));
     writeMemoryIndex(tmp, [{ title: "user_role", file: "user_role.md" }]);
     const prompt = loadMemoryPrompt(tmp);
+    expect(prompt.startsWith("<system-reminder>")).toBe(true);
+    expect(prompt.endsWith("</system-reminder>")).toBe(true);
     expect(prompt).toContain("user_role");
-    expect(prompt).toContain("- [user_role](user_role.md)");
+    expect(prompt).not.toContain("{memory_dir}");
   });
 });
 
 describe("maybeExtractMemories", () => {
   test("skips extraction and returns empty when there is no conversation text", async () => {
-    // Empty/whitespace input must short-circuit before touching a subagent,
-    // so no engine/registry wiring is required here.
     const opts = {
       workingDir: mkdtempSync(join(tmpdir(), "wings-mem-")),
       queryEngine: null as never,

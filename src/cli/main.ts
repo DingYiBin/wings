@@ -353,20 +353,13 @@ export async function runChat(
     return p;
   };
 
-  // -- Render line with inverted cursor (matches claude-code Layer 1) --
-  const REV = "\x1b[7m";  // reverse video
-  const REV_OFF = "\x1b[27m";
+  // -- Render line: prompt + full text, cursor at correct position --
   const renderLine = () => {
-    const before = buffer.slice(0, cursor);
-    const atCursor = buffer[cursor] ?? " ";
-    const after = buffer.slice(cursor + 1);
-    // Prompt + before-cursor text + inverted cursor char + after-cursor text.
-    write(`\r\x1b[K${PROMPT}${before}${REV}${atCursor}${REV_OFF}${after}`);
-    // Move terminal cursor back to just after the prompt + before-cursor text,
-    // so the native cursor sits on the inverted character.
-    if (after.length > 0) write(`\x1b[${after.length}D`);
-    // The cursor is now visually on the inverted character and physically
-    // positioned for IME input at that spot.
+    write(`\r\x1b[K${PROMPT}${buffer}`);
+    // Move cursor back to the right spot after the prompt text.
+    if (cursor < buffer.length) {
+      write(`\x1b[${buffer.length - cursor}D`);
+    }
   };
 
   // -- Data handler --

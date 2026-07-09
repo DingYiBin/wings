@@ -1,5 +1,5 @@
 /**
- * Memory loader — reads .wings/memory/ directory structure.
+ * Memory loader — reads ~/.wings/projects/<dashed-path>/memory/ directory.
  *
  * MEMORY.md is an index file listing per-topic markdown files.
  * Each per-topic file has YAML frontmatter (name, description, type)
@@ -7,14 +7,23 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 
 import type { MemoryEntry, MemoryType } from "./types.ts";
 
 const VALID_TYPES = new Set<string>(["user", "feedback", "project", "reference"]);
-const MEMORY_DIR_NAME = ".wings/memory";
-const MEMORY_FILE = "MEMORY.md";
+
+/** Test hook: override home directory for test isolation. */
+let _homeOverride: string | null = null;
+export function setMemoryHomeDir(dir: string | null) { _homeOverride = dir; }
+
+export function getProjectMemoryDir(workingDir: string): string {
+  const base = _homeOverride ?? homedir();
+  const slug = workingDir.replace(/^\//, "").replace(/\//g, "-");
+  return join(base, ".wings", "projects", slug, "memory");
+}
 
 function parseMemoryFile(path: string): { frontmatter: Record<string, unknown>; body: string } | null {
   if (!existsSync(path)) return null;
@@ -33,23 +42,21 @@ function parseMemoryFile(path: string): { frontmatter: Record<string, unknown>; 
 }
 
 export interface MemoryStore {
-  /** The parsed index entries from MEMORY.md. */
   entries: MemoryEntry[];
-  /** Map of entry name to full file content (frontmatter + body). */
   content: Record<string, { frontmatter: Record<string, unknown>; body: string }>;
 }
 
-export function loadMemory(baseDir: string): MemoryStore {
-  const memDir = join(baseDir, ".wings", "memory");
+export function loadMemory(workingDir: string): MemoryStore {
+  const memDir = getProjectMemoryDir(workingDir);
   if (!existsSync(memDir)) return { entries: [], content: {} };
 
-  // Parse MEMORY.md index.
   const indexPath = join(memDir, "MEMORY.md");
+  if (!existsSync(indexPath)) return { entries: [], content: {} };
+
   const indexFile = parseMemoryFile(indexPath);
   const entries: MemoryEntry[] = [];
   const content: Record<string, { frontmatter: Record<string, unknown>; body: string }> = {};
 
-  // Parse index entries (one per line as markdown links).
   if (indexFile) {
     const lines = indexFile.body.split("\n");
     for (const line of lines) {
@@ -77,30 +84,22 @@ export function loadMemory(baseDir: string): MemoryStore {
   return { entries, content };
 }
 
-/**
- * Load MEMORY.md and build the full system prompt injection.
- *
- * Creates .wings/memory/ if it doesn't exist. Returns the memory guidance
- * (teaching the model how to use memory) plus the MEMORY.md index content,
- * wrapped in <system-reminder> tags so the model treats it as system-level
- * context. Mirrors Python's load_memory_prompt().
- */
+/** Load MEMORY.md and build system prompt injection. Only creates the dir
+ *  if memory was explicitly initiated (i.e. MEMORY.md exists). Otherwise
+ *  returns empty guidance without creating anything. */
 export function loadMemoryPrompt(workingDir: string): string {
-  const memoryDir = join(workingDir, ...MEMORY_DIR_NAME.split("/"));
-  mkdirSync(memoryDir, { recursive: true });
+  const memDir = getProjectMemoryDir(workingDir);
+  const indexPath = join(memDir, "MEMORY.md");
+  if (!existsSync(indexPath)) return ""; // no memory → skip
 
-  // Guidance text lives next to this source file as a plain markdown asset
-  // (avoids template-literal escaping for its 28 backticks).
   const guidancePath = join(import.meta.dirname!, "guidance.md");
-  let guidance = readFileSync(guidancePath, "utf-8");
-  guidance = guidance.replaceAll("{memory_dir}", memoryDir);
+  let guidance: string;
+  try { guidance = readFileSync(guidancePath, "utf-8"); } catch { return ""; }
+  guidance = guidance.replaceAll("{memory_dir}", memDir);
 
-  const memoryMdPath = join(memoryDir, MEMORY_FILE);
-  if (existsSync(memoryMdPath)) {
-    const content = readFileSync(memoryMdPath, "utf-8").trim();
-    if (content) {
-      return `<system-reminder>\n${guidance}\n\n${content}\n</system-reminder>`;
-    }
+  const content = readFileSync(indexPath, "utf-8").trim();
+  if (content) {
+    return `<system-reminder>\n${guidance}\n\n${content}\n</system-reminder>`;
   }
   return `<system-reminder>\n${guidance}\n</system-reminder>`;
 }

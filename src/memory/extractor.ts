@@ -2,8 +2,7 @@
  * Auto-memory extraction — runs a lightweight subagent after each turn to
  * save durable memories from the conversation.
  *
- * Mirrors src/wings/memory/extractor.py: a forked subagent scans the
- * conversation and writes topic files + updates MEMORY.md.
+ * Stores memory in ~/.wings/projects/<dashed-working-dir>/memory/.
  */
 
 import { mkdirSync } from "node:fs";
@@ -15,30 +14,17 @@ import type { QueryEngine } from "../query/engine.ts";
 import type { ModelRegistry } from "../models/registry.ts";
 import type { ModelSelector } from "../routing/protocol.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
+import { getProjectMemoryDir } from "./loader.ts";
 
 export const MEMORY_AGENT_SPEC: AgentTypeSpec = {
   name: "memory-extractor",
   description:
-    "Extracts durable memories from conversations and saves them to .wings/memory/.",
+    "Extracts durable memories from conversations and saves them to the project memory directory.",
   tools: ["write", "edit", "read", "glob", "grep"],
   disallowed_tools: ["bash", "agent"],
   read_only: false,
   task_type: "subagent/memory",
 };
-
-const EXTRACT_PROMPT = `\
-Review the conversation above and extract any durable information worth saving
-to the memory system at \`.wings/memory/\`.
-
-Follow the memory system rules you already know:
-- 4 types: user, feedback, project, reference
-- Write topic files with YAML frontmatter (name, description, type)
-- Add pointers to MEMORY.md index
-- Do NOT save: code patterns, git history, debug solutions, ephemeral details
-- Only save if something NEW and DURABLE was learned
-
-If nothing new was learned that should be saved, respond with "Nothing to save."
-and do not write any files.`;
 
 export interface ExtractOpts {
   workingDir: string;
@@ -58,9 +44,25 @@ export async function maybeExtractMemories(
 ): Promise<string> {
   if (!messagesText.trim()) return "";
 
-  const prompt = `${EXTRACT_PROMPT}\n\n## Conversation\n\n${messagesText}`;
-  const memoryDir = join(opts.workingDir, ".wings", "memory");
+  const memoryDir = getProjectMemoryDir(opts.workingDir);
   mkdirSync(memoryDir, { recursive: true });
+
+  const extractPrompt = [
+    "Review the conversation above and extract any durable information worth saving",
+    `to the memory system at \`${memoryDir}\`.`,
+    "",
+    "Follow the memory system rules you already know:",
+    "- 4 types: user, feedback, project, reference",
+    "- Write topic files with YAML frontmatter (name, description, type)",
+    "- Add pointers to MEMORY.md index",
+    "- Do NOT save: code patterns, git history, debug solutions, ephemeral details",
+    "- Only save if something NEW and DURABLE was learned",
+    "",
+    'If nothing new was learned that should be saved, respond with "Nothing to save."',
+    "and do not write any files.",
+  ].join("\n");
+
+  const prompt = `${extractPrompt}\n\n## Conversation\n\n${messagesText}`;
 
   return runSubagent(prompt, "memory-extractor", {
     queryEngine: opts.queryEngine,

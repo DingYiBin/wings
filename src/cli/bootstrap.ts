@@ -233,8 +233,9 @@ export function makeAgentContext(
   agentLines.push("\nUse agent(subagent_type=\"<name>\", description=\"...\", prompt=\"...\") to spawn one.");
   systemPrompt += "\n" + agentLines.join("\n");
 
-  // Inject memory (MEMORY.md from .wings/memory/).
-  systemPrompt += "\n\n" + loadMemoryPrompt(wd);
+  // Inject memory (MEMORY.md from ~/.wings/projects/<slug>/memory/).
+  const memoryPrompt = loadMemoryPrompt(wd);
+  if (memoryPrompt) systemPrompt += "\n\n" + memoryPrompt;
 
   // Environment info.
   systemPrompt += [
