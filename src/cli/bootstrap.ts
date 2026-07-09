@@ -127,7 +127,7 @@ export async function createSession(
 
   // -- Hooks --
   const hookRunner = new HookRunner(config.hooks);
-  const pipeline = new PermissionPipeline(rules, hookRunner);
+  const pipeline = new PermissionPipeline(rules, hookRunner.hasHooks() ? hookRunner : null);
 
   // -- Query engine --
   const engine = new QueryEngine(registry);
