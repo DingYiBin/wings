@@ -262,8 +262,6 @@ export async function runChat(
     await runChatFallback(loop, ctx, poolMgr, config);
     return;
   }
-  write(HIDE_CURSOR);
-
   let buffer = "";
   let running = false;
   const PROMPT = `${GREEN}▸${RESET} `;
