@@ -136,13 +136,85 @@ export function loadSettings(
 
   // Walk up to find project config.
   const projectData = findProjectConfig(cwd);
+  let settings: GlobalSettingsData;
   if (projectData) {
     const merged = { ...global } as unknown as Record<string, unknown>;
     deepMerge(merged, projectData);
-    return merged as unknown as GlobalSettingsData;
+    settings = merged as unknown as GlobalSettingsData;
+  } else {
+    settings = global;
   }
 
-  return global;
+  // Environment variables override everything (matching Python's pydantic
+  // BaseSettings: env_prefix="WINGS_", env_nested_delimiter="__"). Env wins
+  // over both global and project config. See applyEnvOverrides for coverage.
+  applyEnvOverrides(settings);
+  return settings;
+}
+
+/**
+ * Apply WINGS_-prefixed environment variable overrides to loaded settings,
+ * mirroring pydantic's BaseSettings (env_prefix="WINGS_",
+ * env_nested_delimiter="__"). Env wins over file config.
+ *
+ * Covered: scalar top-level fields (theme, model, personality), list fields
+ * (allowed_tools, denied_tools — comma-separated), and nested dict fields
+ * (providers/<name>/<field>, routing, hooks, mcp_servers). Provider api_key
+ * is also resolved at call time via resolveApiKey, but setting it here keeps
+ * the providers dict consistent.
+ */
+function applyEnvOverrides(settings: GlobalSettingsData): void {
+  // Top-level scalars / lists.
+  const scalar: Array<[keyof GlobalSettingsData, "string" | "string[]"]> = [
+    ["theme", "string"],
+    ["model", "string"],
+    ["personality", "string"],
+    ["allowed_tools", "string[]"],
+    ["denied_tools", "string[]"],
+  ];
+  for (const [field, kind] of scalar) {
+    const envName = `WINGS_${field.toUpperCase()}`;
+    const raw = process.env[envName];
+    if (raw === undefined) continue;
+    if (kind === "string") {
+      (settings[field] as unknown as string) = raw;
+    } else {
+      (settings[field] as unknown as string[]) = raw.split(",").map((s) => s.trim()).filter(Boolean);
+    }
+  }
+
+  // Nested dict fields: <field>__<key>__... = value.
+  const nested: Array<keyof GlobalSettingsData> = ["providers", "routing", "hooks", "mcp_servers"];
+  for (const field of nested) {
+    const prefix = `WINGS_${field.toUpperCase()}__`;
+    for (const [envName, value] of Object.entries(process.env)) {
+      if (!envName.startsWith(prefix) || value === undefined) continue;
+      const path = envName.slice(prefix.length).toLowerCase().split("__");
+      // Coerce numeric/boolean values for known provider fields.
+      let coerced: unknown = value;
+      const leafKey = path[path.length - 1];
+      if (leafKey === "max_tokens" || leafKey === "escalated_max_tokens" || leafKey === "context_window" || leafKey === "thinking_budget") {
+        coerced = Number(value);
+      } else if (leafKey === "thinking") {
+        coerced = value === "true" || value === "1";
+      }
+      setNested(settings[field] as Record<string, unknown>, path, coerced);
+    }
+  }
+}
+
+/** Set a value at a dot-path inside a (possibly absent) nested dict, creating
+ * intermediate dicts as needed. */
+function setNested(root: Record<string, unknown>, path: string[], value: unknown): void {
+  let node = root;
+  for (let i = 0; i < path.length - 1; i++) {
+    const k = path[i]!;
+    if (typeof node[k] !== "object" || node[k] === null || Array.isArray(node[k])) {
+      node[k] = {};
+    }
+    node = node[k] as Record<string, unknown>;
+  }
+  node[path[path.length - 1]!] = value;
 }
 
 export function resolveApiKey(
