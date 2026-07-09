@@ -11,6 +11,19 @@
 import { runChat, runSingle } from "./cli/main.ts";
 import { TurnLogger } from "./cli/logging.ts";
 import { initSessionHash } from "./services/session-paths.ts";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+// Version from package.json (kept in sync with pyproject.toml's 0.1.0).
+const VERSION: string = (() => {
+  try {
+    const pkg = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf-8"));
+    return pkg.version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+})();
 
 // Initialize session hash before anything else.
 initSessionHash();
@@ -18,6 +31,12 @@ initSessionHash();
 const args = process.argv.slice(2);
 const command = args[0];
 const rest = args.slice(1);
+
+// --version / -v (global, mirrors Python main.py:36-49): print version and exit.
+if (args.includes("--version") || args.includes("-v")) {
+  console.log(`wings ${VERSION}`);
+  process.exit(0);
+}
 
 const hasLog = rest.includes("--log");
 

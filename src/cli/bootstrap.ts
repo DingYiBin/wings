@@ -6,7 +6,7 @@
 
 import { cwd } from "node:process";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { homedir, platform } from "node:os";
 import { randomUUID } from "node:crypto";
 
 import { AgentContext, AgentLoop } from "../agent/loop.ts";
@@ -237,11 +237,15 @@ export function makeAgentContext(
   const memoryPrompt = loadMemoryPrompt(wd);
   if (memoryPrompt) systemPrompt += "\n\n" + memoryPrompt;
 
-  // Environment info.
+  // Environment info — mirrors Python bootstrap.py (Working directory /
+  // Operating system / Current date), with os.platform() mapped to the
+  // platform.system() style Python uses (Linux/Darwin/Windows).
+  const osName = ({ linux: "Linux", darwin: "Darwin", win32: "Windows" } as Record<string, string>)[platform()] ?? platform();
   systemPrompt += [
     "",
     "# Environment",
     `Working directory: ${wd}`,
+    `Operating system: ${osName}`,
     `Current date: ${new Date().toISOString().slice(0, 10)}`,
   ].join("\n");
 

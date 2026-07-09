@@ -354,6 +354,9 @@ export async function runChat(
     if (text.startsWith("/")) {
       const parts = text.slice(1).split(/\s+/);
       const cmd = parts[0] ?? "";
+      if (cmd === "exit" || cmd === "quit") { // /exit — mirrors Python main.py:425-426
+        exitRawMode(); write(SHOW_CURSOR + "\r\n"); process.exit(0);
+      }
       if (cmd === "help" || cmd === "h" || cmd === "pool") {
         handleCommand(text, poolMgr, loop);
         write(`\r\x1b[K${PROMPT}`);
@@ -632,6 +635,7 @@ async function runChatFallback(loop: any, ctx: any, poolMgr: any, config: any) {
 function showHelp(loop?: any): void {
   const lines: string[] = ["Commands:"];
   lines.push("  /help                Show this help");
+  lines.push("  /exit                Quit the chat session");
   lines.push("  /pool                View/adjust API candidate pool");
   lines.push("  /pool up|down <api>  Adjust API score by ±0.5");
   lines.push("  Ctrl+C (2x)          Exit");
