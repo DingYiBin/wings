@@ -125,7 +125,7 @@ node --import tsx src/index.ts chat -m anthropic/claude-opus-4-6
 
 ### 日志格式
 
-`--log` 将 JSON Lines 写入 `.wings/logs/`。每行记录一次 API 调用周期，包含模型、时间、token 数、工具调用和响应内容。
+`--log` 将 JSON Lines 写入 `~/.wings/sessions/<hash>/logs/`。每行记录一次 API 调用周期，包含模型、时间、token 数、工具调用和响应内容。
 
 ## 架构
 

@@ -125,7 +125,7 @@ When a tool needs approval, an arrow-key navigable dialog appears:
 
 ### Log Format
 
-`--log` writes JSON Lines to `.wings/logs/`. Each line is one API call cycle with model, timing, token counts, tool calls, and response content.
+`--log` writes JSON Lines to `~/.wings/sessions/<hash>/logs/`. Each line is one API call cycle with model, timing, token counts, tool calls, and response content.
 
 ## Architecture
 
