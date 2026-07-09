@@ -26,19 +26,7 @@ const model = modelIdx !== -1 ? rest[modelIdx + 1] : null;
 if (!command || command === "chat") {
   const logger = hasLog ? new TurnLogger() : null;
   if (logger) console.log(`Logging to ${logger.path}`);
-
-  // Use Ink/React if raw mode is available (Node.js with real TTY).
-  if (typeof (process.stdin as any).setRawMode === "function") {
-    try {
-      const { runInkApp } = await import("./cli/ink-app.tsx");
-      await runInkApp({ logger });
-    } catch {
-      // Ink failed — fall back to raw ANSI REPL.
-      await runChat({ model, logger });
-    }
-  } else {
-    await runChat({ model, logger });
-  }
+  await runChat({ model, logger });
 } else if (command === "run") {
   const prompt = rest
     .filter((a, i) => {
