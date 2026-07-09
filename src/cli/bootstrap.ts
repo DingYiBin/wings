@@ -20,6 +20,8 @@ import {
 import { makeModelConfig } from "../models/protocol.ts";
 import { HookRunner } from "../hooks/runner.ts";
 import { loadMCPServers } from "../mcp/loader.ts";
+import { loadMemoryPrompt } from "../memory/loader.ts";
+import { maybeExtractMemories } from "../memory/extractor.ts";
 import { AnthropicProvider } from "../models/anthropic.ts";
 import { OpenAIProvider } from "../models/openai.ts";
 import { ModelRegistry } from "../models/registry.ts";
@@ -159,6 +161,25 @@ export async function createSession(
   (loop as any).poolManager = poolMgr;
   (loop as any).customAgents = customAgents;
 
+  // Memory extraction callback — called from the CLI after each turn.
+  // Runs a memory-extractor subagent every 5 turns (mirrors Python bootstrap).
+  let turnCount = 0;
+  (loop as any).extractMemories = async (messagesText: string): Promise<void> => {
+    turnCount += 1;
+    if (turnCount % 5 !== 0) return;
+    try {
+      await maybeExtractMemories(messagesText, {
+        workingDir: wd,
+        queryEngine: engine,
+        modelRegistry: registry,
+        toolRegistry: tools,
+        modelSelector: poolMgr,
+      });
+    } catch {
+      // Memory extraction is best-effort — never fail the chat turn.
+    }
+  };
+
   return { loop, config, poolMgr };
 }
 
@@ -204,6 +225,9 @@ export function makeAgentContext(
   }
   agentLines.push("\nUse agent(subagent_type=\"<name>\", description=\"...\", prompt=\"...\") to spawn one.");
   systemPrompt += "\n" + agentLines.join("\n");
+
+  // Inject memory (MEMORY.md from .wings/memory/).
+  systemPrompt += "\n\n" + loadMemoryPrompt(wd);
 
   // Environment info.
   systemPrompt += [

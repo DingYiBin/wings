@@ -33,6 +33,21 @@ function trunc(s: string, n: number): string { return s.length <= n ? s : s.slic
 const encoder = new TextEncoder();
 const write = (s: string) => { process.stdout.write(encoder.encode(s)); };
 
+// Auto-extract memories after a turn (runs every 5 turns, best-effort).
+// Mirrors Python main.py: the loop holds the extractMemories callback set in
+// createSession; we pass it the user input plus a pointer to the assistant's
+// answer (already streamed above).
+async function maybeExtract(loop: any, userInput: string): Promise<void> {
+  const extractor = loop?.extractMemories;
+  if (typeof extractor !== "function") return;
+  try {
+    const context = `User: ${userInput}\n\nAssistant answered with the content above.`;
+    await extractor.call(loop, context);
+  } catch {
+    // best-effort — never fail the turn
+  }
+}
+
 // -- Raw stdin helpers --
 
 function enterRawMode(): boolean {
@@ -195,6 +210,8 @@ export async function runSingle(
     }
   }
   write("\r\n");
+
+  await maybeExtract(loop, prompt);
 }
 
 // -- Interactive chat (raw mode) --
@@ -247,6 +264,7 @@ export async function runChat(
       }
       write("\r\n");
     } catch (e) { write(`${RED}Error:${RESET} ${(e as Error).message}\r\n`); }
+    await maybeExtract(loop, text);
     write(PROMPT);
     running = false;
   };
@@ -295,6 +313,7 @@ async function runChatFallback(loop: any, ctx: any, poolMgr: any, config: any) {
       }
       write("\r\n");
     } catch (e) { write(`${RED}Error:${RESET} ${(e as Error).message}\r\n`); }
+    await maybeExtract(loop, text);
     safePrompt();
   });
 }
