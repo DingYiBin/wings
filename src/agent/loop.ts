@@ -88,6 +88,9 @@ export class AgentLoop {
   // Permission sync — Promise + resolver replaces asyncio.Event.
   private _permResolve: ((response: string) => void) | null = null;
 
+  // Set by CLI (ESC key) to abort the current agent run.
+  _aborted = false;
+
   // CLI-accessible state.
   skillLoader: unknown = null;
   availableSkills: Record<string, string> = {};
@@ -170,6 +173,12 @@ export class AgentLoop {
     let isFirstCycle = true;
 
     while (true) {
+      // Check for ESC abort.
+      if (this._aborted) {
+        this._aborted = false;
+        return; // exit the run loop
+      }
+
       // -- Select model for *this* API call --
       const model = this._selectModel(context);
       const cfg = config ?? this._modelRegistry.buildConfig(model);
@@ -358,6 +367,19 @@ export class AgentLoop {
               permissionDenied = true;
               continue;
             }
+          }
+
+          // Check ESC abort before executing tool.
+          if (this._aborted) {
+            this._aborted = false;
+            const trAbort: ToolResultBlock = {
+              type: "tool_result", tool_use_id: block.id,
+              content: "interrupted by user", is_error: true,
+            };
+            toolResults.push(trAbort);
+            yield trAbort;
+            permissionDenied = true;
+            continue;
           }
 
           cycleToolCalls.push(block.name);
