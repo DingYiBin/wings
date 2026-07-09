@@ -372,8 +372,23 @@ export async function runChat(
     }
 
     let prevEvent = "";
+    // Spinner: show "Working... (Ns)" while waiting for the first content
+    // token. Mirrors Python _spinner_task/_wrap_stream (main.py:132-171).
+    const spinStart = Date.now();
+    const spinTick = () => write(`\r\x1b[KWorking... (${Math.floor((Date.now() - spinStart) / 1000)}s)`);
+    let spinTimer: ReturnType<typeof setInterval> | null = setInterval(spinTick, 1000);
+    let spinCleared = false;
+    const clearSpinner = () => {
+      if (spinTimer) { clearInterval(spinTimer); spinTimer = null; }
+      if (!spinCleared) { write("\r\x1b[K"); spinCleared = true; }
+    };
+    spinTick(); // show immediately instead of waiting 1s
     try {
       for await (const event of loop.run(turnText, turnCtx)) {
+        // First content event cancels the spinner (matches Python's cancel set).
+        if (!spinCleared && ["text_delta", "tool_use", "subagent_start", "subagent_delta"].includes(event.type)) {
+          clearSpinner();
+        }
         switch (event.type) {
           case "text_delta":
             if (prevEvent === "tool_result") write(`\r\n${dim("  ──────")}\r\n`);
@@ -406,9 +421,10 @@ export async function runChat(
         }
         prevEvent = event.type;
       }
+      clearSpinner();
       write("\r\n");
       writeModelTag(loop);
-    } catch (e) { write(`${RED}Error:${RESET} ${(e as Error).message}\r\n`); }
+    } catch (e) { clearSpinner(); write(`${RED}Error:${RESET} ${(e as Error).message}\r\n`); }
     await maybeExtract(loop, turnText);
     tryExtractSessionMemory(opts.workingDir ?? process.cwd(), loop, engine, modelRegistry, toolRegistry, poolMgr);
     write(`\r\x1b[K${PROMPT}`);
