@@ -1,0 +1,1763 @@
+Read 1761 lines from /home/hugo/workspace/wings/docs/design/modules.md
+
+1	# 模块详细设计 (Python)
+2	
+3	## 1. messages — 消息类型系统 ✅
+4	
+5	**位置**: `src/wings/messages/`
+6	**依赖**: 无
+7	
+8	### 设计目标
+9	
+10	定义一套统一的内部消息格式。每个 model adapter 将各 API 消息格式转换为此内部格式，agent 层只处理一种消息类型。
+11	
+12	### 消息类型
+13	
+14	```python
+15	# types.py
+16	from pydantic import BaseModel
+17	from typing import Literal, Any
+18	from enum import Enum
+19	
+20	class Role(str, Enum):
+21	    USER = "user"
+22	    ASSISTANT = "assistant"
+23	    SYSTEM = "system"
+24	
+25	class TextBlock(BaseModel):
+26	    type: Literal["text"] = "text"
+27	    text: str
+28	
+29	class ToolUseBlock(BaseModel):
+30	    type: Literal["tool_use"] = "tool_use"
+31	    id: str
+32	    name: str
+33	    input: dict[str, Any]
+34	
+35	class ToolResultBlock(BaseModel):
+36	    type: Literal["tool_result"] = "tool_result"
+37	    tool_use_id: str
+38	    content: str
+39	    is_error: bool = False
+40	
+41	MessageContent = TextBlock | ToolUseBlock | ToolResultBlock
+42	
+43	class Message(BaseModel):
+44	    role: Role
+45	    content: list[MessageContent]
+46	
+47	# 流式事件
+48	class TextDelta(BaseModel):
+49	    type: Literal["text_delta"] = "text_delta"
+50	    text: str
+51	
+52	class ToolUseDelta(BaseModel):
+53	    type: Literal["tool_use_delta"] = "tool_use_delta"
+54	    id: str
+55	    name: str | None = None       # 只在首个 delta 中提供
+56	    input_delta: dict[str, Any]   # 增量 JSON
+57	
+58	class ThinkingDelta(BaseModel):
+59	    type: Literal["thinking_delta"] = "thinking_delta"
+60	    text: str
+61	
+62	StreamEvent = TextDelta | ToolUseDelta | ThinkingDelta
+63	
+64	class StopReason(str, Enum):
+65	    END_TURN = "end_turn"
+66	    MAX_TOKENS = "max_tokens"
+67	    TOOL_USE = "tool_use"
+68	    STOP_SEQUENCE = "stop_sequence"
+69	```
+70	
+71	### 跨模型转换 (MessageNormalizer)
+72	
+73	各模型的 tool calling 格式：
+74	
+75	| 操作 | Anthropic | OpenAI | Gemini |
+76	|------|-----------|--------|--------|
+77	| tool_use | `content[type="tool_use"]` | `tool_calls[]` | `parts[functionCall]` |
+78	| tool_result | `content[type="tool_result"]` + `tool_use_id` | `role="tool"` + `tool_call_id` | `parts[functionResponse]` |
+79	| text | `content[type="text"]` | `content` (string) | `parts[text]` |
+80	| image | `content[type="image"]` | `content[type="image_url"]` | `parts[inlineData]` |
+81	
+82	```python
+83	# normalize.py
+84	from typing import Protocol, Any
+85	
+86	class MessageNormalizer(Protocol):
+87	    """将 SDK 原始消息转为内部 Message[]"""
+88	    def to_internal(self, provider: str, raw_messages: list[dict]) -> list[Message]: ...
+89	
+90	    """将内部 Message[] 转为目标模型的 API 格式"""
+91	    def to_provider(self, provider: str, messages: list[Message]) -> list[dict]: ...
+92	
+93	    """将内部 ToolSchema[] 转为目标模型的 tools 格式"""
+94	    def tools_to_provider(self, provider: str, tools: list[dict]) -> list[dict]: ...
+95	```
+96	
+97	### 关键文件
+98	
+99	- `types.py` — 消息类型定义（Pydantic models）
+100	- `normalize.py` — `MessageNormalizer` 实现，每种 provider 一个转换函数
+101	
+102	---
+103	
+104	## 2. models — 模型适配层
+105	
+106	**位置**: `src/wings/models/`
+107	**依赖**: messages
+108	
+109	### ModelProvider 协议
+110	
+111	```python
+112	# models/protocol.py
+113	from typing import Protocol, AsyncIterator, Any
+114	from wings.messages.types import Message, StreamEvent, StopReason
+115	from pydantic import BaseModel, Field
+116	
+117	class ModelConfig(BaseModel):
+118	    model: str
+119	    temperature: float = 0.7
+120	    max_tokens: int = 4096
+121	    top_p: float | None = None
+122	    thinking: bool = False
+123	    api_key: str
+124	    base_url: str | None = None
+125	
+126	class TokenUsage(BaseModel):
+127	    input_tokens: int
+128	    output_tokens: int
+129	    cache_read_tokens: int | None = None
+130	    cache_write_tokens: int | None = None
+131	
+132	class ModelResponse(BaseModel):
+133	    content: list[MessageContent]
+134	    stop_reason: StopReason
+135	    usage: TokenUsage
+136	
+137	class ModelProvider(Protocol):
+138	    provider_name: str
+139	
+140	    async def chat(
+141	        self,
+142	        messages: list[Message],
+143	        tools: list[dict[str, Any]] | None,
+144	        config: ModelConfig,
+145	    ) -> ModelResponse: ...
+146	
+147	    async def stream(
+148	        self,
+149	        messages: list[Message],
+150	        tools: list[dict[str, Any]] | None,
+151	        config: ModelConfig,
+152	    ) -> AsyncIterator[StreamEvent]: ...
+153	```
+154	
+155	### Registry
+156	
+157	```python
+158	# registry.py
+159	from wings.routing.protocol import ModelSelector
+160	
+161	class ModelRegistry:
+162	    def __init__(self, selector: ModelSelector):
+163	        self._providers: dict[str, ModelProvider] = {}
+164	        self._aliases: dict[str, str] = {}  # 别名 -> 标准名
+165	        self._selector = selector
+166	
+167	    def register(self, name: str, provider: ModelProvider) -> None: ...
+168	    def alias(self, alias: str, target: str) -> None:        # e.g. "opus" -> "claude-opus-4-6"
+169	    def get(self, name: str) -> ModelProvider: ...
+170	    def list(self) -> list[str]: ...
+171	
+172	    def select(self, task_type: str, override: str | None = None) -> str:
+173	        """从 ModelSelector 获取 API：用户指定 > 池选择。"""
+174	        return self._selector.select(task_type, override)
+175	```
+176	
+177	### 首批适配器
+178	
+179	| 文件 | 模型 | SDK |
+180	|------|------|-----|
+181	| `anthropic.py` | Claude (Opus, Sonnet, Haiku) | `anthropic` |
+182	| `openai.py` | GPT-4o, o4-mini, o-series | `openai` |
+183	| `google.py` | Gemini 2.5 Pro/Flash | `google-generative-ai` |
+184	| `openrouter.py` | 统一网关 | OpenAI-compatible SDK |
+185	
+186	### capabilities.py
+187	
+188	```python
+189	# capabilities.py
+190	from pydantic import BaseModel
+191	from typing import Literal
+192	
+193	class ModelCapabilities(BaseModel):
+194	    context_window: int           # 最大上下文 (tokens)
+195	    max_output_tokens: int        # 最大输出
+196	    supports_vision: bool         # 图片理解
+197	    supports_thinking: bool       # extended thinking
+198	    supports_tools: bool          # function calling
+199	    supports_streaming: bool      # 流式输出
+200	    supports_parallel_tools: bool # 并行 tool calls
+201	    speed_tier: Literal["fast", "normal", "slow"]
+202	    cost_per_m_input: float       # $/百万 token (输入)
+203	    cost_per_m_output: float      # $/百万 token (输出)
+204	```
+205	
+206	---
+207	
+208	## 2b. routing — API 候选池
+209	
+210	**位置**: `src/wings/routing/`
+211	**依赖**: 无（纯数据结构 + 随机算法）
+212	
+213	### 设计目标
+214	
+215	wings 的核心差异点：每次模型调用都从当前任务的 API 候选池中加权随机选择一个 API。用户通过打分和设置调整各任务类型的候选池。
+216	
+217	### 为什么 routing 先于 models 实现
+218	
+219	routing 模块零依赖（不依赖 messages、models、tools），可以独立开发和测试。其他模块通过 Protocol 依赖 routing，不依赖具体实现。即便后续彻底重写池的实现（换存储、换算法、换继承逻辑），也不影响调用方。
+220	
+221	### 分层架构
+222	
+223	```
+224	┌─────────────────────────────┐
+225	│  ModelSelector (Protocol)    │  ← 其他模块只依赖这个
+226	├─────────────────────────────┤
+227	│  APIPoolManager              │  ← 管理池、选择、调整、持久化
+228	├─────────────────────────────┤
+229	│  weighted_select()           │  ← 纯函数：列表 → 选中项
+230	│  resolve_parent()            │  ← 纯函数：task_type → parent
+231	│  resolve_pool()              │  ← 纯函数：task_type → 最终池
+232	├─────────────────────────────┤
+233	│  PoolEntry, TaskPool         │  ← Pydantic 数据结构
+234	│  PoolConfig                  │  ← 持久化格式
+235	│  TASK_HIERARCHY              │  ← 静态继承链（单一真相源）
+236	└─────────────────────────────┘
+237	```
+238	
+239	纯函数层（selector + tasks）无状态、无副作用，可独立测试和替换。有状态的管理器层（APIPoolManager）只做编排和锁管理。Protocol 层让调用方与实现解耦。
+240	
+241	### ModelSelector Protocol
+242	
+243	其他模块只依赖这个 Protocol，不依赖 `APIPoolManager` 具体类。
+244	
+245	```python
+246	# protocol.py
+247	from typing import Protocol
+248	
+249	class ModelSelector(Protocol):
+250	    """选择模型的接口。AgentLoop、QueryEngine 只依赖此协议。"""
+251	
+252	    def select(self, task_type: str, override: str | None = None) -> str:
+253	        """返回选中的 api_id。
+254	
+255	        Args:
+256	            task_type: 任务类型 ("main", "subagent/explore", "skill/commit", ...)
+257	            override: session 级模型锁定（用户 /model 命令设置），绕过池选择。
+258	
+259	        Returns:
+260	            api_id，如 "anthropic/claude-opus-4-6"
+261	
+262	        Raises:
+263	            NoAPIAvailable: 池中无可用 API
+264	        """
+265	        ...
+266	```
+267	
+268	### override 语义
+269	
+270	| 来源 | 持久性 | 说明 |
+271	|------|--------|------|
+272	| `/model <api>` | session 级锁定 | 后续所有 turn 使用此模型，直到 `/model random` |
+273	| `/model random` | — | 清除锁定，恢复池选择 |
+274	| Skill `model` 字段 | per-call | 该 skill 的一次调用使用指定模型，不影响其他 turn |
+275	
+276	实现上，`override` 是 session 级持久锁定值，由 AgentContext 携带。Skill 的 per-call 覆盖在子 agent 创建时处理（不经过池的 select）。
+277	
+278	### 数据结构
+279	
+280	```python
+281	# types.py
+282	from pydantic import BaseModel
+283	
+284	class PoolEntry(BaseModel):
+285	    """候选池中的单个 API 条目。
+286	
+287	    weight 为浮点数。浮点比较使用误差容限 1e-9。
+288	    """
+289	    api_id: str              # API 唯一标识，如 "anthropic/claude-opus-4-6"
+290	    weight: float = 1.0      # 相对概率权重，>= 0
+291	    enabled: bool = True     # False = 不参与选择
+292	
+293	class TaskPool(BaseModel):
+294	    """某个任务类型的 API 候选池（运行时结构）。
+295	
+296	    继承关系只在 TASK_HIERARCHY 中定义，
+297	    TaskPool 本身不携带 inherit_from，避免双源头不一致。
+298	    """
+299	    task_type: str
+300	    entries: list[PoolEntry]
+301	
+302	class PoolConfig(BaseModel):
+303	    """候选池持久化配置。
+304	
+305	    只存储有独立配置的池（entries 非空）。
+306	    未出现的 task_type 走继承链解析。
+307	    """
+308	    version: int = 1               # 配置格式版本，便于未来迁移
+309	    default_weight: float = 1.0    # 新 API 加入时的默认权重
+310	    pools: dict[str, list[PoolEntry]]  # task_type -> entries
+311	```
+312	
+313	### APIPoolManager
+314	
+315	```python
+316	# manager.py
+317	import threading
+318	from copy import deepcopy
+319	
+320	class APIPoolManager:
+321	    """管理所有任务类型的 API 候选池。
+322	
+323	    实现 ModelSelector Protocol。
+324	    线程安全：所有写操作持锁，select() 持锁。
+325	    全局单例，由 ModelRegistry 持有引用。
+326	    """
+327	
+328	    def __init__(
+329	        self,
+330	        config: PoolConfig | None = None,
+331	        *,
+332	        default_pool: TaskPool | None = None,
+333	    ):
+334	        self._lock = threading.RLock()
+335	        self._pools: dict[str, TaskPool] = {}
+336	        self._default_pool = default_pool
+337	        if config:
+338	            self.replace_config(config)
+339	        else:
+340	            self._init_defaults()
+341	
+342	    # --- 选择（对外核心接口）---
+343	
+344	    def select(self, task_type: str, override: str | None = None) -> str:
+345	        """从任务候选池中按权重随机选择。override 优先。"""
+346	        if override:
+347	            return override
+348	        with self._lock:
+349	            pool = resolve_pool(task_type, self._pools, default_pool=self._default_pool)
+350	            return weighted_select(pool.entries)
+351	
+352	    # --- 注册 ---
+353	
+354	    def register_api(
+355	        self,
+356	        api_id: str,
+357	        *,
+358	        add_to: list[str] | None = None,
+359	        exclude_from: list[str] | None = None,
+360	    ) -> None:
+361	        """注册新 API。默认加入所有已知任务类型的池。"""
+362	        if add_to is not None and exclude_from is not None:
+363	            raise ValueError("add_to and exclude_from are mutually exclusive")
+364	
+365	        entry = PoolEntry(api_id=api_id, weight=self._default_weight)
+366	
+367	        with self._lock:
+368	            if add_to is not None:
+369	                targets = set(add_to)
+370	            else:
+371	                targets = set(self._list_all_task_types())
+372	                if exclude_from is not None:
+373	                    targets -= set(exclude_from)
+374	            for task_type in targets:
+375	                self._ensure_pool(task_type).entries.append(deepcopy(entry))
+376	
+377	    def unregister_api(self, api_id: str) -> None:
+378	        """从所有池中移除该 API。"""
+379	        with self._lock:
+380	            for pool in self._pools.values():
+381	                pool.entries = [e for e in pool.entries if e.api_id != api_id]
+382	
+383	    # --- 用户调整 ---
+384	
+385	    def adjust_weight(self, task_type: str, api_id: str, weight: float) -> None: ...
+386	    def upvote(self, task_type: str, api_id: str, delta: float = 0.5) -> None: ...
+387	    def downvote(self, task_type: str, api_id: str, delta: float = 0.5) -> None:
+388	        """调低权重。最低为 0（不参与选择但仍在池中，可用 upvote 恢复）。"""
+389	    def disable(self, task_type: str, api_id: str) -> None:
+390	        """禁用（enabled=False，保留条目，可 enable 恢复）。"""
+391	    def enable(self, task_type: str, api_id: str) -> None: ...
+392	    def remove(self, task_type: str, api_id: str) -> None:
+393	        """永久删除条目（不可恢复）。"""
+394	
+395	    # --- 池 fork ---
+396	
+397	    def fork_pool(self, task_type: str) -> TaskPool:
+398	        """为子类型创建独立池（从父池深拷贝）。
+399	
+400	        例如 /pool fork skill/commit → 拷贝 subagent/skill 池到 skill/commit。
+401	        之后对 skill/commit 的调整不影响 subagent/skill。
+402	        """
+403	        with self._lock:
+404	            parent = resolve_pool(task_type, self._pools, default_pool=self._default_pool)
+405	            new_pool = TaskPool(
+406	                task_type=task_type,
+407	                entries=deepcopy(parent.entries),
+408	            )
+409	            self._pools[task_type] = new_pool
+410	            return new_pool
+411	
+412	    # --- 查询 ---
+413	
+414	    def get_pool(self, task_type: str) -> TaskPool: ...
+415	    def list_task_types(self) -> list[str]: ...
+416	    def list_apis(self, task_type: str) -> list[PoolEntry]: ...
+417	
+418	    # --- 持久化 ---
+419	
+420	    def to_config(self) -> PoolConfig:
+421	        """导出当前池状态为可持久化配置。
+422	
+423	        只导出有独立池的 task_type（entries 非空）。
+424	        调用时机：/pool save、会话结束时 config 模块调用。
+425	        """
+426	    def replace_config(self, config: PoolConfig) -> None:
+427	        """用配置文件内容替换当前池状态（加载配置时调用）。"""
+428	
+429	    # --- 内部 ---
+430	
+431	    @property
+432	    def _default_weight(self) -> float: ...
+433	    def _list_all_task_types(self) -> set[str]:
+434	        """所有已知任务类型（TASK_HIERARCHY + 已有独立池）。"""
+435	    def _ensure_pool(self, task_type: str) -> TaskPool: ...
+436	    def _init_defaults(self) -> None:
+437	        """初始化根任务类型空池。"""
+438	```
+439	
+440	### 选择算法
+441	
+442	```python
+443	# selector.py
+444	import random
+445	import math
+446	
+447	WEIGHT_EPSILON = 1e-9  # 权重比较容限
+448	
+449	class NoAPIAvailable(Exception):
+450	    """池中无可用 API。"""
+451	
+452	def weighted_select(entries: Sequence[PoolEntry]) -> str:
+453	    """按权重随机选择一个 API（纯函数）。
+454	
+455	    权重 <= EPSILON 或 disabled 的条目不参与选择。
+456	    """
+457	    active = [e for e in entries if e.enabled and e.weight > WEIGHT_EPSILON]
+458	    if not active:
+459	        raise NoAPIAvailable("no active API in pool")
+460	
+461	    total = sum(e.weight for e in active)
+462	    r = random.uniform(0, total)
+463	    cumulative = 0.0
+464	    for e in active:
+465	        cumulative += e.weight
+466	        if r <= cumulative:
+467	            return e.api_id
+468	    # 浮点舍入导致未命中，返回最后一个
+469	    return active[-1].api_id
+470	```
+471	
+472	### 任务类型继承（单一真相源）
+473	
+474	```python
+475	# tasks.py
+476	
+477	# 静态继承关系。继承关系只在这里定义，TaskPool 上不重复。
+478	# 不在此处的 task_type：
+479	#   - "skill/<name>" → resolve_parent 返回 "subagent/skill"
+480	#   - 其他未知 → resolve_parent 返回 None（视为根类型）
+481	TASK_HIERARCHY: dict[str, str | None] = {
+482	    "main": None,
+483	    "subagent": None,
+484	    "continuous": None,
+485	    "background": None,
+486	    "subagent/explore": "subagent",
+487	    "subagent/plan": "subagent",
+488	    "subagent/general": "subagent",
+489	    "subagent/compact": "subagent",
+490	    "subagent/memory": "subagent",
+491	    "subagent/skill": "subagent",
+492	    "subagent/meta": "subagent",
+493	    "subagent/classify": "subagent",
+494	    "subagent/code": "subagent",
+495	    "continuous/cron": "continuous",
+496	    "continuous/monitor": "continuous",
+497	    "continuous/heartbeat": "continuous",
+498	    "background/dream": "continuous",
+499	    "background/title": "continuous",
+500	    "background/compact": "continuous",
+501	    "background/flush": "continuous",
+502	}
+503	
+504	def resolve_parent(task_type: str) -> str | None:
+505	    """解析任务类型的父类型（纯函数）。
+506	
+507	    查找顺序：静态 TASK_HIERARCHY → skill/* 前缀 → 未知返回 None
+508	    """
+509	    if task_type in TASK_HIERARCHY:
+510	        return TASK_HIERARCHY[task_type]
+511	    if task_type.startswith("skill/"):
+512	        return "subagent/skill"
+513	    return None
+514	
+515	def resolve_pool(
+516	    task_type: str,
+517	    pools: dict[str, TaskPool],
+518	    *,
+519	    default_pool: TaskPool | None = None,
+520	) -> TaskPool:
+521	    """解析任务对应的最终池（纯函数）。
+522	
+523	    沿继承链向上查找，返回第一个有独立配置的池。
+524	    整条链都没有独立池时，使用 default_pool。
+525	    default_pool 也为 None 时抛出 NoAPIAvailable。
+526	    """
+527	    current = task_type
+528	    while current is not None:
+529	        pool = pools.get(current)
+530	        if pool is not None and pool.entries:
+531	            return pool
+532	        current = resolve_parent(current)
+533	    if default_pool is not None:
+534	        return default_pool
+535	    raise NoAPIAvailable(
+536	        f"no pool for task_type '{task_type}' and no default pool configured"
+537	    )
+538	```
+539	
+540	**fallback 链示例**：`skill/commit` → `subagent/skill`（无独立池）→ `subagent`（有独立池）→ 使用 subagent 池。如果 `subagent` 也没池，回退到 `default_pool`。连 `default_pool` 都没有才抛异常。
+541	
+542	**未知 task_type**：用户/插件可能创建未注册的自定义 task_type。此时 `resolve_parent()` 返回 `None`，`resolve_pool()` 直接走到 `default_pool`。不会崩。
+543	
+544	### 持久化时机
+545	
+546	运行时调整（upvote/downvote/disable/fork）**只修改内存**，不自动落盘：
+547	
+548	- **会话结束时**：config 模块调用 `pool_manager.to_config()` 写入 `~/.wings/config.toml`
+549	- **用户主动保存**：`/pool save` 命令
+550	- **加载时**：config 模块读 TOML → PoolConfig → `pool_manager.replace_config()`
+551	
+552	这样避免每次 upvote 都写盘，也允许用户在一个会话中随意试，不满意不保存。
+553	
+554	### 关键文件
+555	
+556	- `protocol.py` — `ModelSelector` Protocol（对外接口，最小表面积）
+557	- `types.py` — `PoolEntry`, `TaskPool`, `PoolConfig`（纯数据）
+558	- `selector.py` — `weighted_select()`, `NoAPIAvailable`（纯函数）
+559	- `tasks.py` — `TASK_HIERARCHY`, `resolve_parent()`, `resolve_pool()`（纯函数）
+560	- `manager.py` — `APIPoolManager`（有状态，线程安全，实现 ModelSelector）
+561	
+562	**每个文件可独立测试，可独立替换。**
+563	
+564	---
+565	
+566	## 3. tools — 工具系统
+567	
+568	**位置**: `src/wings/tools/`
+569	**依赖**: 无（独立模块）
+570	
+571	### Tool 协议
+572	
+573	```python
+574	# base.py
+575	from typing import Protocol, Any
+576	from pydantic import BaseModel
+577	from collections.abc import Callable
+578	
+579	class ToolResult(BaseModel):
+580	    output: str
+581	    error: str | None = None
+582	    metadata: dict[str, Any] = {}
+583	    max_result_size_chars: int | None = None  # 超此值写文件
+584	
+585	class ToolContext(BaseModel):
+586	    working_dir: str
+587	    env: dict[str, str]
+588	    session_id: str
+589	
+590	class Tool(Protocol):
+591	    """所有工具需实现的协议"""
+592	    name: str
+593	    description: str
+594	    search_hint: str
+595	
+596	    def input_schema(self) -> dict[str, Any]: ...  # JSON Schema
+597	
+598	    async def call(self, input: Any, context: ToolContext) -> ToolResult: ...
+599	
+600	    def is_enabled(self) -> bool: ...
+601	    def is_read_only(self, input: Any) -> bool: ...
+602	    def is_destructive(self, input: Any) -> bool: ...
+603	
+604	    def render_result(self, result: ToolResult) -> str: ...
+605	    def activity_description(self, input: Any) -> str: ...  # spinner 文案
+606	```
+607	
+608	### @tool 装饰器
+609	
+610	参考 opensquilla 的装饰器模式：
+611	
+612	```python
+613	# decorator.py
+614	import functools
+615	from typing import Type, get_type_hints
+616	from pydantic import BaseModel
+617	
+618	def tool(
+619	    *,
+620	    name: str,
+621	    description: str,
+622	    search_hint: str,
+623	    read_only: bool = False,
+624	    destructive: bool = False,
+625	):
+626	    """将 async 函数注册为 Tool"""
+627	    def decorator(fn):
+628	        hints = get_type_hints(fn)
+629	        # 第一个参数（input 之外）是 Pydantic model → input_schema
+630	        input_type = next(
+631	            (t for n, t in hints.items() if n != "return" and issubclass(t, BaseModel)),
+632	            None,
+633	        )
+634	
+635	        @functools.wraps(fn)
+636	        class _ToolAdapter:
+637	            name = name
+638	            description = description
+639	            search_hint = search_hint
+640	
+641	            def input_schema(self) -> dict:
+642	                return input_type.model_json_schema() if input_type else {}
+643	
+644	            async def call(self, input, context):
+645	                result = await fn(input, context)
+646	                return ToolResult(output=str(result))
+647	
+648	            def is_enabled(self) -> bool:
+649	                return True
+650	
+651	            def is_read_only(self, input=None) -> bool:
+652	                return read_only
+653	
+654	            def is_destructive(self, input=None) -> bool:
+655	                return destructive
+656	
+657	            def render_result(self, result: ToolResult) -> str:
+658	                return result.output
+659	
+660	            def activity_description(self, input=None) -> str:
+661	                return f"{name}..."
+662	
+663	        return _ToolAdapter()
+664	    return decorator
+665	```
+666	
+667	### Registry
+668	
+669	```python
+670	# registry.py
+671	class ToolRegistry:
+672	    def __init__(self):
+673	        self._tools: dict[str, Tool] = {}
+674	
+675	    def register(self, tool: Tool) -> None: ...
+676	    def get(self, name: str) -> Tool | None: ...
+677	    def list_all(self) -> list[Tool]: ...
+678	    def list_enabled(self) -> list[Tool]: ...
+679	    def get_schemas(self) -> list[dict[str, Any]]: ...  # 生成给 LLM 的 tool schemas
+680	    def filter_denied(self, deny_list: list[str]) -> None: ...
+681	```
+682	
+683	### 首批内置工具
+684	
+685	| 工具 | 文件 | 优先级 | 说明 |
+686	|------|------|--------|------|
+687	| `read` | `builtin/read.py` | P0 | 读取文件 |
+688	| `write` | `builtin/write.py` | P0 | 创建/覆盖文件 |
+689	| `edit` | `builtin/edit.py` | P0 | 精确字符串替换 |
+690	| `bash` | `builtin/bash.py` | P0 | shell 命令 |
+691	| `glob` | `builtin/glob.py` | P1 | 文件名模式匹配 |
+692	| `grep` | `builtin/grep.py` | P1 | 内容正则搜索 |
+693	| `skill_view` | `builtin/skill_view.py` | P1 | 加载 skill 内容 |
+694	| `agent` | `builtin/agent.py` | P1 | 启动子 agent |
+695	
+696	### MCP 工具加载
+697	
+698	`tools/mcp/loader.py` — 从 MCP 服务器加载工具，命名格式 `mcp__server__tool_name`，支持可选 prefix 剥离。
+699	
+700	---
+701	
+702	## 4. query — 查询引擎
+703	
+704	**位置**: `src/wings/query/`
+705	**依赖**: models, messages, tools
+706	
+707	### engine.py
+708	
+709	```python
+710	# engine.py
+711	from typing import AsyncIterator
+712	from wings.messages.types import Message, StreamEvent
+713	from wings.messages.normalize import MessageNormalizer
+714	from wings.models.protocol import ModelProvider, ModelConfig, ModelResponse
+715	from wings.models.registry import ModelRegistry
+716	
+717	class QueryEngine:
+718	    def __init__(
+719	        self,
+720	        normalizer: MessageNormalizer,
+721	        registry: ModelRegistry,
+722	    ): ...
+723	
+724	    async def stream(
+725	        self,
+726	        messages: list[Message],
+727	        model: str,              # 已选定的 API id（由 APIPoolManager.select 产生）
+728	        tools: list[dict],
+729	        config: ModelConfig,
+730	    ) -> AsyncIterator[StreamEvent]:
+731	        """流式查询 — 返回 AsyncIterator"""
+732	        provider = self._registry.get(model)
+733	        provider_messages = self._normalizer.to_provider(provider.provider_name, messages)
+734	        provider_tools = self._normalizer.tools_to_provider(provider.provider_name, tools)
+735	
+736	        async for event in provider.stream(provider_messages, provider_tools, config):
+737	            yield event  # 各 provider 已在 adapter 中转为内部格式
+738	
+739	    async def chat(
+740	        self,
+741	        messages: list[Message],
+742	        model: str,
+743	        tools: list[dict] | None,
+744	        config: ModelConfig,
+745	    ) -> ModelResponse: ...
+746	```
+747	
+748	职责：
+749	- 通过 normalizer 转换消息格式
+750	- 调用 model provider 的 `stream()` / `chat()`
+751	- 处理 API 错误，重试 + 降级 fallback 模型
+752	- Token 计数
+753	
+754	### token_budget.py
+755	
+756	```python
+757	# token_budget.py
+758	class TokenBudget:
+759	    def __init__(
+760	        self,
+761	        context_window: int,
+762	        reserved_for_output: int,    # 留给输出的配额
+763	        system_prompt_tokens: int,
+764	    ): ...
+765	
+766	    def remaining(self, messages: list[Message]) -> int: ...
+767	    def needs_compact(self, messages: list[Message]) -> bool: ...
+768	    def estimate_tokens(self, text: str) -> int: ...
+769	```
+770	
+771	---
+772	
+773	## 5. agent — Agent 核心循环
+774	
+775	**位置**: `src/wings/agent/`
+776	**依赖**: query, tools, messages, permissions, routing
+777	
+778	### 关键文件
+779	
+780	- `loop.py` — AgentLoop 主循环
+781	- `handoff.py` — HandoffDetector, TurnRecord（模型转交检测）
+782	- `subagent.py` — 子 agent 生成
+783	- `coordinator.py` — 多 agent 协调器
+784	- `resume.py` — 从 transcript 恢复会话
+785	
+786	### 模型转交 (Model Handoff)
+787	
+788	主对话中，候选池可能在同一会话的不同 turn 选出不同的模型。当同一模型的两次调用之间有其他模型被调用时，需要注入转交提示，让当前模型了解中间发生了什么，并审查是否需要修正。
+789	
+790	**触发条件**：模型 A 被调用 → 中间有其他模型被调用 → 模型 A 再次被调用。
+791	
+792	**注入的提示包含**：
+793	1. 说明中间任务已转交给其他模型处理
+794	2. 要求模型在进行当前任务之外，分析最近行为中是否有需要修正但尚未修正的问题
+795	
+796	```python
+797	# handoff.py
+798	from datetime import datetime
+799	from pydantic import BaseModel
+800	
+801	class TurnRecord(BaseModel):
+802	    """记录每个 turn 的模型调用情况"""
+803	    turn_id: int
+804	    model_id: str                                  # 使用的 API id
+805	    timestamp: datetime
+806	    user_input_summary: str                        # 用户输入摘要（一句话）
+807	    tool_calls: list[str]                          # 该 turn 中调用的工具名
+808	    summary: str = ""                              # 该 turn 做了什么（一句话）
+809	
+810	class HandoffDetector:
+811	    """检测模型转交，生成转交提示。
+812	
+813	    在主对话的 AgentLoop 中维护一个 TurnRecord 列表。
+814	    """
+815	
+816	    def detect(
+817	        self,
+818	        current_model: str,
+819	        turn_history: list[TurnRecord],
+820	    ) -> str | None:
+821	        """检测是否需要注入转交提示。
+822	
+823	        返回转交提示文本，或 None（不需要）。
+824	        """
+825	        if len(turn_history) < 2:
+826	            return None
+827	
+828	        # 找到当前模型上一次出现的 turn
+829	        previous_same_model = None
+830	        has_other_between = False
+831	        for turn in reversed(turn_history):
+832	            if turn.model_id == current_model:
+833	                previous_same_model = turn
+834	                break
+835	
+836	        if previous_same_model is None:
+837	            return None  # 该模型首次出现，无需转交
+838	
+839	        # 检查中间是否有其他模型
+840	        saw_self = False
+841	        intermediate_turns: list[TurnRecord] = []
+842	        for turn in reversed(turn_history):
+843	            if turn is previous_same_model:
+844	                saw_self = True
+845	            elif saw_self and turn.model_id != current_model:
+846	                intermediate_turns.append(turn)
+847	
+848	        if not intermediate_turns:
+849	            return None  # 中间没有其他模型
+850	
+851	        return self._build_handoff_prompt(
+852	            current_model=current_model,
+853	            previous_turn=previous_same_model,
+854	            intermediate_turns=intermediate_turns,
+855	        )
+856	
+857	    def _build_handoff_prompt(
+858	        self,
+859	        current_model: str,
+860	        previous_turn: TurnRecord,
+861	        intermediate_turns: list[TurnRecord],
+862	    ) -> str:
+863	        """构建转交提示。"""
+864	        other_models = sorted({t.model_id for t in intermediate_turns})
+865	        turns_desc = "\n".join(
+866	            f"  - [{t.model_id}] {t.summary or t.user_input_summary}"
+867	            for t in reversed(intermediate_turns)
+868	        )
+869	
+870	        return f"""\
+871	[系统提示] 自你上次参与此对话（turn #{previous_turn.turn_id}）以来，共有 \
+872	{len(intermediate_turns)} 个 turn 转交给了其他模型处理：{', '.join(other_models)}。
+873	
+874	中间发生的工作:
+875	{turns_desc}
+876	
+877	在进行当前任务之前，请：
+878	1. 审查这些中间 turn 的行为是否有需要修正但尚未修正的问题（如不一致的代码风格、
+879	   冲突的决策、遗漏的边界条件等）
+880	2. 如果发现问题，优先修正后再进行当前任务
+881	3. 如果没有需要修正的问题，直接进行当前任务"""
+882	```
+883	
+884	### loop.py（含转交检测）
+885	
+886	```python
+887	# loop.py
+888	from typing import AsyncIterator
+889	from wings.messages.types import Message, StreamEvent, Role
+890	from wings.tools.base import Tool, ToolContext, ToolResult
+891	from wings.query.engine import QueryEngine
+892	from wings.models.protocol import ModelConfig
+893	from wings.permissions.pipeline import PermissionPipeline
+894	from wings.routing.protocol import ModelSelector
+895	
+896	class AgentLoop:
+897	    def __init__(
+898	        self,
+899	        query_engine: QueryEngine,
+900	        tool_registry: ToolRegistry,
+901	        permission_pipeline: PermissionPipeline,
+902	        model_selector: ModelSelector,
+903	    ):
+904	        self._turn_history: list[TurnRecord] = []
+905	        self._handoff_detector = HandoffDetector()
+906	
+907	    async def run(
+908	        self,
+909	        user_input: str,
+910	        context: AgentContext,
+911	    ) -> AsyncIterator[StreamEvent]:
+912	        messages = self._assemble_messages(user_input, context)
+913	        model = self._select_model(context)  # from pool by task_type
+914	        config = self._build_config(model)
+915	        tools = self._tool_registry.get_schemas()
+916	
+917	        # --- 模型转交检测 ---
+918	        if context.task_type == "main":
+919	            handoff_prompt = self._handoff_detector.detect(
+920	                model, self._turn_history,
+921	            )
+922	            if handoff_prompt:
+923	                # 作为 system 消息注入到消息列表
+924	                messages.append(Message(role=Role.USER, content=[TextBlock(text=handoff_prompt)]))
+925	
+926	        # 记录当前 turn
+927	        self._turn_history.append(TurnRecord(
+928	            turn_id=len(self._turn_history),
+929	            model_id=model,
+930	            timestamp=datetime.now(),
+931	            user_input_summary=user_input[:200],
+932	            tool_calls=[],
+933	        ))
+934	
+935	        while True:
+936	            had_tool_use = False
+937	
+938	            async for event in self._query_engine.stream(
+939	                messages, model, tools, config,
+940	            ):
+941	                if event.type == "tool_use":
+942	                    tool = self._tool_registry.get(event.name)
+943	                    if tool:
+944	                        decision = await self._permission_pipeline.check(
+945	                            tool, event.input, self._tool_context,
+946	                        )
+947	                        if decision == "deny":
+948	                            messages.append(self._inject_error(event.id, "Permission denied"))
+949	                            had_tool_use = True
+950	                            break
+951	
+952	                        # 记录工具调用
+953	                        self._turn_history[-1].tool_calls.append(event.name)
+954	
+955	                        result = await tool.call(event.input, self._tool_context)
+956	                        messages.append(ToolResultMessage(
+957	                            role=Role.USER,
+958	                            content=[ToolResultBlock(
+959	                                tool_use_id=event.id,
+960	                                content=result.output,
+961	                                is_error=result.error is not None,
+962	                            )],
+963	                        ))
+964	                        had_tool_use = True
+965	                        break
+966	
+967	                yield event  # 文本、thinking 直接输出
+968	
+969	            if not had_tool_use:
+970	                # 更新 turn 摘要
+971	                self._turn_history[-1].summary = self._extract_summary(messages)
+972	                return  # end_turn
+973	
+974	    def _assemble_messages(self, user_input: str, context: AgentContext) -> list[Message]: ...
+975	    def _select_model(self, context: AgentContext) -> str:
+976	        """从 ModelSelector 获取 API。"""
+977	        return self._selector.select(
+978	            task_type=context.task_type,
+979	            override=context.model_override,
+980	        )
+981	    def _inject_error(self, tool_use_id: str, error: str) -> Message: ...
+982	    def _extract_summary(self, messages: list[Message]) -> str: ...
+983	```
+984	```
+985	
+986	### 子 Agent 类型与任务分类
+987	
+988	参考 claude-code 和 opensquilla 的子 agent 体系，wings 将所有任务分为以下类型，每种类型对应独立的 API 候选池，可选用不同的默认工具集。
+989	
+990	#### 任务类型全景
+991	
+992	| 任务类型 | 触发场景 | 来源参考 | 默认 API 池 | 默认工具集 |
+993	|----------|----------|----------|-------------|-----------|
+994	| `main` | 主 session 与用户对话 | 两个项目的主 REPL 循环 | 全部 API | 全部工具 |
+995	| `subagent/explore` | 代码库探索、搜索、理解结构 | claude-code `exploreAgent` | 继承 subagent | read, glob, grep, web_search |
+996	| `subagent/plan` | 方案规划、架构设计 | claude-code `planAgent` | 继承 subagent | read, glob, grep, web_search |
+997	| `subagent/general` | 通用子任务委托 | claude-code `generalPurposeAgent` | subagent 池 | 受限工具集 |
+998	| `subagent/compact` | 对话压缩/摘要 | 两个项目都有 compact 服务 | subagent 池 | 无工具（纯 LLM 摘要） |
+999	| `subagent/memory` | 记忆保存、刷新、巩固 (Dream) | opensquilla memory flush/dream | subagent 池 | memory 读写工具 |
+1000	| `subagent/skill` | 技能执行（fork 模式，未细分时回退到此） | 两个项目的 skill 系统 | subagent 池 | 技能指定的工具 |
+1001	| `skill/<name>` | 特定技能（如 `skill/commit`, `skill/review-pr`）| 继承 subagent/skill | 继承 subagent/skill | 该技能指定的工具 |
+1002	| `subagent/meta` | DAG 多步编排子任务 | opensquilla meta-skill orchestrator | subagent 池 | 编排器指定工具 |
+1003	| `subagent/classify` | 确定性分类/路由决策 | opensquilla `llm_classify` | subagent 池 | 无工具 |
+1004	| `subagent/chat` | 隔离对话（如敏感内容处理） | opensquilla `llm_chat` | subagent 池 | 受限工具 |
+1005	| `subagent/code` | 编码模式子任务 | opensquilla coding_mode | subagent 池 | read, write, edit, bash |
+1006	| `continuous/cron` | 定时任务执行 | claude-code CronTool, opensquilla scheduler | continuous 池 | 任务指定工具 |
+1007	| `continuous/monitor` | 轮询/监控 | claude-code MonitorTool | continuous 池 | 状态检查工具 |
+1008	| `continuous/heartbeat` | 心跳检查 | opensquilla HEARTBEAT.md | continuous 池 | 无工具（轻量检查） |
+1009	| `background/dream` | 离线记忆巩固 | 两个项目的 Dream 系统 | continuous 池 | memory 读写 |
+1010	| `background/title` | 会话命名 | opensquilla session naming | continuous 池 | 无工具 |
+1011	| `background/compact` | 后台上下文压缩 | claude-code auto-compact | continuous 池 | 无工具 |
+1012	| `background/flush` | 会话关闭记忆刷新 | opensquilla SessionFlushService | continuous 池 | memory 写入 |
+1013	
+1014	#### 详细说明
+1015	
+1016	**Explore Agent** (claude-code `exploreAgent`)
+1017	- 触发：模型需要理解不熟悉的代码库结构时
+1018	- 特点：只读工具为主，fork 语义隔离上下文
+1019	- System prompt 强调"快速搜索、不修改文件"
+1020	- API 池偏好：便宜快速的模型（探索不需要深度推理）
+1021	
+1022	**Plan Agent** (claude-code `planAgent`)
+1023	- 触发：需要设计方案、规划实施步骤时
+1024	- 特点：可读但不应修改文件
+1025	- System prompt 强调"考虑架构权衡、设计可验证的步骤"
+1026	- API 池偏好：推理能力强的模型
+1027	
+1028	**General Purpose Agent** (claude-code `generalPurposeAgent`)
+1029	- 触发：通用子任务委托，未匹配到专门类型时回退
+1030	- 特点：受限但完整的工具集
+1031	- 用于隔离上下文、并行执行独立子任务
+1032	
+1033	**Compact Agent**
+1034	- 触发：上下文窗口接近上限，需压缩历史消息
+1035	- claude-code 有 4 种 compact prompt（完整/部分/前缀/无工具）
+1036	- opensquilla 额外提取"义务"（目标、约束、决策、工件、错误）
+1037	- 纯 LLM 摘要任务，不需要工具
+1038	
+1039	**Memory Agent**
+1040	- 触发：会话结束、定期保存记忆、Dream 巩固
+1041	- opensquilla 的 Dream 是离线 LLM 过程：扫描新文件 → 证据评分 → 排序 → LLM 决策 upsert/merge/skip → 应用到 MEMORY.md
+1042	- claude-code 在会话结束时自动保存学习内容
+1043	
+1044	**Meta Agent** (opensquilla meta-skill orchestrator)
+1045	- 触发：复杂多步技能需要分解为 DAG 执行时
+1046	- SOP 编译器将自然语言工作流编译为 DAG
+1047	- 每个节点作为独立子 agent 执行，支持并行和依赖
+1048	
+1049	**Cron / Monitor / Heartbeat** (continuous 类)
+1050	- 定时任务：用户设定的周期性任务（如"每 5 分钟检查部署状态"）
+1051	- 监控：后台轮询检查状态变化
+1052	- 心跳：opensquilla 的心跳机制，定期注入 HEARTBEAT.md 内容
+1053	
+1054	**Skill Agent** (per-skill 独立池)
+1055	- 每个 skill 如果触发 API 调用，都可以有自己的候选池 `skill/<name>`
+1056	- 例如 `/pool` 可以为 `skill/commit` 单独设置池（偏好快速模型），为 `skill/review-pr` 设置另一个池（偏好推理强模型）
+1057	- 默认继承 `subagent/skill` 池，用户可用 `/pool fork skill/<name>` 创建独立池
+1058	- Skill 注册时自动创建对应的任务类型条目，但默认不分配独立池（走继承）
+1059	- 适用于 claude-code 和 opensquilla 中所有 fork 模式的 skill
+1060	
+1061	#### 任务继承关系
+1062	
+1063	```
+1064	main                          # 根任务（主对话）
+1065	subagent                      # 子 agent 基类型
+1066	├── subagent/explore          # 继承 subagent（可 fork 独立池）
+1067	├── subagent/plan
+1068	├── subagent/general
+1069	├── subagent/compact
+1070	├── subagent/memory
+1071	├── subagent/skill            # 技能执行基类型
+1072	│   ├── skill/commit          # 继承 subagent/skill（每个 skill 可有独立池）
+1073	│   ├── skill/review-pr
+1074	│   ├── skill/pdf
+1075	│   ├── skill/simplify
+1076	│   └── skill/<name>          # 动态注册，默认继承 subagent/skill
+1077	├── subagent/meta
+1078	├── subagent/classify
+1079	├── subagent/chat
+1080	└── subagent/code
+1081	continuous                    # 根任务（持续运行）
+1082	├── continuous/cron
+1083	├── continuous/monitor
+1084	└── continuous/heartbeat
+1085	background                    # 根任务（后台触发）
+1086	├── background/dream
+1087	├── background/title
+1088	├── background/compact
+1089	└── background/flush
+1090	```
+1091	
+1092	各子类型默认继承父任务类型的 API 候选池。用户可用 `/pool fork <subtype>` 为子类型创建独立池。
+1093	
+1094	### 模型选择优先级
+1095	
+1096	同一会话中，模型选择遵循以下优先级：
+1097	
+1098	1. **Skill 指定模型** — skill 定义的 `model` 覆盖（如某 skill 要求特定模型）
+1099	2. **用户 `/model` 覆盖** — `/model claude-opus-4-6` 临时指定
+1100	3. **子任务独立池** — `subagent/explore` 等有独立池时用独立池
+1101	4. **父任务池回退** — 无独立池时回退到父类型池（如 subagent）
+1102	5. **全局默认池** — 极端回退
+1103	
+1104	```python
+1105	def resolve_model(
+1106	    task_type: str,
+1107	    skill_model: str | None = None,
+1108	    user_override: str | None = None,
+1109	    pools: dict[str, TaskPool] | None = None,
+1110	) -> str:
+1111	    if skill_model:
+1112	        return skill_model
+1113	    if user_override:
+1114	        return user_override
+1115	    return pool_manager.select(task_type)
+1116	```
+1117	
+1118	### subagent.py
+1119	
+1120	子 agent 生成：
+1121	- 独立 AgentLoop 实例，受限工具集（只读为主）
+1122	- fork 语义：继承父 agent 的部分上下文
+1123	- `builtin/agent_tool.py` 调用此逻辑
+1124	- 可指定任务类型以选择不同 API 池
+1125	
+1126	### coordinator.py
+1127	
+1128	多 agent 协调器（参考 opensquilla MetaOrchestrator）：
+1129	- 复杂任务分解为 DAG
+1130	- 各节点作为独立子 agent 执行，各自从对应任务池选择 API
+1131	- 支持并行节点 + 依赖节点
+1132	- 事件流合并：多子 agent 的输出合并为统一流
+1133	- 结果汇总
+1134	
+1135	### resume.py
+1136	
+1137	从持久化 transcript 恢复会话：
+1138	- 重建 Message[] 历史
+1139	- 恢复 agent 状态
+1140	- 恢复 TurnRecord 历史（保证模型转交检测连续性）
+1141	
+1142	---
+1143	
+1144	## 6. permissions — 权限系统
+1145	
+1146	**位置**: `src/wings/permissions/`
+1147	**依赖**: tools
+1148	
+1149	### pipeline.py
+1150	
+1151	```python
+1152	# pipeline.py
+1153	from typing import Literal
+1154	from wings.tools.base import Tool, ToolContext
+1155	
+1156	PermissionResult = Literal["allow", "deny", "ask"]
+1157	
+1158	class PermissionPipeline:
+1159	    def __init__(
+1160	        self,
+1161	        rules: "PermissionRules",
+1162	        hook_runner: "HookRunner | None" = None,
+1163	    ): ...
+1164	
+1165	    async def check(
+1166	        self,
+1167	        tool: Tool,
+1168	        tool_input: object,
+1169	        context: ToolContext,
+1170	    ) -> PermissionResult:
+1171	        # Stage 1: 静态规则
+1172	        static_result = self._rules.match(tool.name)
+1173	        if static_result != "ask":
+1174	            return static_result
+1175	
+1176	        # Stage 2: 自动分类（只读操作自动放行）
+1177	        if tool.is_read_only(tool_input):
+1178	            return "allow"
+1179	
+1180	        # Stage 3: hooks
+1181	        if self._hook_runner:
+1182	            hook_result = await self._hook_runner.run_pre_tool_use(
+1183	                tool.name, tool_input,
+1184	            )
+1185	            if hook_result is not None:
+1186	                return hook_result
+1187	
+1188	        # Stage 4: 交互式审批（交给 UI）
+1189	        return "ask"
+1190	```
+1191	
+1192	### rules.py
+1193	
+1194	```python
+1195	# rules.py
+1196	class PermissionRules:
+1197	    allowlist: set[str]     # 始终允许
+1198	    denylist: set[str]      # 始终拒绝
+1199	    asklist: set[str]       # 每次询问
+1200	
+1201	    @classmethod
+1202	    def from_config(cls, config: dict) -> "PermissionRules": ...
+1203	
+1204	    def match(self, tool_name: str) -> PermissionResult:
+1205	        if tool_name in self.denylist:
+1206	            return "deny"
+1207	        if tool_name in self.allowlist:
+1208	            return "allow"
+1209	        return "ask"
+1210	
+1211	    def add_allow(self, tool_name: str) -> None: ...
+1212	    def add_deny(self, tool_name: str) -> None: ...
+1213	```
+1214	
+1215	---
+1216	
+1217	## 7. hooks — 生命周期钩子
+1218	
+1219	**位置**: `src/wings/hooks/`
+1220	**依赖**: 无
+1221	
+1222	### types.py
+1223	
+1224	```python
+1225	# types.py
+1226	from enum import Enum
+1227	
+1228	class HookEvent(str, Enum):
+1229	    PRE_TOOL_USE = "pre_tool_use"
+1230	    POST_TOOL_USE = "post_tool_use"
+1231	    USER_PROMPT_SUBMIT = "user_prompt_submit"
+1232	    SESSION_START = "session_start"
+1233	    STOP = "stop"
+1234	    PRE_COMPACT = "pre_compact"
+1235	    NOTIFICATION = "notification"
+1236	
+1237	class HookConfig(BaseModel):
+1238	    event: HookEvent
+1239	    command: str              # shell 命令或脚本路径
+1240	    matcher: str | None = None  # 可选：仅匹配特定工具名的正则
+1241	```
+1242	
+1243	### runner.py
+1244	
+1245	钩子可以：
+1246	- `updated_input` — 修改工具输入
+1247	- `decision: "block"` — 阻止操作
+1248	- `additional_context` — 向模型注入额外上下文
+1249	- `system_message` — 向用户显示系统消息
+1250	- `suppress_output` — 隐藏工具输出
+1251	
+1252	---
+1253	
+1254	## 8. config — 配置系统
+1255	
+1256	**位置**: `src/wings/config/`
+1257	**依赖**: 无
+1258	
+1259	### 分层配置（优先级从高到低）
+1260	
+1261	```
+1262	CLI 参数 > 环境变量 > 项目配置 (wings.toml) > 全局配置 (~/.wings/config.toml) > 内置默认
+1263	```
+1264	
+1265	### 候选池配置示例 (`~/.wings/config.toml`)
+1266	
+1267	```toml
+1268	[routing]
+1269	default_weight = 1.0
+1270	
+1271	# 主对话池：偏好 Claude Opus
+1272	[[routing.pools.main]]
+1273	api_id = "anthropic/claude-opus-4-6"
+1274	weight = 2.0
+1275	
+1276	[[routing.pools.main]]
+1277	api_id = "openai/gpt-4o"
+1278	weight = 1.0
+1279	
+1280	[[routing.pools.main]]
+1281	api_id = "google/gemini-2.5-pro"
+1282	weight = 0.5  # 不太偏好
+1283	
+1284	# 子 agent 池：偏好快速便宜的模型
+1285	[[routing.pools.subagent]]
+1286	api_id = "anthropic/claude-haiku-4-5"
+1287	weight = 3.0
+1288	
+1289	[[routing.pools.subagent]]
+1290	api_id = "openai/o4-mini"
+1291	weight = 1.0
+1292	
+1293	# subagent/explore 继承 subagent 池，无需单独配置
+1294	# subagent/plan 同样继承
+1295	
+1296	# 后台任务池：只需要便宜的
+1297	[[routing.pools.continuous]]
+1298	api_id = "anthropic/claude-haiku-4-5"
+1299	weight = 1.0
+1300	```
+1301	
+1302	参考 opensquilla 的 Pydantic Settings 模式：
+1303	
+1304	### settings.py
+1305	
+1306	```python
+1307	# settings.py
+1308	from pydantic_settings import BaseSettings, SettingsConfigDict
+1309	from pathlib import Path
+1310	
+1311	class LLMConfig(BaseModel):
+1312	    provider: str = "anthropic"
+1313	    model: str = "claude-sonnet-4-6"
+1314	    api_key: str = ""
+1315	    base_url: str | None = None
+1316	
+1317	class GlobalSettings(BaseSettings):
+1318	    model_config = SettingsConfigDict(
+1319	        env_prefix="WINGS_",
+1320	        env_nested_delimiter="__",
+1321	        toml_file=Path.home() / ".wings" / "config.toml",
+1322	    )
+1323	
+1324	    default_model: str = "claude-sonnet-4-6"
+1325	    llm: dict[str, LLMConfig] = {}
+1326	
+1327	    # API 候选池配置
+1328	    routing: PoolConfig = PoolConfig()
+1329	
+1330	    theme: Literal["dark", "light"] = "dark"
+1331	    auto_compact: bool = True
+1332	
+1333	class ProjectSettings(BaseModel):
+1334	    allowed_tools: list[str] = []
+1335	    denied_tools: list[str] = []
+1336	    model: str | None = None        # 项目级模型覆盖
+1337	    mcp_servers: list[str] = []
+1338	    hooks: dict[str, list[str]] = {}  # 项目级 hooks
+1339	    personality: str | None = None    # 追加到 system prompt
+1340	
+1341	    @classmethod
+1342	    def from_directory(cls, dir_path: Path) -> "ProjectSettings":
+1343	        toml_file = dir_path / "wings.toml"
+1344	        if toml_file.exists():
+1345	            import tomllib
+1346	            return cls(**tomllib.loads(toml_file.read_text()))
+1347	        return cls()
+1348	```
+1349	
+1350	---
+1351	
+1352	## 9. context — 上下文收集
+1353	
+1354	**位置**: `src/wings/context/`
+1355	
+1356	### system_prompt.py
+1357	
+1358	组装系统提示词，包含：
+1359	- 工具列表描述（从 ToolRegistry.get_schemas() 生成）
+1360	- 环境信息（OS, shell, date, git status）
+1361	- 行为指引（"一切皆工具"、"先读再改"、"简洁回复"等）
+1362	
+1363	参考 opensquilla 的 `identity/templates/bootstrap/` 多文件注入模式（AGENTS.md, TOOLS.md, SOUL.md 分开管理）。
+1364	
+1365	### environment.py
+1366	
+1367	```python
+1368	# environment.py
+1369	from pydantic import BaseModel
+1370	from datetime import datetime
+1371	
+1372	class Environment(BaseModel):
+1373	    os: str
+1374	    shell: str
+1375	    working_dir: str
+1376	    date: str = datetime.now().strftime("%Y-%m-%d")
+1377	    git_branch: str | None = None
+1378	    git_status: str | None = None
+1379	
+1380	    @classmethod
+1381	    def detect(cls) -> "Environment": ...
+1382	```
+1383	
+1384	---
+1385	
+1386	## 10. 其他模块
+1387	
+1388	### memory — 持久化记忆
+1389	- `memory/store.py` — 文件系统存储，按类型分文件（user, project, feedback, reference）
+1390	- 格式：markdown + YAML frontmatter（参考 opensquilla 的 MEMORY.md 模式）
+1391	- Phase 2 参考 opensquilla `memory/dream/` 做离线记忆巩固
+1392	
+1393	### skills — 可复用技能
+1394	- `skills/loader.py` — 从 `~/.wings/skills/` 等目录加载 `.md` 技能定义
+1395	- 技能 = 预定义 prompt + 可选工具组合
+1396	- 参考 opensquilla 的 6 层加载（Extra < Bundled < Managed < Personal < Project < Workspace）
+1397	
+1398	### plugins — 插件系统
+1399	- `plugins/loader.py` — 从 PyPI 包或本地路径加载插件
+1400	- 插件可提供：tools、模型适配器、hooks
+1401	- 参考 opensquilla 的 `channels/registry.py` 的 pkgutil 自动发现模式
+1402	
+1403	### services — 外部服务
+1404	- `services/api/` — HTTP 客户端（httpx：重试、超时、代理）
+1405	- `services/mcp/` — MCP client/server 实现
+1406	
+1407	---
+1408	
+1409	## 11. 实施顺序
+1410	
+1411	| 阶段 | 模块 | 状态 | 实际文件 | 测试数 |
+1412	|------|------|------|----------|--------|
+1413	| 1 | messages | ✅ | `types.py`, `normalize.py` (含 MessageNormalizer) | 26 |
+1414	| 1b | routing | ✅ | `protocol.py`, `types.py`, `selector.py`, `tasks.py`, `manager.py` | 47 |
+1415	| 2 | models | ✅ | `protocol.py`, `capabilities.py`, `registry.py`, `anthropic.py`, `openai.py` | 21 |
+1416	| 3 | tools | ✅ | `base.py`, `registry.py`, `decorator.py`, `builtin/` (read, write, edit, bash, glob, grep, skill_view) | 35 |
+1417	| 4 | query | ✅ | `engine.py` (retry), `token_budget.py` (heuristic) | 15 |
+1418	| 5 | permissions | ✅ | `pipeline.py` (5-stage), `rules.py` (scoped rules) | 17 |
+1419	| 6a | agent/core | ✅ | `loop.py` (per-call model selection, permission sync), `handoff.py` | 12 |
+1420	| 6b | agent/subagent | ✅ | `subagent.py` (AgentTypeSpec, 3 builtin types, run_subagent), `tools/builtin/agent.py` | 24 |
+1421	| 7 | config | ✅ | `settings.py` (JSON, ProviderConfig w/ thinking/max_tokens) | — |
+1422	| 8 | cli | ✅ | `main.py` (chat + run, slash commands, tool display, permission UI, ctrl+o pager) | — |
+1423	| 9a | skills | ✅ | `types.py`, `loader.py`, `injector.py`, `builtin_data.py`, `builtin/` SKILL.md | 31 |
+1424	| 9b+ | hooks, memory, plugins, MCP | — | 后续迭代 | — |
+1425	
+1426	**总计**: 10 个阶段完成，224 个测试。
+1427	
+1428	### 当前模块结构
+1429	
+1430	```
+1431	src/wings/
+1432	├── __init__.py
+1433	├── messages/           # Phase 1  ✅
+1434	│   ├── __init__.py
+1435	│   ├── types.py        # Message, Role, TextBlock, ToolUseBlock, ToolResultBlock,
+1436	│   │                     StreamEvent, StopReason, PermissionRequest
+1437	│   └── normalize.py    # MessageNormalizer + from_/to_ anthropic + openai
+1438	├── routing/            # Phase 1b ✅
+1439	│   ├── __init__.py
+1440	│   ├── protocol.py     # ModelSelector Protocol
+1441	│   ├── types.py        # PoolEntry, TaskPool, PoolConfig
+1442	│   ├── selector.py     # softmax_select(), NoAPIAvailable
+1443	│   ├── tasks.py        # TASK_HIERARCHY, resolve_parent(), resolve_pool()
+1444	│   └── manager.py      # APIPoolManager (thread-safe, implements ModelSelector)
+1445	├── models/             # Phase 2  ✅
+1446	│   ├── __init__.py
+1447	│   ├── protocol.py     # ModelConfig (thinking, adaptive, escalation), Protocol
+1448	│   ├── capabilities.py # ModelCapabilities catalog
+1449	│   ├── registry.py     # ModelRegistry
+1450	│   ├── anthropic.py    # AnthropicProvider (adaptive thinking, max_tokens escalation)
+1451	│   └── openai.py       # OpenAIProvider
+1452	├── tools/              # Phase 3  ✅
+1453	│   ├── __init__.py
+1454	│   ├── base.py         # ToolResult, ToolContext (w/ read_cache, available_skills)
+1455	│   ├── registry.py     # ToolRegistry
+1456	│   ├── decorator.py    # @tool decorator (dict → Pydantic coercion)
+1457	│   └── builtin/
+1458	│       ├── __init__.py
+1459	│       ├── read.py     # Read w/ binary detection, device blocking, read_cache
+1460	│       ├── write.py    # Create/update w/ stale detection, diff display
+1461	│       ├── edit.py     # Exact string replace w/ stale detection, @@ diff hunks
+1462	│       ├── bash.py     # Shell w/ denylist, sleep blocking, elapsed time
+1463	│       ├── glob.py     # File pattern matching w/ summary
+1464	│       ├── grep.py     # Regex search w/ VCS exclusion, match summary
+1465	│       └── skill_view.py  # Load skill content by name
+1466	├── query/              # Phase 4  ✅
+1467	│   ├── __init__.py
+1468	│   ├── engine.py       # QueryEngine (retry with exponential backoff)
+1469	│   └── token_budget.py # TokenBudget
+1470	├── permissions/        # Phase 5  ✅
+1471	│   ├── __init__.py
+1472	│   ├── pipeline.py     # 5-stage pipeline (rules → scoped → classify → hooks → ask)
+1473	│   └── rules.py        # PermissionRules (tool-level + scoped), suggest_scope()
+1474	├── agent/              # Phase 6 ✅
+1475	│   ├── __init__.py
+1476	│   ├── handoff.py      # TurnRecord, HandoffDetector
+1477	│   ├── loop.py         # AgentLoop (per-call model selection, permission sync, subagent events)
+1478	│   └── subagent.py     # AgentTypeSpec, BUILTIN_AGENT_TYPES, run_subagent()
+1479	├── config/             # Phase 7  ✅
+1480	│   ├── __init__.py
+1481	│   └── settings.py     # GlobalSettings, ProviderConfig, ProjectSettings, AppConfig
+1482	├── cli/                # Phase 8  ✅
+1483	│   ├── __init__.py
+1484	│   ├── main.py         # Typer CLI (chat + run, slash commands, permission UI)
+1485	│   ├── bootstrap.py    # Composition root wiring
+1486	│   └── logging.py      # TurnLogger with cycle timestamps + thinking capture
+1487	└── skills/             # Phase 9a ✅
+1488	    ├── __init__.py
+1489	    ├── types.py        # SkillSpec dataclass
+1490	    ├── loader.py       # SkillLoader (3-layer: builtin < user < project)
+1491	    ├── injector.py     # SkillInjector (<available_skills> XML block)
+1492	    ├── builtin_data.py # builtin_skills_dir() via importlib.resources
+1493	    └── builtin/        # SKILL.md files for commit, review-pr, simplify
+1494	```
+1495	
+1496	### 开发过程中的设计决策与反思
+1497	
+1498	#### 1. MessageNormalizer 的补位
+1499	
+1500	设计文档定义了带 `to_internal(provider, messages)` / `to_provider(provider, messages)` 的 Protocol，但 Phase 1 实现只有裸函数（`from_anthropic`, `to_openai` 等）。Phase 2 开发时发现：QueryEngine 需要一个统一入口来路由到不同 provider 的转换器，否则每个调用方都要写 if-else 分支。
+1501	
+1502	**决策**: 在 Phase 1 中追加 `MessageNormalizer` 类，内部维护 `_from_provider` / `_to_provider` 注册表，模块加载时自动注册 anthropic 和 openai。对外暴露模块级 `normalizer` 单例。代价很小（~50 行），消除了未来的 if-else 扩散。
+1503	
+1504	#### 2. Protocol 作为模块边界
+1505	
+1506	routing 和 models 两个模块都遵循同一个模式：定义 Protocol → 实现类 → 调用方只依赖 Protocol。
+1507	
+1508	- `ModelSelector` Protocol → `APIPoolManager` 实现 → `ModelRegistry` / `AgentLoop` 依赖
+1509	- `ModelProvider` Protocol → `AnthropicProvider` / `OpenAIProvider` 实现 → `QueryEngine` 依赖
+1510	
+1511	**效果**: 换池实现（比如从加权随机换成 epsilon-greedy）不需要改 ModelRegistry。换 provider（比如新增 Google）不需要改 QueryEngine。Protocol 是零成本的类型安全抽象——Python 不做运行时检查，但 mypy 能做。
+1512	
+1513	#### 3. 纯函数层的价值
+1514	
+1515	routing 模块将 `weighted_select()`、`resolve_parent()`、`resolve_pool()` 作为纯函数独立出来。它们在测试中不需要构造 Manager、不需要 mock 锁、不需要关心线程安全。47 个 routing 测试中，~30 个只测纯函数。
+1516	
+1517	**决策**: 保持这个模式。Phase 3 的 tools、Phase 5 的 permissions 也应该先写纯函数层。
+1518	
+1519	#### 4. 设计文档 vs 实现的差异
+1520	
+1521	部分设计细节在实现时调整了：
+1522	
+1523	| 设计 | 实现 | 原因 |
+1524	|------|------|------|
+1525	| `TaskPool.inherit_from` 字段 | 删除，只用 `TASK_HIERARCHY` | 双源头会不一致 |
+1526	| `PoolConfig.version` 字段 | 新增 | 配置格式升级需要版本号 |
+1527	| `get_pool()` 行为 | 返回池（允许空），`select()` 才抛异常 | 查询和选择是不同的操作 |
+1528	| `from_config()` 类方法 | 改为 `replace_config()` | 构造函数用 `config=` 参数更直观 |
+1529	| `math` import 多余 | 删除 | lint 发现 |
+1530	
+1531	#### 5. Adapter 的灵活性设计
+1532	
+1533	Anthropic 和 OpenAI 的消息格式差异很大（system 消息位置、tool call 序列化方式、streaming 事件结构）。Adapter 内部做转换是对调用方完全透明的。
+1534	
+1535	**Anthropic 特有处理**: system 消息从消息列表提取为顶层 `system` 参数；thinking mode 通过 `thinking: {type: enabled, budget_tokens}` 配置。
+1536	
+1537	**OpenAI 特有处理**: o-series 模型用 `max_completion_tokens` 而非 `max_tokens`；tool call arguments 是 JSON 字符串需要 parse；streaming 中 tool call 通过 index 增量拼接。
+1538	
+1539	#### 6. 模块间依赖
+1540	
+1541	```
+1542	messages  ← 无依赖
+1543	    ↓
+1544	routing   ← 无依赖（纯数据结构 + 算法）
+1545	    ↓
+1546	models    ← messages (normalizer) + routing (ModelSelector Protocol)
+1547	    ↓
+1548	tools     ← 无依赖（独立模块）
+1549	    ↓
+1550	query     ← models + messages + tools
+1551	    ↓
+1552	agent     ← query + tools + messages + permissions + routing
+1553	    ↓
+1554	config    ← routing (PoolConfig) + 无依赖 (TOML 解析)
+1555	    ↓
+1556	cli       ← agent + config + models + routing (全部模块汇聚)
+1557	```
+1558	
+1559	### 调整说明（2026-07-04）
+1560	
+1561	原计划 Phase 6b 做 subagent/coordinator，但当前优先级调整为**尽快端到端跑通**。最小可用路径：
+1562	
+1563	```
+1564	已完成的 7 个模块 → config (加载 API key/池配置) → cli (wiring + 交互)
+1565	```
+1566	
+1567	Subagent 和 skills 推迟到端到端验证通过后再做，不阻塞首次运行。
+1568	```
+1569	
+1570	关键原则：**每个新模块只依赖已完成的模块**。Phase 3 (tools) 可以独立开发，因为它不依赖前三个模块。
+1571	
+1572	#### 7. @tool 装饰器的 Python 闭包陷阱
+1573	
+1574	设计文档中示意了简化的装饰器实现：
+1575	
+1576	```python
+1577	class _ToolAdapter:
+1578	    name = name  # 错误：类体无法访问外层函数变量
+1579	```
+1580	
+1581	Python class body 有自己的隔离作用域，不能直接引用外层 `def tool()` 的参数。实现时改为：先将参数赋给局部变量（`_name = name`），方法通过闭包引用这些局部变量，类属性在类体定义后单独赋值。
+1582	
+1583	**教训**：设计文档中的 Python 代码是伪代码，部分写法无法直接执行。后续设计评审应该关注语言特性边界。
+1584	
+1585	#### 8. 每个工具独立 Pydantic Input 的价值
+1586	
+1587	read.py 有 `ReadInput`，grep.py 有 `GrepInput`，各自带 `Field(description=...)`。这些 description 会成为 JSON Schema 的 description，直接注入 LLM system prompt。
+1588	
+1589	**意外的收益**：测试可以直接 `from wings.tools.builtin.read import ReadInput` 并用 `ReadInput(file_path=str(f))` 构造合法输入，不需要 mock 任何东西。6 个内置工具都在 `tmp_path` 上真实执行。
+1590	
+1591	#### 9. 有意推迟的决策
+1592	
+1593	| 推迟项 | 原因 |
+1594	|--------|------|
+1595	| `ToolResult.max_result_size_chars` 未使用 | Phase 4 的 `TokenBudget` 需要它，届时统一处理 |
+1596	| 无-input 工具的 `call()` 支持 | 当前无实际用例，不影响进度 |
+1597	| `web_fetch` / `web_search` / `agent_tool` | 依赖 httpx 外部请求 / Phase 6 子 agent |
+1598	| `activity_description` 定制 | 统一 `f"{name}..."` 够用，过早抽象没必要 |
+1599	| 测试中大量 `asyncio.run()` | pytest-asyncio 已配置，可以后续统一加 `@pytest.mark.asyncio` |
+1600	
+1601	#### 10. 当前模块状态一览
+1602	
+1603	```
+1604	src/wings/
+1605	├── __init__.py
+1606	├── messages/           # Phase 1  ✅  26 tests
+1607	│   ├── types.py        # 6 种 MessageContent + 3 种 StreamEvent + StopReason
+1608	│   └── normalize.py    # MessageNormalizer + Anthropic + OpenAI 双向转换
+1609	├── routing/            # Phase 1b ✅  47 tests
+1610	│   ├── protocol.py     # ModelSelector Protocol
+1611	│   ├── types.py        # PoolEntry, TaskPool, PoolConfig(v1)
+1612	│   ├── selector.py     # weighted_select(), NoAPIAvailable
+1613	│   ├── tasks.py        # 19 条目 TASK_HIERARCHY + resolve_* 纯函数
+1614	│   └── manager.py      # APIPoolManager (RLock, fork, upvote/downvote)
+1615	├── models/             # Phase 2  ✅  21 tests
+1616	│   ├── protocol.py     # ModelConfig, TokenUsage, ModelResponse, ModelProvider
+1617	│   ├── capabilities.py # 7 模型能力数据
+1618	│   ├── registry.py     # ModelRegistry (依赖 ModelSelector Protocol)
+1619	│   ├── anthropic.py    # chat/stream, system split, thinking mode
+1620	│   └── openai.py       # AsyncOpenAI, o-series, streaming tool calls
+1621	└── tools/              # Phase 3  ✅  35 tests
+1622	    ├── base.py         # ToolResult, ToolContext, Tool Protocol
+1623	    ├── registry.py     # ToolRegistry
+1624	    ├── decorator.py    # @tool 装饰器
+1625	    └── builtin/        # read, write, edit, bash, glob, grep
+1626	├── permissions/        # Phase 5  ✅  17 tests
+1627	│   ├── __init__.py
+1628	│   ├── rules.py        # PermissionRules (allowlist/denylist/asklist)
+1629	│   └── pipeline.py     # 4-stage pipeline + HookRunner Protocol
+1630	└── agent/              # Phase 6a ✅  12 tests
+1631	    ├── __init__.py
+1632	    ├── handoff.py      # TurnRecord, HandoffDetector
+1633	    └── loop.py         # AgentLoop (chat mode), AgentContext
+1634	```
+1635	
+1636	#### 11. 消息双重转换 bug（Phase 4 发现并修复）
+1637	
+1638	最初 `QueryEngine` 持有 `MessageNormalizer`，在调用 provider 之前将 `list[Message]` 转为 `list[dict]`。但 `AnthropicProvider` / `OpenAIProvider` 内部也会调用 `to_anthropic()` / `to_openai_messages()` 做同样的转换。dict 被当成 Message 传入 adapter 会直接 crash。
+1639	
+1640	**根因**: 测试使用 mock provider（不检查消息格式），144 个测试全绿，但真实调用会炸。
+1641	
+1642	**修复**: 去掉 engine 中的消息转换和 normalizer 依赖。Provider 自己负责格式转换——engine 只做错误处理和重试。
+1643	
+1644	**教训**: mock 测试覆盖了"控制流"但漏掉了"数据流"。关键数据路径（消息格式的端到端传递）需要至少一个集成测试用真实 adapter 跑一遍。
+1645	
+1646	#### 12. QueryEngine 的职责收窄
+1647	
+1648	修复后 `QueryEngine` 只做两件事：(1) 从 registry 找 provider，(2) 带指数退避重试调用。消息转换、模型选择、工具执行都不归它管。
+1649	
+1650	好处：Phase 6 AgentLoop 的职责划分更清晰——AgentLoop 负责循环和工具调度，QueryEngine 只负责"调用一次 LLM"。
+1651	
+1652	#### 13. HandoffDetector 逆向遍历逻辑（Phase 6a 发现并修复）
+1653	
+1654	`HandoffDetector` 用 `reversed(turn_history)` 从最新到最旧遍历，寻找当前模型上次出现的位置，收集此期间的"中间 turn"。最初用 `saw_self` 标志位：
+1655	
+1656	```python
+1657	# 错误版本
+1658	if turn is previous_turn:
+1659	    saw_self = True
+1660	elif saw_self and turn.model_id != current_model:
+1661	    intermediate.append(turn)
+1662	```
+1663	
+1664	逆向遍历时，中间 turn 出现在上次 self-turn **之前**（还没到达 self-turn），`saw_self` 永远为 False。正确逻辑是：碰到 self-turn 直接 break，之前遇到的不同模型 turn 都收集：
+1665	
+1666	```python
+1667	# 修复后
+1668	if turn is previous_turn:
+1669	    break
+1670	if turn.model_id != current_model:
+1671	    intermediate.append(turn)
+1672	```
+1673	
+1674	**教训**: 正向/逆向遍历的标志位语义相反。写遍历逻辑时应该在测试里覆盖多个 turn 的排列组合（3+ turn 的场景）。
+1675	
+1676	#### 14. AgentLoop 先用 chat() 而非 stream()
+1677	
+1678	设计文档中 AgentLoop 用 `stream()` 获取流式事件。但 tool_use 的完整 input 在 streaming 模式下需要跨越多个 `ToolUseDelta` 累积 `partial_json`。当前 provider 只产出 delta 事件，不产出完整的 `ToolUseBlock`。
+1679	
+1680	**决策**: Phase 6a 用 `chat()`（非流式）实现完整循环——tool_use block 是完整的，可立即执行。流式模式等 provider 的 `stream()` 能产出完整 tool_use 后再接，循环本身与模式无关。
+1681	
+1682	#### 15. Per-call 模型选择（Phase 6a 后续改进）
+1683	
+1684	设计文档中模型选择每个 turn 一次。但 wings 的核心理念是"每次模型调用都从候选池随机选择"。将 `model = self._select_model()` 移入 `while True` 循环内：首轮 API 调用和工具执行后的每次后续调用都独立选模型。handoff 检测和 turn record 在第一次循环时执行。
+1685	
+1686	#### 16. Anthropic 消息格式：tool_result 必须分组（Phase 6a bug fix）
+1687	
+1688	Anthropic 协议要求一个 assistant 消息中的所有 tool_use，其对应的 tool_result 必须归组在紧接着的同一个 user 消息中。之前为每个 tool_result 单独建 Message，DeepSeek API 报 "tool_use ids without tool_result"。修复为先收集所有结果，再一次 append。
+1689	
+1690	**教训**：API 格式差异不仅是字段名不同，消息层面的结构约束（归组要求）更隐蔽。
+1691	
+1692	#### 17. @tool 装饰器：dict → Pydantic 自动转换（Phase 6a bug fix）
+1693	
+1694	`@tool` 装饰的 `call()` 方法收到的是 dict（来自 ToolUseBlock），但装饰的函数期望 Pydantic 对象。`input.timeout` 在 dict 上直接抛 AttributeError。修复：在 `call()` 中检测 dict 输入并调用 `_input_type(**input)` 转换。这之前被 mock 测试隐藏了。
+1695	
+1696	#### 18. Skills 系统 MVP（Phase 9a）
+1697	
+1698	Skills 是 YAML frontmatter + markdown body 的 SKILL.md 文件。内置 skill 通过 `importlib.resources.files()` 打包。SkillInjector 在 system prompt 中注入 `<available_skills>` XML 块。每个 skill 自动 fork 独立 API 候选池 `skill/<name>`。
+1699	
+1700	#### 19. 工具安全增强（P0）
+1701	
+1702	参考 claude-code，补充了多项安全措施：
+1703	- **read**: 设备路径阻止（/dev/zero 等）、二进制检测（扩展名 + NUL 字节）、read_cache 记录
+1704	- **bash**: 危险命令 denylist、sleep 阻止、description 字段
+1705	- **write/edit**: 先读后写（stale detection），文件被修改后需重新 read
+1706	- **grep**: VCS 目录排除（.git/.svn/.hg/.bzr/.jj/.sl）
+1707	
+1708	#### 20. 交互式权限对话框
+1709	
+1710	模仿 claude-code 的 PermissionRequest 机制：
+1711	- AgentLoop 中 `asyncio.Event` 同步等待用户决策
+1712	- CLI 使用 prompt_toolkit Application 渲染带键盘导航的选项菜单
+1713	- 支持 `y`/`n`/`Esc` 快捷键 + `↑↓`/`jk` 导航 + `Enter` 确认
+1714	
+1715	#### 21. 细粒度权限作用域
+1716	
+1717	claude-code 的 "don't ask again" 从来不是工具级（`Bash`），而是前缀匹配（`Bash(git commit:*)`）。wings 增加了：
+1718	- `PermissionRules.scoped_allowlist`：tool_name → set of patterns
+1719	- `suggest_scope()`：从 tool input 自动生成建议作用域（bash 的命令前缀、write/edit 的目录前缀）
+1720	- `check_scoped()`：在 permission pipeline Stage 1b 检查输入是否匹配已存储的作用域规则
+1721	
+1722	#### 22. Adaptive thinking + max_tokens escalation
+1723	
+1724	模仿 claude-code 的两层设计：
+1725	- **adaptive thinking**（默认）：发送 `{"type": "enabled"}` 不设 budget，模型自主决定何时思考
+1726	- **max_tokens escalation**: 默认 8K，hit max_tokens 后自动升级到 64K 重试一次
+1727	- ProviderConfig 中所有参数均可按 provider 独立配置
+1728	
+1729	#### 23. Claude-code 风格工具结果展示
+1730	
+1731	所有内置工具统一输出格式：
+1732	- **Read**: "Read N lines from path" 摘要 + 带行号内容
+1733	- **Write**: "Wrote N lines to path" + 代码预览
+1734	- **Edit**: "Added/removed N lines" + `@@` diff hunks
+1735	- **Bash**: 简洁输出 + 耗时 + exit code
+1736	- **Glob**: "Found N files" 摘要 + 文件列表
+1737	- **Grep**: "Found N matches across M files" 摘要 + 匹配详情
+1738	- CLI 截断统一为 1 行 + `… +N lines (ctrl+o)`，按 ctrl+o 调用 `$PAGER` 展开完整内容
+1739	
+1740	#### 24. Subagent 系统（Phase 6b）
+1741	
+1742	参考 claude-code 的 AgentTool 设计，实现了 subagent 委托执行：
+1743	
+1744	**核心设计**:
+1745	- 复用 `AgentLoop`：每个 subagent 创建新的 `AgentLoop` 实例（只存引用，成本为零），无需写第二套循环代码
+1746	- Agent 作为标准 `@tool` 工具：LLM 调用 `agent(subagent_type="explore", description="...", prompt="...")`
+1747	- 3 种内置类型：`general`（全部工具）、`explore`（只读，Read/Glob/Grep/SkillView）、`plan`（只读，禁止 Write/Edit）
+1748	- 每种类型对应独立路由池 `subagent/<type>`
+1749	
+1750	**关键设计决策**:
+1751	- `make_agent_tool()` 工厂函数用闭包注入依赖（QueryEngine, ModelRegistry 等），避免引入 DI 容器
+1752	- `ToolContext.event_callback` 字段让 subagent 事件回流到 parent AgentLoop
+1753	- Subagent 权限全部预授权（`PermissionRules` 预填所有过滤后工具），不触发交互式 prompt
+1754	- 大小写不敏感的类型匹配（模型可能传 "Explore" 而非 "explore"）
+1755	
+1756	**工具过滤**: `_filter_tools_for_agent()` 返回新 `ToolRegistry`，不修改 parent。过滤链：allowlist → disallowed → read_only → always remove "agent"
+1757	
+1758	**CLI 显示**: SubAgentStart 用 `╭─ Agent(type) ─ description` 边框，子 agent 文本缩进显示，SubAgentEnd 用 `╰─ Agent(type) done` 收尾
+1759	
+1760	**Tool 结果简化**: 参考 opensquilla CLI 的 1 行预览设计，tool 结果默认只显示首行（≤120 chars），多行结果存储全文，ctrl+o 用 `$PAGER` 展开
+1761	

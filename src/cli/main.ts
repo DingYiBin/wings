@@ -233,8 +233,8 @@ export async function runSingle(
   for await (const event of loop.run(prompt, ctx)) {
     switch (event.type) {
       case "text_delta": write((event as any).text); break;
-      case "tool_use": write(`${dim("\r\n  ⚙")}  ${CYAN}${event.name}${RESET} ${dim(trunc(JSON.stringify(event.input), 100))}\r\n`); break;
-      case "tool_result": if ((event as any).is_error) write(`${dim("  ↳")}  ${RED}error${RESET} ${dim(trunc((event as any).content, 120))}\r\n`); break;
+      case "tool_use": write(`\r\n${dim("  ⚙")} ${CYAN}${event.name}${RESET} ${dim(trunc(JSON.stringify(event.input), 80))}`); break;
+      case "tool_result": { const content = (event as any).content ?? ""; const preview = trunc(content, 80).replace(/\n/g, " "); if ((event as any).is_error) write(`\r\n${dim("  ↳")} ${RED}${preview}${RESET}`); else if (preview) write(`\r\n${dim("  ↳")} ${dim(preview)}`); break; }
       case "permission_request":
         loop.setPermissionResponse(await promptPermission(event.tool_name, event.tool_input, event.scope));
         break;
@@ -274,12 +274,16 @@ export async function runChat(
 
     if (text.startsWith("/")) { handleCommand(text, poolMgr); write(PROMPT); running = false; return; }
 
+    let prevEvent = "";
     try {
       for await (const event of loop.run(text, ctx)) {
         switch (event.type) {
-          case "text_delta": write((event as any).text); break;
-          case "tool_use": write(`${dim("\r\n  ⚙")}  ${CYAN}${event.name}${RESET} ${dim(trunc(JSON.stringify(event.input), 100))}\r\n`); break;
-          case "tool_result": { const tr = event as any; const len = (tr.content ?? "").length; if (tr.is_error) write(`${dim("  ↳")}  ${RED}error${RESET} ${dim(trunc(tr.content, 120))}\r\n`); else write(`${dim("  ↳")}  ${dim(len + " chars")}\r\n`); break; }
+          case "text_delta":
+            if (prevEvent === "tool_result") write(`\r\n${dim("  ──────")}\r\n`);
+            write((event as any).text);
+            break;
+          case "tool_use": write(`\r\n${dim("  ⚙")} ${CYAN}${event.name}${RESET} ${dim(trunc(JSON.stringify(event.input), 80))}`); break;
+          case "tool_result": { const tr = event as any; const content = tr.content ?? ""; const preview = trunc(content, 80).replace(/\n/g, " "); if (tr.is_error) write(`\r\n${dim("  ↳")} ${RED}${preview}${RESET}`); else if (preview) write(`\r\n${dim("  ↳")} ${dim(preview)}`); break; }
           case "permission_request":
             DLOG("DO-PERM", "calling promptPermission...");
             const permResp = await promptPermission(event.tool_name, event.tool_input, event.scope);
@@ -290,6 +294,7 @@ export async function runChat(
           case "subagent_start": write(`\r\n${dim("  ┌ subagent")} ${CYAN}${(event as any).agent_type}${RESET} ${dim((event as any).description)}\r\n`); break;
           case "subagent_end": write(`${dim("  └ done")}\r\n`); break;
         }
+        prevEvent = event.type;
       }
       write("\r\n");
     } catch (e) { write(`${RED}Error:${RESET} ${(e as Error).message}\r\n`); }
@@ -338,7 +343,7 @@ async function runChatFallback(loop: any, ctx: any, poolMgr: any, config: any) {
     try {
       for await (const event of loop.run(text, ctx)) {
         if (event.type === "text_delta") write((event as any).text);
-        else if (event.type === "tool_use") write(`${dim("\r\n  ⚙")}  ${CYAN}${event.name}${RESET} ${dim(trunc(JSON.stringify(event.input), 100))}\r\n`);
+        else if (event.type === "tool_use") write(`\r\n${dim("  ⚙")} ${CYAN}${event.name}${RESET} ${dim(trunc(JSON.stringify(event.input), 80))}`);
         else if (event.type === "permission_request")
           loop.setPermissionResponse(await promptPermission(event.tool_name, event.tool_input, event.scope));
       }
