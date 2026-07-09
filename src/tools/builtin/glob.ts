@@ -7,6 +7,10 @@ import { z } from "zod";
 
 import { buildTool } from "../types.ts";
 
+// VCS directories skipped during traversal (never useful to glob into, and
+// .git can hold thousands of objects). Matches the grep tool's VCS_DIRS.
+const VCS_DIRS = new Set([".git", ".svn", ".hg", ".bzr", ".jj", ".sl"]);
+
 /** Convert a glob pattern to a regex. Supports *, **, ?, {a,b}, [abc]. */
 function globToRegex(pattern: string): RegExp {
   // Normalize separators.
@@ -61,10 +65,11 @@ function walkAndMatch(base: string, pattern: string): string[] {
     catch { return; }
     for (const e of entries) {
       const name: string = e.name as any;
-      if (name.startsWith(".")) continue;
       const full = join(dir, name);
       if (e.isDirectory()) {
-        walk(full);
+        // Don't recurse into VCS dirs (matches grep); other hidden dirs
+        // (.github, .vscode, ...) are descended into, like pathlib.glob.
+        if (!VCS_DIRS.has(name)) walk(full);
       } else if (e.isFile()) {
         const rel = relative(base, full).replace(/\\/g, "/");
         if (regex.test(rel)) {
