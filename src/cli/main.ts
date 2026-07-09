@@ -353,9 +353,10 @@ export async function runChat(
     if (code >= 0x1f900 && code <= 0x1f9ff) return 2;
     return 1;
   }
+  function stripAnsi(s: string): string { return s.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "").replace(/\x1b\][0-9;]*[^\x07]*\x07/g, ""); }
   function displayWidth(s: string): number {
     let w = 0;
-    for (const ch of s) w += charWidth(ch.charCodeAt(0));
+    for (const ch of stripAnsi(s)) w += charWidth(ch.charCodeAt(0));
     return w;
   }
   function cursorCharPos(): number {
@@ -377,17 +378,32 @@ export async function runChat(
     return p;
   };
 
-  // -- Render: clears previous input, writes new text --
+  // -- Render: clears previous input, writes new text, positions cursor --
   let _prevLines = 1;
   const renderLine = () => {
     const cols = process.stdout.columns || 80;
     const text = PROMPT + buffer;
-    const curLines = Math.max(1, Math.ceil(displayWidth(text) / cols));
+    const textW = displayWidth(text);
+    const curLines = Math.max(1, Math.ceil(textW / cols));
 
     // Move to first line of previous render, clear, write.
     if (_prevLines > 1) write(`\x1b[${_prevLines - 1}A`);
     write(`\r\x1b[J`);
     write(text);
+
+    // Position cursor: move back from end to the insertion point.
+    if (cursor < buffer.length) {
+      const cursorW = displayWidth(PROMPT) + displayWidth(buffer.slice(0, cursor));
+      // How far back from the end?
+      const distFromEnd = textW - cursorW;
+      if (distFromEnd > 0) {
+        // Move up from end row to cursor row, then right to cursor column.
+        const endRow = curLines - 1;
+        const curRow = Math.floor(cursorW / cols);
+        if (endRow > curRow) write(`\x1b[${endRow - curRow}A`);
+        write(`\r\x1b[${cursorW % cols}C`);
+      }
+    }
     _prevLines = curLines;
   };
 
