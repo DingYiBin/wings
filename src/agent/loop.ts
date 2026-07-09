@@ -399,22 +399,14 @@ export class AgentLoop {
           cycleToolCalls.push(block.name);
           turn.tool_calls.push(block.name);
 
-          // Agent tool: set up subagent event capture with real-time yield.
+          // Agent tool: set up subagent event capture. Events are buffered
+          // and replayed (as subagent_delta/tool_use/tool_result) after the
+          // subagent completes — mirrors Python loop.py _capture (no direct
+          // stdout writes; the CLI renders the replayed events).
           const subagentEvents: StreamEvent[] = [];
           if (block.name === "agent") {
             const capture = (evt: unknown) => {
-              const e = evt as StreamEvent;
-              subagentEvents.push(e);
-              // Write subagent events to stdout in real-time so the user
-              // sees progress during long subagent execution.
-              try {
-                if (e.type === "text_delta") {
-                  process.stdout.write((e as any).text ?? "");
-                } else if (e.type === "tool_use") {
-                  const short = JSON.stringify(e.input).slice(0, 80);
-                  process.stdout.write(`\n  sub ${e.name} ${short}\n`);
-                }
-              } catch {}
+              subagentEvents.push(evt as StreamEvent);
             };
             context.tool_context.event_callback = capture;
             const saStart: SubAgentStart = {

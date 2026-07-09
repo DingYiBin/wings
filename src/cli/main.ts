@@ -253,6 +253,9 @@ export async function runSingle(
       case "permission_request":
         loop.setPermissionResponse(await promptPermission(event.tool_name, event.tool_input, event.scope));
         break;
+      case "subagent_start": write(`\r\n${dim("  ┌ subagent")} ${CYAN}${(event as any).agent_type}${RESET} ${dim((event as any).description)}\r\n`); break;
+      case "subagent_delta": write((event as any).text); break;
+      case "subagent_end": write(`${dim("  └ done")}\r\n`); break;
     }
   }
   write("\r\n");
@@ -417,6 +420,7 @@ export async function runChat(
             DLOG("DO-PERM", "setPermissionResponse returned, continuing loop...");
             break;
           case "subagent_start": write(`\r\n${dim("  ┌ subagent")} ${CYAN}${(event as any).agent_type}${RESET} ${dim((event as any).description)}\r\n`); break;
+          case "subagent_delta": write((event as any).text); break;
           case "subagent_end": write(`${dim("  └ done")}\r\n`); break;
         }
         prevEvent = event.type;
@@ -610,6 +614,9 @@ async function runChatFallback(loop: any, ctx: any, poolMgr: any, config: any) {
         else if (event.type === "tool_use") write(`\r\n${dim("  ⚙")} ${CYAN}${event.name}${RESET} ${dim(trunc(JSON.stringify(event.input), 80))}`);
         else if (event.type === "permission_request")
           loop.setPermissionResponse(await promptPermission(event.tool_name, event.tool_input, event.scope));
+        else if (event.type === "subagent_start") write(`\r\n${dim("  ┌ subagent")} ${CYAN}${(event as any).agent_type}${RESET} ${dim((event as any).description)}\r\n`);
+        else if (event.type === "subagent_delta") write((event as any).text);
+        else if (event.type === "subagent_end") write(`${dim("  └ done")}\r\n`);
       }
       write("\r\n");
       writeModelTag(loop);
