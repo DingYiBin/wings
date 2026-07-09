@@ -10,6 +10,10 @@
 
 import { runChat, runSingle } from "./cli/main.ts";
 import { TurnLogger } from "./cli/logging.ts";
+import { initSessionHash } from "./services/session-paths.ts";
+
+// Initialize session hash before anything else.
+initSessionHash();
 
 const args = process.argv.slice(2);
 const command = args[0];
