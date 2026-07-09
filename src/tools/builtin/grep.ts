@@ -36,7 +36,11 @@ function collectFiles(base: string, globPattern: string | null): string[] {
         if (!VCS_DIRS.has(name)) walk(full);
       } else if (entry.isFile()) {
         if (globPattern && globPattern !== "**/*") {
-          if (!matchSimpleGlob(name, globPattern)) continue;
+          // Match against the path relative to base so that recursive
+          // patterns like `**/*.py` work (matching Python's pathlib.glob,
+          // which operates on relative paths, not bare filenames).
+          const rel = full.slice(base.length).replace(/^[\\/]+/, "");
+          if (!matchSimpleGlob(rel, globPattern)) continue;
         }
         result.push(full);
       }
@@ -46,16 +50,30 @@ function collectFiles(base: string, globPattern: string | null): string[] {
   return result.sort();
 }
 
-function matchSimpleGlob(name: string, pattern: string): boolean {
-  // Convert simple glob to regex: *, ?, {a,b}
+/**
+ * Match a glob pattern against a (relative) path. Mirrors pathlib.glob
+ * semantics: `**` matches across directory separators, a single `*`
+ * matches within a path segment (not `/`), `?` matches one char, and
+ * `{a,b}`/`[...]` are supported.
+ */
+function matchSimpleGlob(path: string, pattern: string): boolean {
   let regex = "^";
   let i = 0;
   while (i < pattern.length) {
     const c = pattern[i];
-    if (c === "*") {
+    if (c === "*" && pattern[i + 1] === "*") {
+      // `**` — match anything including path separators. Consume a
+      // following `/` so `**/` doesn't force a leading separator.
       regex += ".*";
+      i += 2;
+      if (pattern[i] === "/" || pattern[i] === "\\") i++;
+      continue;
+    }
+    if (c === "*") {
+      // Single `*` — match within a segment, not across `/`.
+      regex += "[^/\\\\]*";
     } else if (c === "?") {
-      regex += ".";
+      regex += "[^/\\\\]";
     } else if (c === "{") {
       const end = pattern.indexOf("}", i);
       if (end === -1) {
@@ -69,6 +87,8 @@ function matchSimpleGlob(name: string, pattern: string): boolean {
       regex += "[";
     } else if (c === "]") {
       regex += "]";
+    } else if ("/\\".includes(c)) {
+      regex += "[/\\\\]";
     } else if ("\\^$.|+()".includes(c)) {
       regex += "\\" + c;
     } else {
@@ -77,7 +97,7 @@ function matchSimpleGlob(name: string, pattern: string): boolean {
     i++;
   }
   regex += "$";
-  return new RegExp(regex).test(name);
+  return new RegExp(regex).test(path);
 }
 
 export const grepTool = buildTool({
