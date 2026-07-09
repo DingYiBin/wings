@@ -58,7 +58,14 @@ async function createProvider(protocol: string) {
 export async function createSession(
   workingDir?: string,
   logger?: { recordCycle(opts: Record<string, unknown>): void } | null,
-): Promise<{ loop: AgentLoop; config: GlobalSettingsData; poolMgr: APIPoolManager }> {
+): Promise<{
+  loop: AgentLoop;
+  config: GlobalSettingsData;
+  poolMgr: APIPoolManager;
+  engine: QueryEngine;
+  modelRegistry: ModelRegistry;
+  toolRegistry: ToolRegistry;
+}> {
   const wd = workingDir ?? cwd();
   const config = loadSettings(wd);
 
@@ -182,7 +189,7 @@ export async function createSession(
     }
   };
 
-  return { loop, config, poolMgr };
+  return { loop, config, poolMgr, engine, modelRegistry: registry, toolRegistry: tools };
 }
 
 export function makeAgentContext(

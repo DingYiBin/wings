@@ -597,6 +597,7 @@ export class AgentLoop {
       queryEngine: this._queryEngine,
       model,
       config: cfg,
+      workingDir: context.tool_context.working_dir,
     });
     if (this._logger) {
       this._logger.recordCycle({

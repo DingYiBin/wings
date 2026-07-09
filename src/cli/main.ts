@@ -7,6 +7,7 @@
 
 import { openSync, readSync, closeSync, appendFileSync } from "node:fs";
 import { createSession, makeAgentContext } from "./bootstrap.ts";
+import { shouldExtractMemory, recordExtraction, extractSessionMemory } from "../services/session-memory.ts";
 
 // -- Debug log to file (survives terminal corruption) --
 const DLOG = process.env["WINGS_DEBUG"]
@@ -46,6 +47,35 @@ async function maybeExtract(loop: any, userInput: string): Promise<void> {
   } catch {
     // best-effort — never fail the turn
   }
+}
+
+let sessionToolCallCount = 0;
+
+/** Fire-and-forget session memory extraction (claude-code post-sampling hook pattern). */
+function tryExtractSessionMemory(
+  workingDir: string,
+  loop: any,
+  engine: any,
+  modelRegistry: any,
+  toolRegistry: any,
+  poolMgr: any,
+) {
+  const messages = loop.messages as any[] | undefined;
+  if (!messages || messages.length === 0) return;
+  sessionToolCallCount++;
+  if (!shouldExtractMemory(messages, sessionToolCallCount)) return;
+
+  // Fire and forget — don't block the REPL.
+  extractSessionMemory({
+    workingDir,
+    messages,
+    queryEngine: engine,
+    modelRegistry,
+    toolRegistry,
+    modelSelector: poolMgr,
+  }).then((updated) => {
+    if (updated) recordExtraction(messages, sessionToolCallCount);
+  }).catch(() => {});
 }
 
 // -- Raw stdin helpers --
@@ -197,6 +227,7 @@ export async function runSingle(
   opts: { workingDir?: string; model?: string | null; logger?: { recordCycle(opts: Record<string, unknown>): void } | null } = {},
 ): Promise<void> {
   const { loop, config } = await createSession(opts.workingDir, opts.logger);
+  // runSingle doesn't use engine/modelRegistry/toolRegistry
   const ctx = makeAgentContext(config, { workingDir: opts.workingDir, modelOverride: opts.model ?? null, customAgents: (loop as any).customAgents ?? null, skills: (loop as any).skillsList ?? [] });
 
   for await (const event of loop.run(prompt, ctx)) {
@@ -219,7 +250,7 @@ export async function runSingle(
 export async function runChat(
   opts: { workingDir?: string; model?: string | null; logger?: { recordCycle(opts: Record<string, unknown>): void } | null } = {},
 ): Promise<void> {
-  const { loop, config, poolMgr } = await createSession(opts.workingDir, opts.logger);
+  const { loop, config, poolMgr, engine, modelRegistry, toolRegistry } = await createSession(opts.workingDir, opts.logger);
   const ctx = makeAgentContext(config, { workingDir: opts.workingDir, modelOverride: opts.model ?? null, customAgents: (loop as any).customAgents ?? null, skills: (loop as any).skillsList ?? [] });
 
   write(`\r\n${BOLD}wings${RESET} ${dim("— each model is a wing")}\r\n`);
@@ -265,6 +296,8 @@ export async function runChat(
       write("\r\n");
     } catch (e) { write(`${RED}Error:${RESET} ${(e as Error).message}\r\n`); }
     await maybeExtract(loop, text);
+    // Fire-and-forget session memory update (mirrors claude-code post-sampling hook).
+    tryExtractSessionMemory(opts.workingDir ?? process.cwd(), loop, engine, modelRegistry, toolRegistry, poolMgr);
     write(PROMPT);
     running = false;
   };

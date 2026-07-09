@@ -97,6 +97,8 @@ export async function compactMessages(
     model: string;
     config: ModelConfig;
     keepRecent?: number;
+    /** Working dir for session memory lookup. */
+    workingDir?: string;
   },
 ): Promise<Message[]> {
   const keepRecent = opts.keepRecent ?? KEEP_RECENT;
@@ -115,25 +117,29 @@ export async function compactMessages(
   const toSummarize = rest.slice(0, -keepRecent);
   const recent = rest.slice(-keepRecent);
 
-  // 3. Build the summarization input.
-  const conversationText = messagesToText(toSummarize);
-  const prompt = `${COMPACT_PROMPT}\n\n## Conversation to summarize\n\n${conversationText}`;
+  // 3. Try session memory first (claude-code pattern).
+  let summary: string | null = null;
+  if (opts.workingDir) {
+    try {
+      const { buildSessionMemoryCompactMessage } = await import("./session-memory.ts");
+      summary = buildSessionMemoryCompactMessage(opts.workingDir);
+    } catch {}
+  }
 
-  const summary = await generateSummary(
-    opts.queryEngine,
-    opts.model,
-    opts.config,
-    prompt,
-  );
+  // 4. Fall back to model summarization if no session memory.
+  if (!summary) {
+    const conversationText = messagesToText(toSummarize);
+    const prompt = `${COMPACT_PROMPT}\n\n## Conversation to summarize\n\n${conversationText}`;
+    summary = await generateSummary(opts.queryEngine, opts.model, opts.config, prompt);
+    summary = `## Conversation summary\n\n${summary}`;
+  }
 
-  // 4. Reassemble: [system?, summary, *recent].
+  // 5. Reassemble: [system?, summary, *recent].
   const result: Message[] = [];
   if (systemMsg) result.push(systemMsg);
   result.push({
     role: "user",
-    content: [
-      { type: "text", text: `## Conversation summary\n\n${summary}` },
-    ],
+    content: [{ type: "text", text: summary }],
   });
   result.push(...recent);
   return result;
