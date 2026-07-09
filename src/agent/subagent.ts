@@ -65,7 +65,7 @@ export const BUILTIN_AGENT_TYPES: Record<string, AgentTypeSpec> = {
 // -- Tool filtering --
 
 /** Build a filtered ToolRegistry for a subagent type. Never mutates the parent. */
-function filterToolsForAgent(
+export function filterToolsForAgent(
   parentRegistry: ToolRegistry,
   spec: AgentTypeSpec,
 ): ToolRegistry {

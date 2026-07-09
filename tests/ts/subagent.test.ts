@@ -10,6 +10,7 @@ import {
   type AgentTypeSpec,
   getAgentTypes,
   runSubagent,
+  filterToolsForAgent,
 } from "../../src/agent/subagent.ts";
 import type { Message, TextBlock, TextDelta, ToolResultBlock, ToolUseBlock } from "../../src/messages/types.ts";
 import { makeModelConfig } from "../../src/models/protocol.ts";
@@ -253,5 +254,53 @@ describe("runSubagent", async () => {
     const roles = (messagesSent[0] as any[]).map((m: any) => m.role);
     expect(roles).toContain("system");
     expect(roles).toContain("user");
+  });
+});
+
+// -- Tool filtering (filterToolsForAgent) -----------------------------------
+// Ported from tests/test_subagent.py:148-195.
+
+describe("filterToolsForAgent", () => {
+  function makeSpec(opts: Partial<AgentTypeSpec>): AgentTypeSpec {
+    return {
+      name: "test",
+      description: "test",
+      tools: null,
+      disallowed_tools: ["agent"],
+      read_only: false,
+      ...opts,
+    };
+  }
+  const names = (reg: ToolRegistry) => new Set(reg.listAll().map((t) => t.name));
+
+  test("read_only removes destructive tools", () => {
+    const reg = new ToolRegistry();
+    reg.register(new FakeTool("read", true, false));
+    reg.register(new FakeTool("bash", false, true));
+    reg.register(new FakeTool("write", false, true));
+    const filtered = filterToolsForAgent(reg, makeSpec({ read_only: true }));
+    expect(names(filtered)).toEqual(new Set(["read"]));
+  });
+
+  test("agent tool is always denied even if not in disallowed_tools", () => {
+    const reg = makeRegistry(["read", "agent"]);
+    const filtered = filterToolsForAgent(reg, makeSpec({ disallowed_tools: [] }));
+    expect(names(filtered).has("agent")).toBe(false);
+  });
+
+  test("does not mutate the parent registry", () => {
+    const reg = makeRegistry(["read", "write", "bash", "glob", "grep", "skill_view", "agent"]);
+    const original = names(reg);
+    filterToolsForAgent(reg, BUILTIN_AGENT_TYPES["explore"]!);
+    expect(names(reg)).toEqual(original);
+  });
+
+  test("nonexistent allowlisted tools are skipped", () => {
+    const reg = makeRegistry(["read", "glob"]);
+    const filtered = filterToolsForAgent(
+      reg,
+      makeSpec({ tools: ["read", "nonexistent", "glob"] }),
+    );
+    expect(names(filtered)).toEqual(new Set(["read", "glob"]));
   });
 });
