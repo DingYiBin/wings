@@ -310,21 +310,42 @@ export async function runChat(
   // Double-tap Ctrl+C tracking.
   let lastCtrlC = 0;
 
-  const renderLine = () => {
-    const before = buffer.slice(0, cursor);
-    const after = buffer.slice(cursor);
-    // Write prompt + text, then move cursor back by |after| chars to position it correctly.
-    write(`\r\x1b[K${PROMPT}${before}${after}`);
-    if (after.length > 0) write(`\x1b[${after.length}D`);
+  // -- Word boundary helper --
+  const wordLeft = (s: string, pos: number): number => {
+    // Skip whitespace, then skip non-whitespace.
+    let p = pos;
+    while (p > 0 && s[p - 1] === " ") p--;
+    while (p > 0 && s[p - 1] !== " ") p--;
+    return p;
+  };
+  const wordRight = (s: string, pos: number): number => {
+    let p = pos;
+    while (p < s.length && s[p] !== " ") p++;
+    while (p < s.length && s[p] === " ") p++;
+    return p;
   };
 
+  // -- Render line with inverted cursor (matches claude-code Layer 1) --
+  const REV = "\x1b[7m";  // reverse video
+  const REV_OFF = "\x1b[27m";
+  const renderLine = () => {
+    const before = buffer.slice(0, cursor);
+    const atCursor = buffer[cursor] ?? " ";
+    const after = buffer.slice(cursor + 1);
+    // Prompt + before-cursor text + inverted cursor char + after-cursor text.
+    write(`\r\x1b[K${PROMPT}${before}${REV}${atCursor}${REV_OFF}${after}`);
+    // Move terminal cursor back to just after the prompt + before-cursor text,
+    // so the native cursor sits on the inverted character.
+    if (after.length > 0) write(`\x1b[${after.length}D`);
+    // The cursor is now visually on the inverted character and physically
+    // positioned for IME input at that spot.
+  };
+
+  // -- Data handler --
   process.stdin.on("data", (data: Buffer) => {
     if (running) {
-      // Solo ESC or Ctrl+C to abort running agent (not arrow/delete sequences).
       const raw = data.toString("utf-8");
-      if (raw === "\x1b" || raw === "\x03") {
-        (loop as any)._aborted = true;
-      }
+      if (raw === "\x1b" || raw === "\x03") { (loop as any)._aborted = true; }
       return;
     }
     const rawStr = data.toString("utf-8");
@@ -333,48 +354,48 @@ export async function runChat(
       const code = ch.charCodeAt(0);
       const rest = rawStr.slice(i);
 
-      // Arrow left: ESC [ D
-      if (rest.startsWith("\x1b[D")) { cursor = Math.max(0, cursor - 1); renderLine(); i += 2; continue; }
-      // Arrow right: ESC [ C
-      if (rest.startsWith("\x1b[C")) { cursor = Math.min(buffer.length, cursor + 1); renderLine(); i += 2; continue; }
-      // Home: ESC [ H or ESC O H or Ctrl+A
+      // ── Arrow / navigation ──
+      if (rest.startsWith("\x1b[D") || code === 0x02 /* Ctrl+B */) {
+        cursor = Math.max(0, cursor - 1); renderLine(); i += code === 0x02 ? 0 : 2; continue;
+      }
+      if (rest.startsWith("\x1b[C") || code === 0x06 /* Ctrl+F */) {
+        cursor = Math.min(buffer.length, cursor + 1); renderLine(); i += code === 0x06 ? 0 : 2; continue;
+      }
+      // Ctrl+Left / ESC [ 1 ; 5 D: word left
+      if (rest.startsWith("\x1b[1;5D") || rest.startsWith("\x1b[1;2D")) {
+        cursor = wordLeft(buffer, cursor); renderLine(); i += 5; continue;
+      }
+      // Ctrl+Right / ESC [ 1 ; 5 C: word right
+      if (rest.startsWith("\x1b[1;5C") || rest.startsWith("\x1b[1;2C")) {
+        cursor = wordRight(buffer, cursor); renderLine(); i += 5; continue;
+      }
+      // Home / Ctrl+A
       if (rest.startsWith("\x1b[H") || rest.startsWith("\x1b[1~") || code === 0x01) {
         cursor = 0; renderLine();
-        if (code !== 0x01) { i += rest.startsWith("\x1b[1~") ? 3 : 2; }
-        continue;
+        if (code !== 0x01) { i += rest.startsWith("\x1b[1~") ? 3 : 2; } continue;
       }
-      // End: ESC [ F or ESC O F or Ctrl+E
+      // End / Ctrl+E
       if (rest.startsWith("\x1b[F") || rest.startsWith("\x1b[4~") || code === 0x05) {
         cursor = buffer.length; renderLine();
-        if (code !== 0x05) { i += rest.startsWith("\x1b[4~") ? 3 : 2; }
-        continue;
-      }
-      // Ctrl+W: delete word before cursor.
-      if (code === 0x17) {
-        const before = buffer.slice(0, cursor);
-        const m = before.match(/(.*\s)?\S+$/);
-        const cutLen = before.length - (m?.[1]?.length ?? 0);
-        buffer = buffer.slice(0, cursor - cutLen) + buffer.slice(cursor);
-        cursor -= cutLen;
-        renderLine(); continue;
+        if (code !== 0x05) { i += rest.startsWith("\x1b[4~") ? 3 : 2; } continue;
       }
 
-      if (code === 0x0d) {
+      // ── Editing ──
+      if (code === 0x0d) { // Enter
         const line = buffer; buffer = ""; cursor = 0;
         write("\r\n"); doTurn(line); return;
       }
-      // Delete key: ESC [ 3 ~
+      // Delete: ESC [ 3 ~
       if (rest.startsWith("\x1b[3~")) {
         if (cursor < buffer.length) {
-          const after = buffer.slice(cursor);
           const seg = new Intl.Segmenter("en", { granularity: "grapheme" });
-          const graphemes = [...seg.segment(after)];
+          const graphemes = [...seg.segment(buffer.slice(cursor))];
           buffer = buffer.slice(0, cursor) + graphemes.slice(1).map(x => x.segment).join("");
           renderLine();
         }
         i += 3; continue;
       }
-      // Backspace (DEL=127 or Ctrl+H=8): delete before cursor.
+      // Backspace / Ctrl+H
       if (code === 0x7f || code === 0x08) {
         if (cursor > 0) {
           const before = buffer.slice(0, cursor);
@@ -386,25 +407,36 @@ export async function runChat(
         }
         continue;
       }
-      // Double-tap Ctrl+C to exit.
-      if (code === 0x03) {
+      // Ctrl+W: delete word before.
+      if (code === 0x17) {
+        const cutPos = wordLeft(buffer, cursor);
+        buffer = buffer.slice(0, cutPos) + buffer.slice(cursor);
+        cursor = cutPos;
+        renderLine(); continue;
+      }
+
+      // ── Exit ──
+      if (code === 0x03) { // Ctrl+C — double-tap to exit
         const now = Date.now();
         if (lastCtrlC > 0 && now - lastCtrlC < 2000) {
           exitRawMode(); write(SHOW_CURSOR + "\r\n"); process.exit(0);
         }
         lastCtrlC = now;
-        write(`\r\n${dim("  Press Ctrl+C again to exit")}\r\n${PROMPT}${buffer}`);
+        write(`\r\n${dim("  Press Ctrl+C again to exit")}\r\n`);
+        buffer = ""; cursor = 0; renderLine();
         continue;
       }
       if (code === 0x04 && !buffer) { exitRawMode(); write(SHOW_CURSOR + "\r\n"); process.exit(0); }
-      if (code < 0x20) {
-        if (code === 0x1b) { let j = i + 1; while (j < rawStr.length && rawStr.charCodeAt(j) < 0x40) j++; if (j < rawStr.length) j++; i = j - 1; }
+
+      // ── Printable ──
+      if (code >= 0x20) {
+        buffer = buffer.slice(0, cursor) + ch + buffer.slice(cursor);
+        cursor += 1;
+        renderLine();
         continue;
       }
-      // Printable: insert at cursor.
-      buffer = buffer.slice(0, cursor) + ch + buffer.slice(cursor);
-      cursor += 1;
-      renderLine();
+      // Skip other escape sequences.
+      if (code === 0x1b) { let j = i + 1; while (j < rawStr.length && rawStr.charCodeAt(j) < 0x40) j++; if (j < rawStr.length) j++; i = j - 1; }
     }
   });
 }
