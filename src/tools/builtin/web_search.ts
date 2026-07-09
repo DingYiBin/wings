@@ -85,6 +85,66 @@ function stripTags(s: string): string {
     .trim();
 }
 
+// -- Bing fallback ------------------------------------------------------------
+// Mirrors src/wings/tools/builtin/bing_search.py: scrape cn.bing.com HTML
+// results, parsing each <li class="b_algo"> into {title, href, body}.
+
+const BING_URL = "https://cn.bing.com/search";
+const BING_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+  "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+async function searchBing(query: string, maxResults: number): Promise<SearchResult[]> {
+  // Up to 3 attempts with linear backoff (1s, 2s), matching the Python impl.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const url = `${BING_URL}?q=${encodeURIComponent(query)}&count=${maxResults}`;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15_000);
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: { "User-Agent": BING_UA, Accept: "text/html" },
+        redirect: "follow",
+      });
+      clearTimeout(timer);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const html = await response.text();
+      return parseBingHtml(html, maxResults);
+    } catch {
+      if (attempt < 2) await sleep(1000 * (attempt + 1));
+    }
+  }
+  return [];
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function parseBingHtml(html: string, maxResults: number): SearchResult[] {
+  // Each result is <li class="b_algo"> with an <h2><a href>title</a> and a <p> snippet.
+  const results: SearchResult[] = [];
+  const items = html.split(/<li[^>]*class="[^"]*b_algo[^"]*"[^>]*>/i).slice(1);
+  for (const item of items) {
+    if (results.length >= maxResults) break;
+    // Title link: <h2>...<a href="...">title</a>...</h2> (or a.tilk fallback).
+    const linkMatch =
+      /<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i.exec(item) ??
+      /<a[^>]*class="[^"]*tilk[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i.exec(item);
+    if (!linkMatch) continue;
+    const href = linkMatch[1]!;
+    if (!href) continue;
+    const title = stripTags(linkMatch[2]!).slice(0, 200) || "Untitled";
+    // Snippet: first <p>...</p> after the link.
+    const snippetMatch = /<p[^>]*>([\s\S]*?)<\/p>/i.exec(item);
+    const body = (snippetMatch ? stripTags(snippetMatch[1]!) : "")
+      .replace(/&ensp;/g, " ").replace(/&#0183;/g, "")
+      .slice(0, 500);
+    results.push({ title, href, body });
+  }
+  return results;
+}
+
 function decodeDdgHref(href: string): string {
   const match = /uddg=([^&]+)/.exec(href);
   if (match) {
@@ -112,23 +172,27 @@ export const webSearchTool = buildTool({
     const maxResults = input.max_results ?? 10;
 
     let results = await searchDdgs(query, maxResults);
+    let backend = "DuckDuckGo";
     if (results.length === 0) {
-      // Try alternative: Bing search via web_fetch (not implemented yet).
-      // Return a helpful message suggesting alternatives.
+      // DuckDuckGo returned nothing (or was unreachable) — fall back to Bing.
+      results = await searchBing(query, maxResults);
+      backend = "Bing";
+    }
+
+    if (results.length === 0) {
       return [
-        `No search results for '${query}'. DuckDuckGo may be unreachable.`,
+        `No search results for '${query}'. Both DuckDuckGo and Bing may be unreachable.`,
         "",
         "Troubleshooting:",
         "- Try a broader or different query",
-        "- DuckDuckGo may not be available in your region",
-        "- web_search uses DuckDuckGo; consider configuring a Bing API key for fallback",
+        "- Search engines may be unavailable in your region",
         "",
         "As an alternative, you can try:",
         "- web_fetch(url=\"https://www.google.com/search?q=...\") for structured results",
       ].join("\n");
     }
 
-    const lines = [`Search: "${query}" — ${results.length} results (DuckDuckGo)`, ""];
+    const lines = [`Search: "${query}" — ${results.length} results (${backend})`, ""];
     for (let i = 0; i < results.length; i++) {
       const r = results[i]!;
       lines.push(`${i + 1}. [${r.title || "Untitled"}](${r.href})`);
