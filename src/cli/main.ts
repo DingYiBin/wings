@@ -197,7 +197,7 @@ export async function runSingle(
   opts: { workingDir?: string; model?: string | null; logger?: { recordCycle(opts: Record<string, unknown>): void } | null } = {},
 ): Promise<void> {
   const { loop, config } = await createSession(opts.workingDir, opts.logger);
-  const ctx = makeAgentContext(config, { workingDir: opts.workingDir, modelOverride: opts.model ?? null });
+  const ctx = makeAgentContext(config, { workingDir: opts.workingDir, modelOverride: opts.model ?? null, customAgents: (loop as any).customAgents ?? null });
 
   for await (const event of loop.run(prompt, ctx)) {
     switch (event.type) {
@@ -220,7 +220,7 @@ export async function runChat(
   opts: { workingDir?: string; model?: string | null; logger?: { recordCycle(opts: Record<string, unknown>): void } | null } = {},
 ): Promise<void> {
   const { loop, config, poolMgr } = await createSession(opts.workingDir, opts.logger);
-  const ctx = makeAgentContext(config, { workingDir: opts.workingDir, modelOverride: opts.model ?? null });
+  const ctx = makeAgentContext(config, { workingDir: opts.workingDir, modelOverride: opts.model ?? null, customAgents: (loop as any).customAgents ?? null });
 
   write(`\r\n${BOLD}wings${RESET} ${dim("— each model is a wing")}\r\n`);
   write(dim("Type /help, Ctrl+C to exit\r\n\r\n"));

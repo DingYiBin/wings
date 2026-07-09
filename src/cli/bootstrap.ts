@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 
 import { AgentContext, AgentLoop } from "../agent/loop.ts";
 import { loadCustomAgents } from "../agent/agent_loader.ts";
-import { BUILTIN_AGENT_TYPES, getAgentTypes, type AgentTypeSpec } from "../agent/subagent.ts";
+import { getAgentTypes, type AgentTypeSpec } from "../agent/subagent.ts";
 import {
   loadSettings,
   resolveApiKey,
@@ -191,6 +191,7 @@ export function makeAgentContext(
     workingDir?: string;
     skills?: SkillSpec[];
     availableSkills?: Record<string, string>;
+    customAgents?: Record<string, AgentTypeSpec> | null;
   } = {},
 ): AgentContext {
   const wd = opts.workingDir ?? cwd();
@@ -215,8 +216,8 @@ export function makeAgentContext(
     systemPrompt += "\n\n## Available Skills\n" + skillLines.join("\n");
   }
 
-  // Inject available agents.
-  const allAgents = getAgentTypes(BUILTIN_AGENT_TYPES as Record<string, AgentTypeSpec>);
+  // Inject available agents (builtins + project/user custom agents).
+  const allAgents = getAgentTypes(opts.customAgents ?? null);
   const agentLines = ["\n## Available Agents"];
   for (const [name, spec] of Object.entries(allAgents).sort()) {
     const toolsDesc = spec.tools ? spec.tools.join(", ") : "all";

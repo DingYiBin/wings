@@ -156,8 +156,32 @@ function decodeDdgHref(href: string): string {
 export const webSearchTool = buildTool({
   name: "web_search",
   description:
-    "Allows web search and uses results to inform responses. " +
-    "Provides up-to-date information for current events and recent data.",
+    "Allows Claude to search the web and use the results to inform responses.\n" +
+    "- Provides up-to-date information for current events and recent data\n" +
+    "- Returns search result information formatted as search result blocks\n" +
+    "- Use this tool for accessing information beyond Claude's knowledge cutoff\n" +
+    "\n" +
+    "CRITICAL REQUIREMENT - You MUST follow this:\n" +
+    '  - After answering the user\'s question, you MUST include a "Sources:" ' +
+    "section at the end of your response\n" +
+    "  - In the Sources section, list all relevant URLs from the search results " +
+    "as markdown hyperlinks: [Title](URL)\n" +
+    "  - This is MANDATORY - never skip including sources in your response\n" +
+    "\n" +
+    "Usage notes:\n" +
+    "  - Search snippets often contain the answer (numbers, dates, facts). " +
+    "If the snippet already has what you need, answer directly — do NOT " +
+    "call web_fetch on every result. Only fetch when the snippet is " +
+    "insufficient.\n" +
+    "  - If your first 1-2 web_fetch calls return 403 errors, STOP " +
+    "fetching. Many sites block automated access. Work with the snippets " +
+    "you already have.\n" +
+    "  - For time-sensitive queries, 2-3 search attempts are usually enough. " +
+    "Answer with what you have rather than searching indefinitely.\n" +
+    "\n" +
+    "IMPORTANT - Use the correct year in search queries:\n" +
+    "  - The current month is July 2026. You MUST use this year when searching " +
+    "for recent information, documentation, or current events.",
   search_hint: "web_search query='search terms' max_results=5",
   is_read_only: true,
   inputSchema: z.object({
