@@ -107,7 +107,13 @@ export const readTool = buildTool({
 
     let text: string;
     try {
-      text = readFileSync(pathStr, "utf-8");
+      // Validate UTF-8 strictly: Node's readFileSync(..., "utf-8") silently
+      // replaces invalid byte sequences with U+FFFD instead of erroring, so
+      // a latin-1 / non-UTF-8 file (no NUL bytes) would pass the binary
+      // check above but yield garbled output. Mirror Python's read_text(),
+      // which raises UnicodeDecodeError -> "cannot read binary file".
+      const buf = readFileSync(pathStr);
+      text = new TextDecoder("utf-8", { fatal: true }).decode(buf);
     } catch {
       return `Error: cannot read binary file: ${pathStr}`;
     }
