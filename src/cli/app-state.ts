@@ -24,6 +24,8 @@ export interface PermissionPrompt {
   toolInput: string;
   scope?: string;
   selected: number;
+  /** Internal: Promise resolver set by useAgent, called by PermissionDialog. */
+  _resolve?: (response: string) => void;
 }
 
 // -- Main app state --
