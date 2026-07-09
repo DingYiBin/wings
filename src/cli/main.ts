@@ -580,19 +580,63 @@ function showHelp(loop?: any): void {
   write(dim(lines.join("\r\n") + "\r\n"));
 }
 
+// Handle /pool — view and adjust API candidate pools.
+// Mirrors Python _handle_pool (main.py:478-552): up/down/disable/enable with
+// an optional --task=<type>, /pool <task_type> to view another type, and a
+// display that flags disabled APIs and shows task types with custom masks.
+function handlePool(args: string[], poolMgr: any): void {
+  let taskType = "main";
+  if (args.length > 0 && ["up", "down", "disable", "enable"].includes(args[0]!)) {
+    const sub = args[0]!;
+    const rest = args.slice(1);
+    if (rest.length === 0) {
+      write(dim("  Usage: /pool up|down|disable|enable <api_id> [--task=<type>]\r\n"));
+      return;
+    }
+    const apiParts: string[] = [];
+    for (const p of rest) {
+      if (p.startsWith("--task=")) taskType = p.slice("--task=".length);
+      else apiParts.push(p);
+    }
+    const apiId = apiParts.join(" ");
+    if (sub === "up") { poolMgr.upvote(taskType, apiId, 0.5); write(dim(`  +0.5 for ${apiId} in ${taskType}\r\n`)); }
+    else if (sub === "down") { poolMgr.downvote(taskType, apiId, 0.5); write(dim(`  -0.5 for ${apiId} in ${taskType}\r\n`)); }
+    else if (sub === "disable") { poolMgr.disable(taskType, apiId); write(dim(`  Disabled ${apiId} for ${taskType}\r\n`)); }
+    else if (sub === "enable") { poolMgr.enable(taskType, apiId); write(dim(`  Enabled ${apiId} for ${taskType}\r\n`)); }
+    return;
+  } else if (args.length > 0) {
+    // /pool <task_type> — view another task type's pool.
+    taskType = args[0]!;
+  }
+
+  const info = poolMgr.getPoolInfo(taskType) as Record<string, { base: number; delta: number; effective: number }>;
+  write(dim(`\r\n  Pool: ${taskType}\r\n`));
+  const entries = Object.entries(info);
+  if (entries.length === 0) { write(dim("    (no APIs registered)\r\n")); return; }
+  const sign = (n: number) => (n >= 0 ? "+" : "") + n.toFixed(1);
+  for (const [apiId, s] of entries) {
+    if (s.effective <= -1e9) write(dim(`    ${apiId.padEnd(45)} [DISABLED]\r\n`));
+    else if (s.delta !== 0) {
+      const deltaStr = s.delta > 0 ? `+${s.delta}` : `${s.delta}`;
+      write(dim(`    ${apiId.padEnd(45)} eff=${sign(s.effective)}  (base=${s.base.toFixed(1)} ${deltaStr})\r\n`));
+    } else {
+      write(dim(`    ${apiId.padEnd(45)} eff=${sign(s.effective)}\r\n`));
+    }
+  }
+  const customTypes = (poolMgr.listTaskTypes() as string[]).filter((t) => t !== "main" && t !== taskType).sort();
+  if (customTypes.length > 0) {
+    const shown = customTypes.slice(0, 8).join(", ");
+    const typesStr = customTypes.length > 8 ? `${shown}, +${customTypes.length - 8} more` : shown;
+    write(dim(`\r\n  Types with custom masks: ${typesStr}\r\n`));
+  }
+  write(dim(`\r\n  /pool up|down|disable|enable <api_id> [--task=<type>]\r\n`));
+  write(dim(`  /pool <task_type>  — view another task type's pool\r\n`));
+}
+
 function handleCommand(cmd: string, poolMgr: any, loop?: any) {
   const parts = cmd.split(/\s+/);
   const name = parts[0]!;
   if (name === "/help" || name === "/h") showHelp(loop);
-  else if (name === "/pool" && poolMgr) {
-    if (parts.length === 1) {
-      const info = poolMgr.getPoolInfo("main");
-      write(dim("API pool (main task type):\r\n"));
-      for (const [id, s] of Object.entries(info as Record<string, any>))
-        write(dim(`  ${id}: base=${s.base.toFixed(1)} delta=${s.delta.toFixed(1)} score=${s.effective === -Infinity ? "disabled" : s.effective.toFixed(1)}\r\n`));
-    } else if (parts.length === 3 && (parts[1] === "up" || parts[1] === "down")) {
-      parts[1] === "up" ? poolMgr.upvote("main", parts[2]!, 0.5) : poolMgr.downvote("main", parts[2]!, 0.5);
-      write(dim(`  ${parts[1] === "up" ? "↑" : "↓"} ${parts[2]}\r\n`));
-    }
-  } else write(dim(`Unknown command: ${name}. Type /help.\r\n`));
+  else if (name === "/pool" && poolMgr) handlePool(parts.slice(1), poolMgr);
+  else write(dim(`Unknown command: ${name}. Type /help.\r\n`));
 }
