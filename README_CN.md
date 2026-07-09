@@ -1,172 +1,182 @@
 # Wings
 
-多模型聚合 Agent 系统 —— 接入各家模型 API，每种任务类型拥有独立的 API 候选池。用户通过打分和配置塑造各任务使用的模型组合。每个模型都是一只翅膀。
+多模型 AI Agent CLI。每次模型调用从任务类型专属的 API 候选池中，通过 softmax 加权随机选择一个 API。用户通过打分塑造各任务使用的模型组合——每个模型都是一只翅膀。
 
-## 设计理念
-
-**API 候选池** — wings 的核心差异点。每次模型调用都从当前任务的 API 候选池中加权随机选择一个 API。用户通过打分和设置调整各任务类型的候选池（调高/调低权重、从池中移除等），而不是由系统猜测"应该用哪个模型"。新 API 默认加入所有任务池，用户可设置只加入某些任务的池。
-
-**一切皆工具**。文件读写、shell 执行、搜索、子 agent 调用——都实现统一的 `Tool` 协议，经过同一条权限管道。
-
-**协议驱动边界**。模块间依赖 Protocol 而非具体类。`ModelSelector`、`ModelProvider`、`Tool`、`HookRunner`——换实现不动调用方。
-
-## 当前状态
-
-9 个阶段完成，184 个测试，约 3100 行代码。端到端数据通路已打通：用户输入 → 消息组装 → 池选模型 → Provider API 调用 → 工具执行 → 响应输出。可以用真实 API key 进行基础测试。
-
-| 阶段 | 模块 | 状态 | 说明 |
-|------|------|------|------|
-| 1 | messages | ✅ | 内部消息类型 + Anthropic/OpenAI 双向转换 |
-| 1b | routing | ✅ | API 候选池管理器（19 种任务类型，加权随机） |
-| 2 | models | ✅ | Anthropic + OpenAI 适配器（chat/stream） |
-| 3 | tools | ✅ | 6 个内置工具：read/write/edit/bash/glob/grep |
-| 4 | query | ✅ | 查询引擎（指数退避重试、token 预算） |
-| 5 | permissions | ✅ | 4 阶段权限管道 |
-| 6a | agent/core | ✅ | 主循环 + 模型转交检测 |
-| 7 | config | ✅ | TOML + 环境变量分层配置 |
-| 8 | cli | ✅ | `wings run` / `wings chat` + bootstrap wiring |
+TypeScript 实现，Node.js 运行，Bun 测试。
 
 ## 安装
 
-需要 Python 3.12+ 和 [uv](https://docs.astral.sh/uv/)：
+需要 Node.js 22+, npm。
 
 ```bash
-git clone https://github.com/opensquilla/wings.git
+git clone https://github.com/DingYiBin/wings.git
 cd wings
-uv pip install -e .
+npm install
 ```
 
-安装开发依赖：
+测试用 Bun（更快的测试运行器）：
 
 ```bash
-uv pip install -e ".[dev]"
+bun test                    # 228 个测试
+bun x tsc --noEmit          # 类型检查
 ```
 
 ## 配置
 
-### API Key
+与 Python 版共用同一 schema。两个 JSON 文件，deep-merge。
 
-创建 `~/.wings/config.toml`：
+### 全局配置 (`~/.wings/config.json`)
 
-```toml
-# Anthropic (Claude 系列)
-[llm.anthropic]
-provider = "anthropic"
-model = "claude-sonnet-4-6"
-api_key = "sk-ant-api03-..."
-
-# OpenAI (GPT / o-series)
-[llm.openai]
-provider = "openai"
-model = "gpt-4o"
-api_key = "sk-..."
+```json
+{
+  "providers": {
+    "anthropic": {
+      "model": "claude-sonnet-4-6",
+      "protocol": "anthropic",
+      "api_key": "sk-ant-...",
+      "base_url": "https://api.anthropic.com"
+    }
+  }
+}
 ```
 
-也可以用环境变量（优先级高于配置文件）：
+Provider 字段：`model`, `protocol`（"anthropic" 或 "openai"）, `api_key`, `base_url`（必填）, `max_tokens`（8000）, `escalated_max_tokens`（64000）, `thinking`（true）, `thinking_budget`（null）。
+
+环境变量（优先级高于配置文件）：
 
 ```bash
-export WINGS_LLM__ANTHROPIC__API_KEY="sk-ant-api03-..."
-export WINGS_LLM__OPENAI__API_KEY="sk-..."
+export WINGS_PROVIDERS__ANTHROPIC__API_KEY="sk-ant-..."
+```
+
+### 项目配置 (`.wings/config.json`)
+
+覆盖全局设置：
+
+```json
+{
+  "personality": "你是一个简洁、直接的助手。",
+  "allowed_tools": ["read", "glob", "grep"],
+  "denied_tools": []
+}
 ```
 
 ### API 候选池（可选）
 
 为不同任务类型定制模型偏好：
 
-```toml
-[routing]
-default_weight = 1.0
-
-# 主对话：偏好 Claude Opus
-[[routing.pools.main]]
-api_id = "anthropic/claude-opus-4-6"
-weight = 2.0
-
-[[routing.pools.main]]
-api_id = "openai/gpt-4o"
-weight = 1.0
-
-# 子 agent：偏好快速便宜的模型
-[[routing.pools.subagent]]
-api_id = "anthropic/claude-haiku-4-5"
-weight = 3.0
-
-[[routing.pools.subagent]]
-api_id = "openai/o4-mini"
-weight = 1.0
+```json
+{
+  "routing": {
+    "version": 2,
+    "apis": [
+      {"api_id": "anthropic/claude-sonnet-4-6", "score": 0},
+      {"api_id": "anthropic/claude-haiku-4-5", "score": -2}
+    ],
+    "masks": {
+      "main": {"anthropic/claude-opus-4-6": 2.0},
+      "subagent": {"anthropic/claude-haiku-4-5": 1.0}
+    }
+  }
+}
 ```
 
-不配置池时，所有已注册 API 等权重参与选择。
+### Skills
 
-### 项目配置
+SKILL.md 文件（YAML frontmatter + markdown 正文）：
+- `.wings/skills/<name>/SKILL.md`（项目级）
+- `~/.wings/skills/<name>/SKILL.md`（用户级）
 
-在项目根目录放置 `wings.toml`：
+### 自定义 Agent
 
-```toml
-# 始终允许这些工具（不询问）
-allowed_tools = ["read", "glob", "grep"]
-
-# 禁止这些工具
-denied_tools = ["rm"]
-
-# 项目级模型覆盖
-model = "anthropic/claude-opus-4-6"
-
-# 追加到 system prompt
-personality = "简洁、直接的回答风格。"
-```
+`.wings/agents/*.md` 文件（格式同 SKILL.md）定义自定义子代理类型。
 
 ## 使用
 
-### 单次运行
-
 ```bash
-wings run "这个项目的 README 说了什么？"
-wings run --model anthropic/claude-opus-4-6 "解释架构设计"
-wings run --dir /path/to/project "列出所有 Python 文件"
+# 交互式对话
+node --import tsx src/index.ts chat
+
+# 单轮执行
+node --import tsx src/index.ts run "这个项目是做什么的？"
+
+# 带日志
+node --import tsx src/index.ts chat --log
+
+# 指定模型
+node --import tsx src/index.ts chat -m anthropic/claude-opus-4-6
 ```
 
-### 交互模式
+### 对话命令
 
-```bash
-wings chat
-```
+| 命令 | 说明 |
+|------|------|
+| `/help` | 显示可用命令 |
+| `/pool` | 查看 API 候选池分数 |
+| `/pool up <api>` | 提高某个 API 的分数（+0.5） |
+| `/pool down <api>` | 降低某个 API 的分数（-0.5） |
+| Ctrl+C | 退出 |
 
-输入 `/exit` 退出，Ctrl+C 中断。
+### 权限确认
 
-### 运行测试
+当工具需要用户批准时，弹出方向键导航的对话框：
+- `↑`/`↓` 或 `j`/`k` — 移动光标
+- `Enter` — 选中高亮项
+- `y` — 允许, `n`/`Esc` — 拒绝
 
-```bash
-pytest tests/ -v
-# 184 passed
-```
+### 日志格式
+
+`--log` 将 JSON Lines 写入 `.wings/logs/`。每行记录一次 API 调用周期，包含模型、时间、token 数、工具调用和响应内容。
 
 ## 架构
 
 ```
-src/wings/
-├── cli/            # Typer 入口 + bootstrap 组合根
-├── agent/          # AgentLoop、HandoffDetector、TurnRecord
-├── query/          # QueryEngine（重试）+ TokenBudget
-├── tools/          # Tool 协议、注册表、6 个内置工具
-├── permissions/    # 4 阶段权限管道
-├── models/         # Anthropic + OpenAI 适配器、ModelRegistry、能力目录
-├── routing/        # API 候选池管理器 + ModelSelector Protocol
-├── messages/       # 内部消息类型 + provider 格式转换
-└── config/         # 分层配置（env > wings.toml > ~/.wings/config.toml）
+src/
+├── index.ts              # CLI 入口
+├── cli/                  # REPL（raw mode + readline），bootstrap 依赖注入，日志
+│   ├── main.ts           # chat + run 命令，权限对话框
+│   ├── bootstrap.ts      # 组合根（依赖注入）
+│   ├── logging.ts        # --log: JSONL 请求/响应日志
+│   └── ink-app.tsx        # Ink/React REPL（预留）
+├── agent/                # AgentLoop（每次调用独立选模型），HandoffDetector
+│   ├── loop.ts           # 主对话循环（async generator）
+│   ├── subagent.ts       # 3 内置 + 自定义 agent 类型，runSubagent
+│   ├── handoff.ts        # 模型切换检测
+│   └── agent_loader.ts   # 从 .wings/agents/ 发现自定义 agent
+├── query/                # QueryEngine（指数退避重试），TokenBudget
+├── tools/                # buildTool() + Zod，10 个内置工具
+│   └── builtin/          # read/write/edit/bash/glob/grep/skill_view/agent/web_fetch/web_search
+├── permissions/          # 4 阶段管道：静态规则 → 作用域 → 自动分类只读 → hooks → 交互
+├── models/               # Anthropic + OpenAI 适配器（流式，max_tokens 升级）
+├── routing/              # APIPoolManager（softmax 选择），ModelSelector 接口
+├── messages/             # 内部类型 + Anthropic/OpenAI 格式转换
+├── config/               # 双文件 JSON deep merge（全局 + 项目）
+├── skills/               # SkillLoader（3 层），SkillInjector
+├── memory/               # MEMORY.md 索引 + 主题文件，自动提取
+├── hooks/                # Shell 命令生命周期钩子
+├── mcp/                  # MCP 客户端（@modelcontextprotocol/sdk stdio 传输）
+└── services/             # Compaction，Session Memory
 ```
 
-模块依赖顺序：messages/routing（无依赖）→ models（依赖 messages + routing）→ tools（无依赖）→ query（依赖 models + messages + tools）→ permissions（依赖 tools）→ agent（依赖全部）→ config（依赖 routing）→ cli（依赖全部）。
+模块依赖顺序：messages/routing → models → tools → query → permissions → agent → config/skills/memory/hooks/mcp → cli。
+
+## 开发
+
+```bash
+# 测试（Bun）
+bun test                          # 全部 228 个测试
+bun test tests/ts/agent.test.ts   # 单个文件
+
+# 类型检查
+bun x tsc --noEmit
+
+# 运行
+node --import tsx src/index.ts chat
+```
 
 ## 设计文档
 
-- [`docs/design/architecture.md`](docs/design/architecture.md) — 架构总览与设计决策
-- [`docs/design/modules.md`](docs/design/modules.md) — 详细模块设计 + 实施计划 + 开发反思
-- [`docs/reference/`](docs/reference/) — claude-code 和 opensquilla 代码仓分析
-
-## 参考项目
-
-| 项目 | 语言 | 参考点 |
-|------|------|--------|
-| [claude-code](https://github.com/anthropics/claude-code) | TypeScript | Tool/Command 接口、权限管道、agent 类型 |
-| [opensquilla](https://github.com/opensquilla/opensquilla) | Python | Protocol 驱动 DI、StageOutcome、@tool 装饰器、Dream 系统 |
+- [`docs/design/architecture.md`](docs/design/architecture.md) — 架构总览与 agent loop 设计
+- [`docs/design/modules.md`](docs/design/modules.md) — 详细模块设计 + 实现历史
+- [`docs/design/ts-rewrite-plan.md`](docs/design/ts-rewrite-plan.md) — Python → TypeScript 重写计划
+- [`docs/design/tool-comparison.md`](docs/design/tool-comparison.md) — 工具实现对比
+- [`docs/reference/`](docs/reference/) — claude-code 和 opensquilla 分析
