@@ -377,39 +377,18 @@ export async function runChat(
     return p;
   };
 
-  // -- Render with multi-line support and CJK-aware cursor positioning --
+  // -- Render: clears previous input, writes new text --
+  let _prevLines = 1;
   const renderLine = () => {
     const cols = process.stdout.columns || 80;
     const text = PROMPT + buffer;
-    const textW = displayWidth(text);
-    const cursorW = cursorCharPos();
+    const curLines = Math.max(1, Math.ceil(displayWidth(text) / cols));
 
-    // Clear the input area: move up to cover old render, then clear to end.
-    const oldLines = Math.max(1, Math.ceil(textW / cols));
-    if (oldLines > 1) write(`\x1b[${oldLines - 1}A`);
-    write(`\r\x1b[0J`);
-
-    // Write the full line.
+    // Move to first line of previous render, clear, write.
+    if (_prevLines > 1) write(`\x1b[${_prevLines - 1}A`);
+    write(`\r\x1b[J`);
     write(text);
-
-    // Move cursor to the correct visual position.
-    // After writing text, cursor is at end. We need to go back.
-    const afterW = textW - cursorW;
-    if (afterW > 0) {
-      // Cursor is on the last line of text at column textW%cols.
-      // Move up and left to reach cursor position.
-      const endLine = Math.floor(textW / cols);
-      const cursorLine = Math.floor(cursorW / cols);
-      const linesBack = endLine - cursorLine;
-      if (linesBack > 0) {
-        write(`\x1b[${linesBack}A`);
-      }
-      // Move to column cursorW % cols on this line.
-      const col = cursorW % cols;
-      if (col > 0 || linesBack > 0) {
-        write(`\r\x1b[${col}C`);
-      }
-    }
+    _prevLines = curLines;
   };
 
   // -- Data handler --
