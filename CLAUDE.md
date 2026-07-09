@@ -5,83 +5,63 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Essential commands
 
 ```bash
-# Python (existing)
-# Install (including dev deps)
-uv sync --extra dev
-
-# Run all tests (248 passing)
-uv run pytest tests/ -q
-
-# Run a single test file
-uv run pytest tests/test_skills.py -v
-
-# Run a specific test
-uv run pytest tests/test_skills.py::test_loader_discovers_skills -v
-
-# Lint
-uv run ruff check src/ tests/
-
-# Type-check
-uv run mypy src/
-
-# Run wings itself (after install)
-wings chat                   # interactive REPL
-wings run "prompt"           # single turn
-wings chat --log             # with logging to .wings/logs/
-
-# TypeScript (rewrite in progress — 195 tests, 7/8 phases)
-bun test                          # run all TS tests (195 passing)
-bun x tsc --noEmit                # type-check
+# TypeScript (primary) — install + test
+npm install                    # install dependencies
+bun test                       # run all tests (228 passing)
+bun test tests/ts/tools.test.ts  # single test file
+bun x tsc --noEmit             # type-check
 
 # Run (Node.js)
-node --import tsx src/index.ts chat          # interactive REPL
-node --import tsx src/index.ts run "prompt"  # single turn
-node --import tsx src/index.ts chat --log    # with logging to .wings/logs/
+node --import tsx src/index.ts chat              # interactive REPL
+node --import tsx src/index.ts run "prompt"      # single turn
+node --import tsx src/index.ts chat --log        # with logging to .wings/logs/
 node --import tsx src/index.ts chat -m anthropic/claude-sonnet-4-6
+
+# Python (legacy)
+uv sync --extra dev
+uv run pytest tests/ -q
+uv run ruff check src/ tests/
+uv run mypy src/
 
 # Chat commands
 /pool                        # view and adjust API candidate pools
 /pool up|down <api>          # adjust score by ±0.5
-ctrl+o                       # expand truncated tool result in pager
-
-# Init reference repos (required for /init)
-bash scripts/init-references.sh
 ```
 
 ## Architecture
 
-Wings is a **multi-model AI agent** where every API call independently selects a model from a task-type-specific candidate pool via softmax-weighted random selection. This is the core differentiator — users manage pools by scoring APIs per task type.
+Wings is a **multi-model AI agent** where every API call independently selects a model from a task-type-specific candidate pool via softmax-weighted random selection.
 
-**Module dependency chain**: `messages`/`routing` (no deps) → `models` (messages + routing) → `tools` (no deps) → `query` (models + messages + tools) → `permissions` (tools) → `agent` (all) → `config`/`skills` (routing/tools) → `cli` (all).
+**Module dependency chain**: `messages`/`routing` → `models` → `tools` → `query`/`permissions` → `agent` → `config`/`skills`/`memory`/`hooks`/`mcp` → `cli`.
 
 **Key modules**:
 
-- `routing/` — `APIPoolManager` (global pool + per-task-type score masks, softmax selection). Implements `ModelSelector` Protocol so AgentLoop only depends on the protocol.
-- `agent/loop.py` — `AgentLoop.run()` is the main loop. Model selection happens **per API call** (inside the `while True` tool-execution loop), not per turn. Handoff detection runs on the first cycle only. Permission requests use `asyncio.Event` to pause for user input.
-- `tools/builtin/` — 8 tools (read, write, edit, bash, glob, grep, skill_view, agent). All use the `@tool` decorator which auto-coerces dict inputs to Pydantic models and auto-generates JSON Schema.
-- `agent/subagent.py` — `AgentTypeSpec` dataclass + `BUILTIN_AGENT_TYPES` (general/explore/plan) + `run_subagent()`. Subagents run in a fresh AgentLoop with filtered tools and pre-allowed permissions. Each type routes via `subagent/<type>` pool.
-- `memory/` — File-based persistent memory in `.wings/memory/`. `MEMORY.md` index + per-topic markdown files with YAML frontmatter. 4 types: user/feedback/project/reference. Model uses existing Write/Edit tools to maintain memories.
-- `hooks/` — Shell-command lifecycle hooks. `PreToolUse` (can block/allow tools), `PostToolUse` (advisory). Configured via `config.json` `hooks` field. Plugs into `PermissionPipeline` Stage 3.
-- `mcp/` — MCP (Model Context Protocol) integration via stdio transport. Tools named `mcp__<server>__<tool>`. Configured via `config.json` `mcp_servers` field.
-- `permissions/` — 5-stage pipeline: tool-level rules → scoped rules (prefix matching) → auto-classify (read-only → allow) → hooks → interactive prompt. Scoped rules (`Bash(git commit:*)`) match command prefixes or directory paths, never entire tools.
-- `models/anthropic.py` — Adaptive thinking (no budget_tokens) + max_tokens escalation (8K → 64K on stop_reason=max_tokens). Streams buffer all events first to check stop_reason before yielding.
-- `skills/` — Skills are SKILL.md files (YAML frontmatter + markdown body). Three layers: builtin < `~/.wings/skills/` < `.wings/skills/`. Each skill auto-forks an independent API pool (`skill/<name>`).
-- `messages/types.py` — `StreamEvent` union includes `PermissionRequest`, `ToolUseBlock`, `ToolResultBlock` for the event pipeline. `ToolResultBlock` doubles as message content and stream event.
+- `routing/` — `APIPoolManager` (global pool + per-task-type score masks, softmax selection). Implements `ModelSelector` interface.
+- `agent/loop.ts` — `AgentLoop.run()` async generator. Model selection per API call. Permission sync via Promise resolver. Handoff detection on first cycle only.
+- `tools/builtin/` — 10 tools (read/write/edit/bash/glob/grep/skill_view/agent/web_fetch/web_search). `buildTool()` factory with Zod schemas.
+- `agent/subagent.ts` — 3 built-in types (general/explore/plan) + custom agent loader from `.wings/agents/*.md`.
+- `services/session-memory.ts` — Per-conversation structured notes (summary.md). Extracted via subagent after each turn. Used by compaction.
+- `memory/` — File-based MEMORY.md index + per-topic files with YAML frontmatter. Auto-extraction every 5 turns.
+- `hooks/` — Shell-command lifecycle hooks (PreToolUse/PostToolUse). Matcher regex, JSON stdin protocol, parallel execution.
+- `permissions/` — 4-stage pipeline: static rules → scoped → auto-classify read-only → hooks → interactive. Arrow-key navigable permission dialog via /dev/tty.
+- `query/` — `QueryEngine` with exponential backoff retry, `TokenBudget` for compaction decisions.
+- `models/` — Anthropic + OpenAI adapters. Streaming with max_tokens escalation (8K→64K). Thinking block preservation.
+- `skills/` — 3-layer SKILL.md discovery (builtin < user < project). SkillInjector for system prompt.
+- `cli/main.ts` — Raw mode REPL with grapheme-aware backspace. Permission dialog reads from /dev/tty for reliability.
 
 **Configuration** (single schema, two files):
-- `~/.wings/config.json` — global defaults (providers, routing, personality, theme)
-- `.wings/config.json` — project overrides, deep-merged on top of global
-- `GlobalSettings.load()` does global + project merge in one call via `_deep_merge()`
+- `~/.wings/config.json` — global defaults
+- `.wings/config.json` — project overrides, deep-merged
 
-**Provider config fields**: `model`, `protocol` ("anthropic"|"openai"), `api_key`, `base_url` (required), `max_tokens` (8000), `escalated_max_tokens` (64000), `thinking` (true), `adaptive_thinking` (true), `thinking_budget` (None).
+**Provider config fields**: `model`, `protocol`, `api_key`, `base_url`, `max_tokens` (8000), `escalated_max_tokens` (64000), `thinking` (true), `thinking_budget` (null).
 
 ## Key patterns
 
-- **Protocol-driven boundaries**: `ModelSelector`, `ModelProvider`, `Tool`, `HookRunner` are all `typing.Protocol`. AgentLoop depends on `ModelSelector`, not `APIPoolManager`.
-- **Tool result grouping**: Anthropic requires all tool_results for one assistant response in a single user message. AgentLoop collects all results into one `Message(role=USER, content=[...all results...])`.
-- **Stale detection**: write/edit require prior read. `ToolContext.read_cache` tracks `{path: mtime}`. Read tool populates it, write/edit check it.
-- **Permission sync**: AgentLoop yields `PermissionRequest`, awaits `asyncio.Event`. CLI renders prompt_toolkit Application, calls `loop.set_permission_response()`.
-- **Scope suggestions**: `suggest_scope()` extracts command prefix for bash (`git commit:*`), directory for write/edit (`/home/user/project/*`).
+- **Interface-driven boundaries**: `ModelSelector`, `ModelProvider`, `Tool`, `HookRunner` are TypeScript interfaces.
+- **Tool result grouping**: All tool_results for one assistant response collected into a single user message.
+- **Stale detection**: write/edit require prior read. `ToolContext.read_cache` tracks `{path: mtime}`.
+- **Permission sync**: AgentLoop yields `PermissionRequest`, awaits Promise. `_permResolve` set BEFORE yield to prevent deadlock.
+- **Scope suggestions**: `suggest_scope()` extracts command prefix for bash, directory for write/edit.
 
 ## Design docs
 

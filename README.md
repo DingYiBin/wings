@@ -1,53 +1,58 @@
 # Wings
 
-A multi-model AI agent system. Every model call randomly selects an API from a task-type-specific candidate pool using softmax-weighted random selection. Users shape which models serve which tasks through scoring — each model is a wing.
+A multi-model AI agent CLI. Every model call randomly selects an API from a task-type-specific candidate pool using softmax-weighted random selection. Users shape which models serve which tasks through scoring — each model is a wing.
 
-## Design Principles
+Built with TypeScript, runs on Node.js, tests on Bun.
 
-**API candidate pool** — wings' core differentiator. Every model call (including tool-use cycles within a turn) independently selects from the current task's candidate pool. Users adjust pools by scoring (upvote/downvote), removing APIs, or forking per-skill pools. Selection uses softmax over effective scores.
-
-**Everything is a tool**. File I/O, shell execution, search, skills — all implement the same `Tool` protocol and pass through the same permission pipeline with fine-grained scoped rules.
-
-**Protocol-driven boundaries**. Modules depend on Protocols, not concrete classes. `ModelSelector`, `ModelProvider`, `Tool`, `HookRunner` — swap implementations without touching callers.
+Design Principles — [API candidate pool] • [Everything is a tool] • [Protocol-driven boundaries]
+See [`docs/design/architecture.md`](docs/design/architecture.md) for the full architecture overview.
 
 ## Installation
 
-Requirements: Python 3.12+, [uv](https://docs.astral.sh/uv/)
+Requirements: Node.js 22+, npm
 
 ```bash
-git clone https://github.com/opensquilla/wings.git
+git clone https://github.com/DingYiBin/wings.git
 cd wings
-uv sync --extra dev
+npm install
+```
+
+Tests use Bun (faster test runner):
+```bash
+bun test                    # 228 tests
+bun x tsc --noEmit          # type-check
 ```
 
 ## Configuration
+
+Same schema as the Python version. Two files, deep-merged:
 
 ### Global (`~/.wings/config.json`)
 
 ```json
 {
   "providers": {
-    "dpsk-flash": {
-      "model": "deepseek-v4-flash",
+    "anthropic": {
+      "model": "claude-sonnet-4-6",
       "protocol": "anthropic",
-      "api_key": "sk-...",
-      "base_url": "https://api.deepseek.com/v1/"
+      "api_key": "sk-ant-...",
+      "base_url": "https://api.anthropic.com"
     }
   }
 }
 ```
 
-Provider fields: `model`, `protocol` ("anthropic" or "openai"), `api_key`, `base_url` (required), `max_tokens` (8000), `escalated_max_tokens` (64000), `thinking` (true), `adaptive_thinking` (true), `thinking_budget` (null).
+Provider fields: `model`, `protocol` ("anthropic" or "openai"), `api_key`, `base_url` (required), `max_tokens` (8000), `escalated_max_tokens` (64000), `thinking` (true), `thinking_budget` (null).
 
-API keys can also be set via environment variables (takes priority):
+API keys via environment (takes priority):
 
 ```bash
-export WINGS_PROVIDERS__DPSK_FLASH__API_KEY="sk-..."
+export WINGS_PROVIDERS__ANTHROPIC__API_KEY="sk-ant-..."
 ```
 
 ### Project (`.wings/config.json`)
 
-Overrides global settings for the current project. Deep-merged on top of global config:
+Overrides global settings for the current project:
 
 ```json
 {
@@ -57,81 +62,121 @@ Overrides global settings for the current project. Deep-merged on top of global 
 }
 ```
 
-### Skills
-
-Skills are SKILL.md files (YAML frontmatter + markdown body). Place them in:
-- `.wings/skills/<name>/SKILL.md` (project)
-- `~/.wings/skills/<name>/SKILL.md` (user)
-
-Three built-in skills ship with wings: `commit`, `review-pr`, `simplify`.
-
 ### API Candidate Pool (optional)
-
-Customize which models serve which task types by adjusting scores:
 
 ```json
 {
   "routing": {
     "version": 2,
+    "apis": [
+      {"api_id": "anthropic/claude-sonnet-4-6", "score": 0},
+      {"api_id": "anthropic/claude-haiku-4-5", "score": -2}
+    ],
     "masks": {
-      "main": {"dpsk-pro/deepseek-v4-pro": 2.0},
-      "subagent": {"dpsk-flash/deepseek-v4-flash": 3.0}
+      "main": {"anthropic/claude-opus-4-6": 2.0},
+      "subagent": {"anthropic/claude-haiku-4-5": 1.0}
     }
   }
 }
 ```
 
+### Skills
+
+SKILL.md files (YAML frontmatter + markdown body):
+- `.wings/skills/<name>/SKILL.md` (project)
+- `~/.wings/skills/<name>/SKILL.md` (user)
+
+### Custom Agents
+
+`.wings/agents/*.md` files (same SKILL.md format) define custom subagent types.
+
 ## Usage
 
 ```bash
-# Interactive chat with slash commands and permission dialogs
-wings chat
-wings chat --log          # with session logging to .wings/logs/
+# Interactive chat
+node --import tsx src/index.ts chat
 
 # Single turn
-wings run "What does this project do?"
-wings run --model dpsk-pro/deepseek-v4-pro "Explain the architecture"
+node --import tsx src/index.ts run "What does this project do?"
+
+# With session logging
+node --import tsx src/index.ts chat --log
+
+# Model override
+node --import tsx src/index.ts chat -m anthropic/claude-opus-4-6
 ```
 
-## Development
+### Chat Commands
 
-```bash
-uv sync --extra dev                 # install with dev deps
-uv run pytest tests/ -q             # 200 tests
-uv run pytest tests/test_tools.py -v  # single file
-uv run ruff check src/ tests/       # lint
-uv run mypy src/                    # type-check
-bash scripts/init-references.sh     # clone reference repos
-```
+| Command | Description |
+|---------|-------------|
+| `/help` | Show available commands |
+| `/pool` | View API candidate pool scores |
+| `/pool up <api>` | Increase an API's score by 0.5 |
+| `/pool down <api>` | Decrease an API's score by 0.5 |
+| Ctrl+C | Exit |
+
+### Permission Prompt
+
+When a tool needs approval, an arrow-key navigable dialog appears:
+- `↑`/`↓` or `j`/`k` — move cursor
+- `Enter` — select highlighted option
+- `y` — allow, `n`/`Esc` — deny
+
+### Log Format
+
+`--log` writes JSON Lines to `.wings/logs/`. Each line is one API call cycle with model, timing, token counts, tool calls, and response content.
 
 ## Architecture
 
 ```
-src/wings/
-├── cli/            # typer entry point (chat + run), bootstrap wiring, logging
-├── agent/          # AgentLoop (per-call model selection, permission sync), HandoffDetector
-├── query/          # QueryEngine (retry with backoff), TokenBudget
-├── tools/          # Tool protocol, @tool decorator, 7 built-in tools
-├── permissions/    # 5-stage pipeline (rules → scoped → classify → hooks → ask)
-├── models/         # Anthropic + OpenAI adapters (adaptive thinking, escalation)
-├── routing/        # API pool manager (softmax selection), ModelSelector Protocol
-├── messages/       # Internal types + Anthropic/OpenAI format conversion
-├── skills/         # SkillLoader (3-layer), SkillInjector, 3 built-in skills
-└── config/         # GlobalSettings (.wings/config.json merge)
+src/
+├── index.ts              # CLI entry point
+├── cli/                  # REPL (raw mode + readline), bootstrap wiring, logging
+│   ├── main.ts           # chat + run commands, permission dialog
+│   ├── bootstrap.ts      # Dependency injection (composition root)
+│   ├── logging.ts        # --log: JSONL request/response logger
+│   └── ink-app.tsx        # Ink/React REPL (future)
+├── agent/                # AgentLoop (per-call model selection), HandoffDetector
+│   ├── loop.ts           # Main conversation loop with async generator
+│   ├── subagent.ts       # 3 built-in + custom agent types, runSubagent
+│   ├── handoff.ts        # Model handoff detection between turns
+│   └── agent_loader.ts   # Custom agent discovery from .wings/agents/
+├── query/                # QueryEngine (retry with exponential backoff), TokenBudget
+├── tools/                # buildTool() + Zod, 9 built-in tools
+│   └── builtin/          # read/write/edit/bash/glob/grep/skill_view/agent/web_fetch/web_search
+├── permissions/          # 4-stage pipeline: rules → scoped → classify → hooks → ask
+├── models/               # Anthropic + OpenAI adapters (streaming, max_tokens escalation)
+├── routing/              # APIPoolManager (softmax selection), ModelSelector Protocol
+├── messages/             # Internal types + Anthropic/OpenAI format conversion
+├── config/               # 2-file JSON deep merge (global + project)
+├── skills/               # SkillLoader (3-layer), SkillInjector
+├── memory/               # MEMORY.md index + per-topic files, auto-extraction
+├── hooks/                # Shell command lifecycle hooks (PreToolUse/PostToolUse)
+├── mcp/                  # MCP client (@modelcontextprotocol/sdk stdio transport)
+└── services/             # Compaction, Session Memory
 ```
 
-Module dependency order: messages/routing → models → tools → query → permissions → agent → config/skills → cli.
+Module dependency order: messages/routing → models → tools → query → permissions → agent → config/skills/memory/hooks/mcp → cli.
+
+## Development
+
+```bash
+# Tests (Bun)
+bun test                          # all 228 tests
+bun test tests/ts/agent.test.ts   # single file
+
+# Type-check
+bun x tsc --noEmit
+
+# Run
+node --import tsx src/index.ts chat
+```
 
 ## Design Docs
 
 - [`docs/design/architecture.md`](docs/design/architecture.md) — Architecture overview and agent loop
-- [`docs/design/modules.md`](docs/design/modules.md) — Detailed module specs + implementation history + reflections
-- [`docs/design/tool-comparison.md`](docs/design/tool-comparison.md) — Tool comparison: wings vs claude-code vs opensquilla
+- [`docs/design/modules.md`](docs/design/modules.md) — Detailed module specs + implementation history
+- [`docs/design/ts-rewrite-plan.md`](docs/design/ts-rewrite-plan.md) — Python → TypeScript rewrite plan
+- [`docs/design/tool-comparison.md`](docs/design/tool-comparison.md) — Tool comparison across implementations
 - [`docs/reference/`](docs/reference/) — Analysis of claude-code and opensquilla
-
-## References
-
-| Project | Language | Reference points |
-|---------|----------|------------------|
-| [claude-code](https://github.com/anthropics/claude-code) | TypeScript | Tool interface, permission pipeline, agent types, display format |
-| [opensquilla](https://github.com/opensquilla/opensquilla) | Python | Protocol-driven DI, @tool decorator, Dream memory consolidation |
