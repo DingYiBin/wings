@@ -50,7 +50,7 @@ export function useAgent() {
     const config = configRef.current;
     if (!loop) return;
 
-    const ctx = makeAgentContext(config, { modelOverride: config.model });
+    const ctx = makeAgentContext(config, { modelOverride: config.model, customAgents: (loop as any).customAgents ?? null, skills: (loop as any).skillsList ?? [] });
     setMode("running");
     appendOutput({ type: "text", text: `▸ ${userInput}` });
     appendOutput({ type: "separator" });

@@ -33,6 +33,21 @@ function trunc(s: string, n: number): string { return s.length <= n ? s : s.slic
 const encoder = new TextEncoder();
 const write = (s: string) => { process.stdout.write(encoder.encode(s)); };
 
+// Auto-extract memories after a turn (runs every 5 turns, best-effort).
+// Mirrors Python main.py: the loop holds the extractMemories callback set in
+// createSession; we pass it the user input plus a pointer to the assistant's
+// answer (already streamed above).
+async function maybeExtract(loop: any, userInput: string): Promise<void> {
+  const extractor = loop?.extractMemories;
+  if (typeof extractor !== "function") return;
+  try {
+    const context = `User: ${userInput}\n\nAssistant answered with the content above.`;
+    await extractor.call(loop, context);
+  } catch {
+    // best-effort — never fail the turn
+  }
+}
+
 // -- Raw stdin helpers --
 
 function enterRawMode(): boolean {
@@ -182,7 +197,7 @@ export async function runSingle(
   opts: { workingDir?: string; model?: string | null; logger?: { recordCycle(opts: Record<string, unknown>): void } | null } = {},
 ): Promise<void> {
   const { loop, config } = await createSession(opts.workingDir, opts.logger);
-  const ctx = makeAgentContext(config, { workingDir: opts.workingDir, modelOverride: opts.model ?? null });
+  const ctx = makeAgentContext(config, { workingDir: opts.workingDir, modelOverride: opts.model ?? null, customAgents: (loop as any).customAgents ?? null, skills: (loop as any).skillsList ?? [] });
 
   for await (const event of loop.run(prompt, ctx)) {
     switch (event.type) {
@@ -195,6 +210,8 @@ export async function runSingle(
     }
   }
   write("\r\n");
+
+  await maybeExtract(loop, prompt);
 }
 
 // -- Interactive chat (raw mode) --
@@ -203,7 +220,7 @@ export async function runChat(
   opts: { workingDir?: string; model?: string | null; logger?: { recordCycle(opts: Record<string, unknown>): void } | null } = {},
 ): Promise<void> {
   const { loop, config, poolMgr } = await createSession(opts.workingDir, opts.logger);
-  const ctx = makeAgentContext(config, { workingDir: opts.workingDir, modelOverride: opts.model ?? null });
+  const ctx = makeAgentContext(config, { workingDir: opts.workingDir, modelOverride: opts.model ?? null, customAgents: (loop as any).customAgents ?? null, skills: (loop as any).skillsList ?? [] });
 
   write(`\r\n${BOLD}wings${RESET} ${dim("— each model is a wing")}\r\n`);
   write(dim("Type /help, Ctrl+C to exit\r\n\r\n"));
@@ -247,6 +264,7 @@ export async function runChat(
       }
       write("\r\n");
     } catch (e) { write(`${RED}Error:${RESET} ${(e as Error).message}\r\n`); }
+    await maybeExtract(loop, text);
     write(PROMPT);
     running = false;
   };
@@ -295,6 +313,7 @@ async function runChatFallback(loop: any, ctx: any, poolMgr: any, config: any) {
       }
       write("\r\n");
     } catch (e) { write(`${RED}Error:${RESET} ${(e as Error).message}\r\n`); }
+    await maybeExtract(loop, text);
     safePrompt();
   });
 }

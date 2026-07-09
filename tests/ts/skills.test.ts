@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { SkillLoader } from "../../src/skills/loader.ts";
+import { SkillInjector } from "../../src/skills/injector.ts";
+import type { SkillSpec } from "../../src/skills/types.ts";
 
 function makeSkillDir(base: string, name: string, body: string, extraFm: Record<string, unknown> = {}) {
   const dir = join(base, name);
@@ -73,5 +75,61 @@ describe("SkillLoader", () => {
   test("getByName returns undefined for missing", () => {
     const loader = new SkillLoader();
     expect(loader.getByName("nonexistent")).toBeUndefined();
+  });
+});
+
+function makeSpec(name: string, description: string, opts: Partial<SkillSpec> = {}): SkillSpec {
+  return {
+    name,
+    description,
+    content: "",
+    path: "",
+    user_invocable: true,
+    disable_model_invocation: false,
+    source: "builtin",
+    ...opts,
+  };
+}
+
+describe("SkillInjector", () => {
+  test("returns prompt unchanged when no visible skills", () => {
+    const injector = new SkillInjector();
+    const hidden = [makeSpec("h", "d", { disable_model_invocation: true })];
+    expect(injector.injectSkills("BASE", hidden)).toBe("BASE");
+    expect(injector.injectSkills("BASE", [])).toBe("BASE");
+  });
+
+  test("builds <available_skills> XML block with intro text", () => {
+    const injector = new SkillInjector();
+    const out = injector.injectSkills("BASE", [
+      makeSpec("git-commit", "Commits changes following conventions"),
+    ]);
+    expect(out).toContain("## Skills");
+    expect(out).toContain("<available_skills>");
+    expect(out).toContain("</available_skills>");
+    expect(out).toContain("<name>git-commit</name>");
+    expect(out).toContain("<description>Commits changes following conventions</description>");
+    expect(out.startsWith("BASE\n\n")).toBe(true);
+  });
+
+  test("hides skills with disable_model_invocation", () => {
+    const injector = new SkillInjector();
+    const out = injector.injectSkills("BASE", [
+      makeSpec("visible", "v"),
+      makeSpec("hidden", "h", { disable_model_invocation: true }),
+    ]);
+    expect(out).toContain("<name>visible</name>");
+    expect(out).not.toContain("<name>hidden</name>");
+  });
+
+  test("XML-escapes special characters in name and description", () => {
+    const injector = new SkillInjector();
+    const out = injector.injectSkills("BASE", [
+      makeSpec("a<b>&c", "desc <tag> & stuff"),
+    ]);
+    expect(out).toContain("<name>a&lt;b&gt;&amp;c</name>");
+    expect(out).toContain("<description>desc &lt;tag&gt; &amp; stuff</description>");
+    // No raw unescaped angle brackets inside the skill element name/description.
+    expect(out).not.toContain("<name>a<b>");
   });
 });

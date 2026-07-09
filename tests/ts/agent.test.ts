@@ -295,4 +295,43 @@ describe("Compaction triggers", () => {
     expect(result.length).toBeLessThan(longOutput.length);
     expect(result).toContain("truncated");
   });
+
+  test("compaction logs a [compaction performed] cycle", async () => {
+    // The summarization call yields a short summary text.
+    async function* summaryStream() {
+      yield { type: "text_delta", text: "summary of prior turns" };
+      yield { type: "text", text: "summary of prior turns" };
+    }
+    const { engine, registry } = makeEngine(summaryStream);
+    const selector = new MockSelector();
+    const loop = new AgentLoop(
+      engine,
+      new ToolRegistry(),
+      new PermissionPipeline(new PermissionRules()),
+      selector,
+      registry,
+    );
+
+    // Long history: 1 system + 9 user/assistant turns (> keepRecent+1).
+    const messages: any[] = [
+      { role: "system", content: [{ type: "text", text: "sys" }] },
+      ...Array.from({ length: 9 }, (_, i) => ({
+        role: i % 2 === 0 ? "user" : "assistant",
+        content: [{ type: "text", text: `msg ${i}` }],
+      })),
+    ];
+    (loop as any)._messages = messages;
+
+    const recorded: any[] = [];
+    loop.setLogger({ recordCycle(opts: Record<string, unknown>) { recorded.push(opts); } });
+
+    const cfg = makeModelConfig({ model: "test/model", api_key: "sk-test", context_window: 10_000 });
+    await (loop as any)._compactMessages(new AgentContext({ task_type: "main" }), cfg);
+
+    expect(recorded.length).toBe(1);
+    expect(recorded[0]!.input_summary).toBe("[compaction performed]");
+    expect(recorded[0]!.tool_calls).toEqual([]);
+    // Messages were compacted (fewer than the original 10).
+    expect((loop as any)._messages.length).toBeLessThan(messages.length);
+  });
 });

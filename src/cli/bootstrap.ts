@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 
 import { AgentContext, AgentLoop } from "../agent/loop.ts";
 import { loadCustomAgents } from "../agent/agent_loader.ts";
-import { BUILTIN_AGENT_TYPES, getAgentTypes, type AgentTypeSpec } from "../agent/subagent.ts";
+import { getAgentTypes, type AgentTypeSpec } from "../agent/subagent.ts";
 import {
   loadSettings,
   resolveApiKey,
@@ -20,6 +20,8 @@ import {
 import { makeModelConfig } from "../models/protocol.ts";
 import { HookRunner } from "../hooks/runner.ts";
 import { loadMCPServers } from "../mcp/loader.ts";
+import { loadMemoryPrompt } from "../memory/loader.ts";
+import { maybeExtractMemories } from "../memory/extractor.ts";
 import { AnthropicProvider } from "../models/anthropic.ts";
 import { OpenAIProvider } from "../models/openai.ts";
 import { ModelRegistry } from "../models/registry.ts";
@@ -29,6 +31,7 @@ import { QueryEngine } from "../query/engine.ts";
 import { APIPoolManager } from "../routing/manager.ts";
 import type { ModelSelector } from "../routing/protocol.ts";
 import { SkillLoader } from "../skills/loader.ts";
+import { SkillInjector } from "../skills/injector.ts";
 import type { SkillSpec } from "../skills/types.ts";
 import { makeToolContext, type Tool } from "../tools/types.ts";
 import { ToolRegistry } from "../tools/registry.ts";
@@ -125,7 +128,7 @@ export async function createSession(
 
   // -- Hooks --
   const hookRunner = new HookRunner(config.hooks);
-  const pipeline = new PermissionPipeline(rules, hookRunner);
+  const pipeline = new PermissionPipeline(rules, hookRunner.hasHooks() ? hookRunner : null);
 
   // -- Query engine --
   const engine = new QueryEngine(registry);
@@ -156,8 +159,28 @@ export async function createSession(
   if (logger) loop.setLogger(logger);
   (loop as any).skillLoader = loader;
   (loop as any).availableSkills = availableSkills;
+  (loop as any).skillsList = skillsList;
   (loop as any).poolManager = poolMgr;
   (loop as any).customAgents = customAgents;
+
+  // Memory extraction callback — called from the CLI after each turn.
+  // Runs a memory-extractor subagent every 5 turns (mirrors Python bootstrap).
+  let turnCount = 0;
+  (loop as any).extractMemories = async (messagesText: string): Promise<void> => {
+    turnCount += 1;
+    if (turnCount % 5 !== 0) return;
+    try {
+      await maybeExtractMemories(messagesText, {
+        workingDir: wd,
+        queryEngine: engine,
+        modelRegistry: registry,
+        toolRegistry: tools,
+        modelSelector: poolMgr,
+      });
+    } catch {
+      // Memory extraction is best-effort — never fail the chat turn.
+    }
+  };
 
   return { loop, config, poolMgr };
 }
@@ -170,6 +193,7 @@ export function makeAgentContext(
     workingDir?: string;
     skills?: SkillSpec[];
     availableSkills?: Record<string, string>;
+    customAgents?: Record<string, AgentTypeSpec> | null;
   } = {},
 ): AgentContext {
   const wd = opts.workingDir ?? cwd();
@@ -186,16 +210,13 @@ export function makeAgentContext(
     "- When you have enough information to give a useful answer, answer directly.",
   ].join("\n");
 
-  // Inject available skills.
+  // Inject available skills as a structured <available_skills> block.
   if (skills.length > 0) {
-    const skillLines = skills
-      .filter((s) => !s.disable_model_invocation)
-      .map((s) => `- ${s.name}: ${s.description || s.content.slice(0, 200)}`);
-    systemPrompt += "\n\n## Available Skills\n" + skillLines.join("\n");
+    systemPrompt = new SkillInjector().injectSkills(systemPrompt, skills);
   }
 
-  // Inject available agents.
-  const allAgents = getAgentTypes(BUILTIN_AGENT_TYPES as Record<string, AgentTypeSpec>);
+  // Inject available agents (builtins + project/user custom agents).
+  const allAgents = getAgentTypes(opts.customAgents ?? null);
   const agentLines = ["\n## Available Agents"];
   for (const [name, spec] of Object.entries(allAgents).sort()) {
     const toolsDesc = spec.tools ? spec.tools.join(", ") : "all";
@@ -204,6 +225,9 @@ export function makeAgentContext(
   }
   agentLines.push("\nUse agent(subagent_type=\"<name>\", description=\"...\", prompt=\"...\") to spawn one.");
   systemPrompt += "\n" + agentLines.join("\n");
+
+  // Inject memory (MEMORY.md from .wings/memory/).
+  systemPrompt += "\n\n" + loadMemoryPrompt(wd);
 
   // Environment info.
   systemPrompt += [

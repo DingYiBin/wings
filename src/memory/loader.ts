@@ -6,13 +6,15 @@
  * followed by markdown body content.
  */
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 
 import type { MemoryEntry, MemoryType } from "./types.ts";
 
 const VALID_TYPES = new Set<string>(["user", "feedback", "project", "reference"]);
+const MEMORY_DIR_NAME = ".wings/memory";
+const MEMORY_FILE = "MEMORY.md";
 
 function parseMemoryFile(path: string): { frontmatter: Record<string, unknown>; body: string } | null {
   if (!existsSync(path)) return null;
@@ -73,4 +75,32 @@ export function loadMemory(baseDir: string): MemoryStore {
   }
 
   return { entries, content };
+}
+
+/**
+ * Load MEMORY.md and build the full system prompt injection.
+ *
+ * Creates .wings/memory/ if it doesn't exist. Returns the memory guidance
+ * (teaching the model how to use memory) plus the MEMORY.md index content,
+ * wrapped in <system-reminder> tags so the model treats it as system-level
+ * context. Mirrors Python's load_memory_prompt().
+ */
+export function loadMemoryPrompt(workingDir: string): string {
+  const memoryDir = join(workingDir, ...MEMORY_DIR_NAME.split("/"));
+  mkdirSync(memoryDir, { recursive: true });
+
+  // Guidance text lives next to this source file as a plain markdown asset
+  // (avoids template-literal escaping for its 28 backticks).
+  const guidancePath = join(import.meta.dirname!, "guidance.md");
+  let guidance = readFileSync(guidancePath, "utf-8");
+  guidance = guidance.replaceAll("{memory_dir}", memoryDir);
+
+  const memoryMdPath = join(memoryDir, MEMORY_FILE);
+  if (existsSync(memoryMdPath)) {
+    const content = readFileSync(memoryMdPath, "utf-8").trim();
+    if (content) {
+      return `<system-reminder>\n${guidance}\n\n${content}\n</system-reminder>`;
+    }
+  }
+  return `<system-reminder>\n${guidance}\n</system-reminder>`;
 }

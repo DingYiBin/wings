@@ -85,6 +85,7 @@ export class AgentLoop {
   // CLI-accessible state.
   skillLoader: unknown = null;
   availableSkills: Record<string, string> = {};
+  skillsList: unknown = null;
   poolManager: unknown = null;
   customAgents: Record<string, unknown> = {};
   extractMemories: unknown = null;
@@ -519,6 +520,16 @@ export class AgentLoop {
       model,
       config: cfg,
     });
+    if (this._logger) {
+      this._logger.recordCycle({
+        model,
+        context: context.task_type,
+        message_count: this._messages.length,
+        input_summary: "[compaction performed]",
+        response: { content: [] },
+        tool_calls: [],
+      });
+    }
   }
 
   private _assembleMessages(
