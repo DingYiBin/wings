@@ -227,6 +227,9 @@ export class AgentLoop {
         this._toolRegistry.getSchemas() as Record<string, unknown>[],
         cfg,
       )) {
+        // ESC abort during streaming — stop collecting events.
+        if (this._aborted) break;
+
         if (event.type === "thinking_delta") {
           streamedText = true;
           thinkingParts.push((event as ThinkingDelta).text);
@@ -273,6 +276,16 @@ export class AgentLoop {
         });
       }
 
+      // ESC abort after streaming — skip tool execution.
+      if (this._aborted) {
+        if (textBlocks.length > 0) {
+          this._messages.push({ role: "assistant", content: [...thinkingBlocks, ...textBlocks] });
+        }
+        this._messages.push({ role: "user", content: [{ type: "text", text: "[interrupted by user]" }] });
+        this._aborted = false;
+        return;
+      }
+
       // Execute tools.
       if (toolUseBlocks.length > 0) {
         // Yield tool_use blocks for CLI display.
@@ -293,6 +306,7 @@ export class AgentLoop {
         let permissionDenied = false;
 
         for (const block of toolUseBlocks) {
+          if (this._aborted) break; // ESC abort — skip remaining tools
           const tool = this._toolRegistry.get(block.name);
           if (!tool) {
             const tr: ToolResultBlock = {
