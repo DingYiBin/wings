@@ -10,7 +10,8 @@
  * draw.
  */
 
-import { appendFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 // Debug logger to file.
 const DLOG = process.env["WINGS_DEBUG"]
@@ -67,8 +68,13 @@ export class AgentContext {
 // -- AgentLoop --
 
 export class AgentLoop {
-  /** Single tool results larger than this are truncated. */
-  static readonly MAX_TOOL_RESULT_CHARS = 20_000;
+  // claude-code matched limits.
+  /** Single result > this is persisted to file, model gets preview. */
+  static readonly MAX_TOOL_RESULT_CHARS = 50_000;
+  /** Per-message aggregate cap — largest results get persisted to stay under budget. */
+  static readonly MAX_TOOL_RESULTS_PER_MESSAGE_CHARS = 200_000;
+  /** First N bytes shown in the model preview when result is too large. */
+  static readonly PREVIEW_CHARS = 2_000;
 
   private _queryEngine: QueryEngine;
   private _toolRegistry: ToolRegistry;
@@ -274,6 +280,7 @@ export class AgentLoop {
 
         // Collect all tool results into a single user message.
         const toolResults: ToolResultBlock[] = [];
+        const toolResultOutputs = new Map<string, string>(); // tool_use_id → original output
         let permissionDenied = false;
 
         for (const block of toolUseBlocks) {
@@ -426,10 +433,18 @@ export class AgentLoop {
             context.tool_context.event_callback = null;
           }
 
+          // Persist large results to disk (claude-code pattern).
+          const limit = toolResult.max_result_size_chars ?? AgentLoop.MAX_TOOL_RESULT_CHARS;
+          const displayContent = AgentLoop._persistToolResult(
+            toolResult.output, block.id, limit,
+          );
+          // Keep original for aggregate budget enforcement.
+          toolResultOutputs.set(block.id, toolResult.output);
+
           const tr: ToolResultBlock = {
             type: "tool_result",
             tool_use_id: block.id,
-            content: AgentLoop._truncateToolResult(toolResult.output),
+            content: displayContent,
             is_error: toolResult.error != null,
           };
           toolResults.push(tr);
@@ -442,6 +457,9 @@ export class AgentLoop {
             tr.content,
           );
         }
+
+        // Apply per-message aggregate tool result budget.
+        AgentLoop._applyToolResultBudget(toolResults, toolResultOutputs);
 
         this._messages.push({
           role: "user",
@@ -490,13 +508,73 @@ export class AgentLoop {
     return this._selector.select(context.task_type, context.model_override);
   }
 
-  private static _truncateToolResult(output: string): string {
-    if (output.length <= AgentLoop.MAX_TOOL_RESULT_CHARS) return output;
-    return (
-      output.slice(0, AgentLoop.MAX_TOOL_RESULT_CHARS) +
-      `\n\n... [truncated: ${output.length} total chars, ` +
-      `showing first ${AgentLoop.MAX_TOOL_RESULT_CHARS}]`
-    );
+  /**
+   * Handle a large tool result: persist full output to disk, return a
+   * preview for the model. Matches claude-code's maybePersistLargeToolResult.
+   */
+  private static _persistToolResult(
+    output: string,
+    toolUseId: string,
+    limit: number,
+  ): string {
+    if (output.length <= limit) return output;
+
+    const preview = output.slice(0, AgentLoop.PREVIEW_CHARS);
+    // Cut at last newline in preview when possible.
+    const lastNl = preview.lastIndexOf("\n");
+    const cutPoint = lastNl > AgentLoop.PREVIEW_CHARS * 0.5 ? lastNl : AgentLoop.PREVIEW_CHARS;
+    const previewText = output.slice(0, cutPoint);
+    const hasMore = cutPoint < output.length;
+
+    // Persist to disk.
+    const dir = join(process.cwd(), ".wings", "tool-results");
+    let filePath: string;
+    try {
+      mkdirSync(dir, { recursive: true });
+      filePath = join(dir, `${toolUseId}.txt`);
+      writeFileSync(filePath, output);
+    } catch {
+      filePath = "[write failed]";
+    }
+
+    const sizeKB = (output.length / 1024).toFixed(1);
+    return [
+      `<persisted-output>`,
+      `Output too large (${sizeKB} KB). Full output saved to: ${filePath}`,
+      ``,
+      `Preview (first ${(previewText.length / 1024).toFixed(1)} KB):`,
+      previewText,
+      hasMore ? `\n... [${((output.length - cutPoint) / 1024).toFixed(1)} KB more]` : "",
+      `</persisted-output>`,
+    ].join("\n");
+  }
+
+  /**
+   * Apply per-message aggregate budget. If total tool results in one turn
+   * exceed MAX_TOOL_RESULTS_PER_MESSAGE_CHARS, persist the largest results.
+   */
+  private static _applyToolResultBudget(
+    results: ToolResultBlock[],
+    originalOutputs: Map<string, string>,
+  ): void {
+    let total = results.reduce((sum, r) => sum + r.content.length, 0);
+    if (total <= AgentLoop.MAX_TOOL_RESULTS_PER_MESSAGE_CHARS) return;
+
+    // Sort by size descending, persist largest first.
+    const indexed = results
+      .map((r, i) => ({ r, i, len: r.content.length }))
+      .sort((a, b) => b.len - a.len);
+
+    for (const { r, i, len } of indexed) {
+      if (total <= AgentLoop.MAX_TOOL_RESULTS_PER_MESSAGE_CHARS) break;
+      const original = originalOutputs.get(r.tool_use_id);
+      if (!original) continue;
+      const persisted = AgentLoop._persistToolResult(
+        original, r.tool_use_id, 1,
+      );
+      total = total - len + persisted.length;
+      results[i] = { ...r, content: persisted };
+    }
   }
 
   private _needsCompact(context: AgentContext, cfg: ModelConfig): boolean {

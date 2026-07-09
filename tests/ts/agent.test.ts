@@ -284,16 +284,18 @@ describe("Compaction triggers", () => {
     expect((loop as any)._needsCompact(new AgentContext(), cfg)).toBe(true);
   });
 
-  test("truncate under limit", () => {
-    expect((AgentLoop as any)._truncateToolResult("short")).toBe("short");
+  test("persistToolResult under limit", () => {
+    const result = (AgentLoop as any)._persistToolResult("short", "id1", 1000);
+    expect(result).toBe("short");
   });
 
-  test("truncate over limit", () => {
-    const limit = (AgentLoop as any).MAX_TOOL_RESULT_CHARS;
-    const longOutput = "x".repeat(limit + 100);
-    const result = (AgentLoop as any)._truncateToolResult(longOutput);
-    expect(result.length).toBeLessThan(longOutput.length);
-    expect(result).toContain("truncated");
+  test("persistToolResult over limit writes to file", () => {
+    const output = "line1\nline2\n" + "x".repeat(50000);
+    const result = (AgentLoop as any)._persistToolResult(output, "id2", 10);
+    expect(result.length).toBeLessThan(output.length);
+    expect(result).toContain("<persisted-output>");
+    expect(result).toContain(".wings/tool-results/id2.txt");
+    expect(result).toContain("Preview");
   });
 
   test("compaction logs a [compaction performed] cycle", async () => {
