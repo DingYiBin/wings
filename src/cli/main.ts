@@ -34,6 +34,16 @@ const SHOW_CURSOR = "\x1b[?25h";
 function dim(s: string) { return `${DIM}${s}${RESET}`; }
 function trunc(s: string, n: number): string { return s.length <= n ? s : s.slice(0, n); }
 
+// Print the per-turn model tag `[provider]` after a turn completes.
+// Mirrors Python main.py:371-372,465-466 — last_model is "provider/model",
+// we show the provider nickname.
+function writeModelTag(loop: any): void {
+  const last = loop?.lastModel;
+  if (!last) return;
+  const nick = last.split("/")[0];
+  if (nick) write(`  [${nick}]\r\n`);
+}
+
 const encoder = new TextEncoder();
 const write = (s: string) => { process.stdout.write(encoder.encode(s)); };
 
@@ -244,6 +254,7 @@ export async function runSingle(
     }
   }
   write("\r\n");
+  writeModelTag(loop);
 
   await maybeExtract(loop, prompt);
 }
@@ -326,6 +337,7 @@ export async function runChat(
         prevEvent = event.type;
       }
       write("\r\n");
+      writeModelTag(loop);
     } catch (e) { write(`${RED}Error:${RESET} ${(e as Error).message}\r\n`); }
     await maybeExtract(loop, text);
     tryExtractSessionMemory(opts.workingDir ?? process.cwd(), loop, engine, modelRegistry, toolRegistry, poolMgr);
@@ -511,6 +523,7 @@ async function runChatFallback(loop: any, ctx: any, poolMgr: any, config: any) {
           loop.setPermissionResponse(await promptPermission(event.tool_name, event.tool_input, event.scope));
       }
       write("\r\n");
+      writeModelTag(loop);
     } catch (e) { write(`${RED}Error:${RESET} ${(e as Error).message}\r\n`); }
     await maybeExtract(loop, text);
     safePrompt();
