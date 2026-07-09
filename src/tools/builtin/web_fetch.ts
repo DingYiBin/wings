@@ -79,7 +79,17 @@ export const webFetchTool = buildTool({
   description:
     "Fetches content from a specified URL and processes it. " +
     "Fetches the URL content, converts HTML to markdown. " +
-    "Use this tool when you need to retrieve and analyze web content.",
+    "Use this tool when you need to retrieve and analyze web content.\n" +
+    "\n" +
+    "Usage notes:\n" +
+    "- The URL must be a fully-formed valid URL\n" +
+    "- HTTP URLs will be automatically upgraded to HTTPS\n" +
+    "- Results may be summarized if the content is very large\n" +
+    "- Includes a 15-minute cache for repeated URLs\n" +
+    "- When a URL redirects to a different host, make a new WebFetch request with the redirect URL.\n" +
+    "- Many financial, news, and e-commerce sites return 403 (blocked). " +
+    "If you get 403 from a domain, do NOT retry that same domain — the block " +
+    "is intentional. Work with what you have from search snippets instead.",
   search_hint: "web_fetch url='https://docs.python.org/3/'",
   is_read_only: true,
   inputSchema: z.object({
