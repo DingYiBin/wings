@@ -323,7 +323,7 @@ export async function runChat(
       const parts = text.slice(1).split(/\s+/);
       const cmd = parts[0] ?? "";
       if (cmd === "help" || cmd === "h" || cmd === "pool") {
-        handleCommand(text, poolMgr);
+        handleCommand(text, poolMgr, loop);
         write(`\r\x1b[K${PROMPT}`);
         running = false;
         return;
@@ -542,7 +542,7 @@ async function runChatFallback(loop: any, ctx: any, poolMgr: any, config: any) {
   rl.on("line", async (line) => {
     const text = line.trim();
     if (!text) { safePrompt(); return; }
-    if (text.startsWith("/")) { handleCommand(text, poolMgr); safePrompt(); return; }
+    if (text.startsWith("/")) { handleCommand(text, poolMgr, loop); safePrompt(); return; }
     try {
       for await (const event of loop.run(text, ctx)) {
         if (event.type === "text_delta") write((event as any).text);
@@ -558,10 +558,32 @@ async function runChatFallback(loop: any, ctx: any, poolMgr: any, config: any) {
   });
 }
 
-function handleCommand(cmd: string, poolMgr: any) {
+// Display available slash commands and user-invocable skills.
+// Mirrors Python _show_help (main.py:553-569): a Commands section followed
+// by a dynamically enumerated Skills section.
+function showHelp(loop?: any): void {
+  const lines: string[] = ["Commands:"];
+  lines.push("  /help                Show this help");
+  lines.push("  /pool                View/adjust API candidate pool");
+  lines.push("  /pool up|down <api>  Adjust API score by ±0.5");
+  lines.push("  Ctrl+C (2x)          Exit");
+  lines.push("  ESC                  Abort the running turn");
+  const loader = (loop as any)?.skillLoader;
+  if (loader) {
+    const skills = loader.listUserInvocable() as SkillSpec[];
+    if (skills.length > 0) {
+      lines.push("", "Skills:");
+      const pad = Math.max(...skills.map((s) => s.name.length));
+      for (const s of skills) lines.push(`  /${s.name.padEnd(pad)}  ${s.description}`);
+    }
+  }
+  write(dim(lines.join("\r\n") + "\r\n"));
+}
+
+function handleCommand(cmd: string, poolMgr: any, loop?: any) {
   const parts = cmd.split(/\s+/);
   const name = parts[0]!;
-  if (name === "/help" || name === "/h") write(dim("Commands: /help, /pool, /pool up|down <api>, Ctrl+C to exit\r\n"));
+  if (name === "/help" || name === "/h") showHelp(loop);
   else if (name === "/pool" && poolMgr) {
     if (parts.length === 1) {
       const info = poolMgr.getPoolInfo("main");
