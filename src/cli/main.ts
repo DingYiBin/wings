@@ -5,9 +5,10 @@
  * Permission prompts read directly from /dev/tty for reliability.
  */
 
-import { openSync, readSync, closeSync, appendFileSync, existsSync, readFileSync } from "node:fs";
+import { openSync, readSync, closeSync, appendFileSync, existsSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { join as pathJoin } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
 import { createSession, makeAgentContext } from "./bootstrap.ts";
 import type { SkillSpec } from "../skills/types.ts";
 import { shouldExtractMemory, recordExtraction, extractSessionMemory } from "../services/session-memory.ts";
@@ -302,6 +303,33 @@ export async function runChat(
     } catch {}
   }
 
+  // Per-turn store of truncated tool results for ctrl+o expansion.
+  // Mirrors Python _truncated_results (main.py:110,360,455): reset each turn.
+  let truncatedResults: { label: string; content: string }[] = [];
+  const expandLastResult = () => {
+    if (truncatedResults.length === 0) return;
+    const { label, content } = truncatedResults[truncatedResults.length - 1]!;
+    const pager = process.env.PAGER ?? "less -R";
+    const parts = pager.split(/\s+/);
+    let dir: string | null = null;
+    try {
+      dir = mkdtempSync(pathJoin(tmpdir(), "wings-tool-"));
+      const file = pathJoin(dir, "result.txt");
+      writeFileSync(file, `# ${label}\n\n${content}`);
+      // Exit raw mode so the pager owns the terminal, then re-enter after.
+      exitRawMode();
+      write(SHOW_CURSOR + "\r\n");
+      spawnSync(parts[0]!, [...parts.slice(1), file], { stdio: "inherit" });
+    } catch {
+      // best-effort — pager unavailable or write failed
+    } finally {
+      if (dir) { try { rmSync(dir, { recursive: true, force: true }); } catch {} }
+      enterRawMode();
+      write(`\r\x1b[K${PROMPT}`);
+      renderLine();
+    }
+  };
+
   const doTurn = async (line: string) => {
     const text = line.trim();
     if (!text) { write(`\r\x1b[K${PROMPT}`); return; }
@@ -312,6 +340,7 @@ export async function runChat(
     historyIdx = history.length;
     saveHistoryEntry(text);
     running = true;
+    truncatedResults = [];
 
     // Resolve what to run this turn. A slash command is either a built-in
     // (/help, /pool) or a skill invocation (/<skill-name> [args]) — mirrors
@@ -351,7 +380,20 @@ export async function runChat(
             write((event as any).text);
             break;
           case "tool_use": write(`\r\n${dim("  ⚙")} ${CYAN}${event.name}${RESET} ${dim(trunc(JSON.stringify(event.input), 80))}`); break;
-          case "tool_result": { const tr = event as any; const content = tr.content ?? ""; const preview = trunc(content, 80).replace(/\n/g, " "); if (tr.is_error) write(`\r\n${dim("  ↳")} ${RED}${preview}${RESET}`); else if (preview) write(`\r\n${dim("  ↳")} ${dim(preview)}`); break; }
+          case "tool_result": {
+            const tr = event as any;
+            const content = tr.content ?? "";
+            const preview = trunc(content, 80).replace(/\n/g, " ");
+            // Track for ctrl+o expansion when the preview elides content
+            // (multi-line or longer than the preview) — mirrors Python
+            // main.py:306-307.
+            const truncated = content.length > 80 || content.includes("\n");
+            if (truncated) truncatedResults.push({ label: "Tool result", content });
+            const hint = truncated ? dim("  (ctrl+o)") : "";
+            if (tr.is_error) write(`\r\n${dim("  ↳")} ${RED}${preview}${RESET}${hint}`);
+            else if (preview) write(`\r\n${dim("  ↳")} ${dim(preview)}${hint}`);
+            break;
+          }
           case "permission_request":
             DLOG("DO-PERM", "calling promptPermission...");
             const permResp = await promptPermission(event.tool_name, event.tool_input, event.scope);
@@ -504,6 +546,9 @@ export async function runChat(
         renderLine(); continue;
       }
 
+      // ── ctrl+o: expand last truncated tool result in $PAGER ──
+      if (code === 0x0f) { expandLastResult(); continue; }
+
       // ── Exit ──
       if (code === 0x03) { // Ctrl+C — double-tap to exit
         const now = Date.now();
@@ -568,6 +613,7 @@ function showHelp(loop?: any): void {
   lines.push("  /pool up|down <api>  Adjust API score by ±0.5");
   lines.push("  Ctrl+C (2x)          Exit");
   lines.push("  ESC                  Abort the running turn");
+  lines.push("  ctrl+o               Expand last truncated tool result");
   const loader = (loop as any)?.skillLoader;
   if (loader) {
     const skills = loader.listUserInvocable() as SkillSpec[];
