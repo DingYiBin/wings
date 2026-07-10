@@ -103,6 +103,17 @@ export function useAgent() {
     } catch (e) {
       appendOutput({ type: "text", text: `Error: ${(e as Error).message}` });
     }
+    // Finalize streaming and add visual separation.
+    appStore.setState((s) => {
+      const out = [...s.output];
+      const last = out[out.length - 1];
+      if (last?.type === "text" && last.streaming) {
+        out[out.length - 1] = { type: "text", text: last.text };
+      }
+      out.push({ type: "text", text: "" }); // blank line
+      out.push({ type: "separator" });
+      return { ...s, output: out };
+    });
     setMode("ready");
   }, []);
 
