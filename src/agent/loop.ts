@@ -223,14 +223,31 @@ export class AgentLoop {
       let streamedText = false;
       const thinkingParts: string[] = [];
 
-      for await (const event of this._queryEngine.stream(
+      // Stream with abort polling: check _aborted every 250ms so ESC/Ctrl+C
+      // is responsive even between slow API chunks.
+      const streamIter = this._queryEngine.stream(
         this._messages,
         model,
         this._toolRegistry.getSchemas() as Record<string, unknown>[],
         cfg,
-      )) {
-        // ESC abort during streaming — stop collecting events.
-        if (this._aborted) break;
+      )[Symbol.asyncIterator]();
+      let streamDone = false;
+      const abortPoll = new Promise<void>((resolve) => {
+        const check = () => {
+          if (this._aborted || streamDone) { resolve(); return; }
+          setTimeout(check, 250);
+        };
+        check();
+      });
+      try {
+        while (true) {
+          const result = await Promise.race([streamIter.next(), abortPoll]);
+          if (this._aborted) break;
+          if (result === undefined) { streamDone = true; break; }
+          const { done, value: event } = result as IteratorResult<any>;
+          if (done || !event) { streamDone = true; break; }
+          // ESC abort during streaming — stop collecting events.
+          if (this._aborted) break;
 
         if (event.type === "thinking_delta") {
           streamedText = true;
@@ -252,7 +269,8 @@ export class AgentLoop {
           // passed back in subsequent API requests.
           thinkingBlocks.push(event as unknown as import("../messages/types.ts").ThinkingBlock);
         }
-      }
+        } // while(true)
+      } finally { streamDone = true; }
 
       // Log every API cycle.
       if (this._logger) {
