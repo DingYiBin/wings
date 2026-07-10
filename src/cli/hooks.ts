@@ -55,40 +55,33 @@ export function useAgent() {
       skills: (loop as any).skillsList ?? [],
     });
 
+    // Flush accumulated text to output as a single line.
+    const flushBuf = (buf: string) => {
+      if (buf) appendOutput({ type: "text", text: buf });
+    };
+
     try {
-      // Track streaming text: append to last OutputLine if it's a streaming text.
       let streamBuf = "";
       for await (const event of loop.run(userInput, ctx)) {
         switch (event.type) {
           case "text_delta": {
-            const dt = (event as any).text as string;
-            streamBuf += dt;
+            streamBuf += (event as any).text as string;
             setCharCount(streamBuf.length);
-            appStore.setState((s) => {
-              const out = [...s.output];
-              const last = out[out.length - 1];
-              if (last?.type === "text" && last.streaming) {
-                out[out.length - 1] = { type: "text", text: streamBuf, streaming: true };
-              } else {
-                out.push({ type: "text", text: streamBuf, streaming: true });
-              }
-              return { ...s, output: out };
-            });
             break;
           }
           case "tool_use": {
-            streamBuf = "";
+            flushBuf(streamBuf); streamBuf = "";
             appendOutput({ type: "tool_use", name: event.name, input: JSON.stringify(event.input).slice(0, 100) });
             break;
           }
           case "tool_result": {
-            streamBuf = "";
+            flushBuf(streamBuf); streamBuf = "";
             const tr = event as any;
             appendOutput({ type: "tool_result", content: tr.content.slice(0, 200), isError: tr.is_error });
             break;
           }
           case "permission_request": {
-            streamBuf = "";
+            flushBuf(streamBuf); streamBuf = "";
             const pr = event;
             const response = await new Promise<string>((resolve) => {
               setPermission({ toolName: pr.tool_name, toolInput: JSON.stringify(pr.tool_input), scope: pr.scope, selected: 0, _resolve: resolve });
@@ -98,31 +91,23 @@ export function useAgent() {
             break;
           }
           case "subagent_start": {
-            streamBuf = "";
+            flushBuf(streamBuf); streamBuf = "";
             appendOutput({ type: "subagent_start", agentType: (event as any).agent_type, description: (event as any).description ?? "" });
             break;
           }
           case "subagent_end": {
-            streamBuf = "";
+            flushBuf(streamBuf); streamBuf = "";
             appendOutput({ type: "subagent_end" });
             break;
           }
         }
       }
+      flushBuf(streamBuf);
     } catch (e) {
       appendOutput({ type: "text", text: `Error: ${(e as Error).message}` });
     }
-    // Finalize streaming and add visual separation.
-    appStore.setState((s) => {
-      const out = [...s.output];
-      const last = out[out.length - 1];
-      if (last?.type === "text" && last.streaming) {
-        out[out.length - 1] = { type: "text", text: last.text };
-      }
-      out.push({ type: "text", text: "" }); // blank line
-      out.push({ type: "separator" });
-      return { ...s, output: out };
-    });
+    appendOutput({ type: "text", text: "" }); // blank line
+    appendOutput({ type: "separator" });
     setMode("ready");
     runningRef.current = false;
   }, []);
