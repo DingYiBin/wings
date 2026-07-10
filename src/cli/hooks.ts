@@ -22,9 +22,28 @@ export function useAgent() {
     () => appStore.getState().initialized,
   );
 
+  // Subagent text accumulator — buffered, flushed on non-text events.
+  let _subBuf = "";
+  // Prevent concurrent turn execution.
+  const runningRef = useRef(false);
+
+  // Centralized output: buffers text from any source (main loop or subagent),
+  // flushes only on non-text events or after turn completes.
+  const flushText = (buf: string) => {
+    if (buf) { appendOutput({ type: "text", text: buf }); addTotalOutputChars(buf.length); }
+  };
+
   useEffect(() => {
-    // Expose appendOutput globally so subagent capture can use it.
-    (globalThis as any).__appendOutput = appendOutput;
+    // Expose for subagent capture in loop.ts.
+    (globalThis as any).__appendOutput = (line: { type: string; text?: string; name?: string; input?: string; }) => {
+      if (line.type === "text" && line.text !== undefined) {
+        _subBuf += line.text;
+        appStore.setState((s) => ({ ...s, charCount: s.charCount + line.text!.length }));
+      } else if (line.type === "tool_use") {
+        flushText(_subBuf); _subBuf = "";
+        appendOutput({ type: "tool_use", name: line.name!, input: line.input! });
+      }
+    };
     createSession(process.cwd(), _logger).then(({ loop, config, poolMgr }) => {
       loopRef.current = loop;
       configRef.current = config;
@@ -34,18 +53,16 @@ export function useAgent() {
     });
   }, []);
 
-  // Prevent concurrent turn execution.
-  const runningRef = useRef(false);
-
   const runTurn = useCallback(async (userInput: string) => {
     const loop = loopRef.current;
     const config = configRef.current;
     if (!loop || runningRef.current) return;
     runningRef.current = true;
 
+    _subBuf = "";
     setMode("running");
     setCharCount(0);
-    appendOutput({ type: "text", text: "" });  // blank line
+    appendOutput({ type: "text", text: "" });
     appendOutput({ type: "text", text: `❯ ${userInput}` });
     appendOutput({ type: "separator" });
 
@@ -55,33 +72,28 @@ export function useAgent() {
       skills: (loop as any).skillsList ?? [],
     });
 
-    // Flush accumulated text to output as a single line.
-    const flushBuf = (buf: string) => {
-      if (buf) { appendOutput({ type: "text", text: buf }); addTotalOutputChars(buf.length); }
-    };
-
     try {
       let streamBuf = "";
       for await (const event of loop.run(userInput, ctx)) {
         switch (event.type) {
           case "text_delta": {
             streamBuf += (event as any).text as string;
-            setCharCount(streamBuf.length);
+            setCharCount(streamBuf.length + _subBuf.length);
             break;
           }
           case "tool_use": {
-            flushBuf(streamBuf); streamBuf = "";
+            flushText(streamBuf); streamBuf = "";
             appendOutput({ type: "tool_use", name: event.name, input: JSON.stringify(event.input).slice(0, 100) });
             break;
           }
           case "tool_result": {
-            flushBuf(streamBuf); streamBuf = "";
+            flushText(streamBuf); streamBuf = "";
             const tr = event as any;
             appendOutput({ type: "tool_result", content: tr.content.slice(0, 200), isError: tr.is_error });
             break;
           }
           case "permission_request": {
-            flushBuf(streamBuf); streamBuf = "";
+            flushText(streamBuf); streamBuf = "";
             const pr = event;
             const response = await new Promise<string>((resolve) => {
               setPermission({ toolName: pr.tool_name, toolInput: JSON.stringify(pr.tool_input), scope: pr.scope, selected: 0, _resolve: resolve });
@@ -91,22 +103,24 @@ export function useAgent() {
             break;
           }
           case "subagent_start": {
-            flushBuf(streamBuf); streamBuf = "";
+            flushText(streamBuf); streamBuf = "";
+            _subBuf = "";
             appendOutput({ type: "subagent_start", agentType: (event as any).agent_type, description: (event as any).description ?? "" });
             break;
           }
           case "subagent_end": {
-            flushBuf(streamBuf); streamBuf = "";
+            flushText(_subBuf); flushText(streamBuf);
+            streamBuf = ""; _subBuf = "";
             appendOutput({ type: "subagent_end" });
             break;
           }
         }
       }
-      flushBuf(streamBuf);
+      flushText(_subBuf); flushText(streamBuf);
     } catch (e) {
       appendOutput({ type: "text", text: `Error: ${(e as Error).message}` });
     }
-    appendOutput({ type: "text", text: "" }); // blank line
+    appendOutput({ type: "text", text: "" });
     appendOutput({ type: "separator" });
     setMode("ready");
     runningRef.current = false;

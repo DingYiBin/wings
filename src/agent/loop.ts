@@ -405,12 +405,11 @@ export class AgentLoop {
             const capture = (evt: unknown) => {
               const e = evt as StreamEvent;
               subagentEvents.push(e);
-              // Push into global app state for Ink rendering (if available).
               try {
                 const g = (globalThis as any).__appendOutput;
                 if (g) {
                   if (e.type === "text_delta") {
-                    g({ type: "text", text: (e as any).text ?? "", streaming: true });
+                    g({ type: "text", text: (e as any).text ?? "" });
                   } else if (e.type === "tool_use") {
                     g({ type: "tool_use", name: e.name, input: JSON.stringify(e.input).slice(0, 100) });
                   }
