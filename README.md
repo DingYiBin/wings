@@ -101,6 +101,10 @@ node --import tsx src/index.ts run "What does this project do?"
 
 # Model override
 node --import tsx src/index.ts chat -m anthropic/claude-opus-4-6
+
+# Resume previous session
+node --import tsx src/index.ts chat --continue
+node --import tsx src/index.ts chat --resume abc123def4567890
 ```
 
 ### Chat Commands
@@ -111,47 +115,59 @@ node --import tsx src/index.ts chat -m anthropic/claude-opus-4-6
 | `/pool` | View API candidate pool scores |
 | `/pool up <api>` | Increase an API's score by 0.5 |
 | `/pool down <api>` | Decrease an API's score by 0.5 |
-| Ctrl+C | Exit |
+| Ctrl+C twice | Exit (shows session hash for resume) |
+
+### Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `↑`/`↓` or Ctrl+P/N | Navigate input history |
+| `←`/`→` or Ctrl+B/F | Move cursor |
+| Ctrl+←/→ | Move by word |
+| Home/End or Ctrl+A/E | Jump to start/end |
+| Ctrl+W | Delete word before |
+| Ctrl+K | Delete to end of line |
+| Ctrl+U | Delete to start of line |
+| Esc or Ctrl+C | Interrupt running agent |
+| Ctrl+C twice | Exit |
 
 ### Permission Prompt
 
-When a tool needs approval, an arrow-key navigable dialog appears:
-- `↑`/`↓` or `j`/`k` — move cursor
-- `Enter` — select highlighted option
-- `y` — allow, `n`/`Esc` — deny
+```
+bash(ls -la)
 
+❯ Yes
+  Yes, and don't ask again
+  No, tell Wings differently
+
+  Enter = allow · Esc = deny
+```
+
+`↑`/`↓` move cursor, `Enter`/`y` allow, `Esc`/`n` deny. Denying one tool skips all remaining tools in the turn.
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WINGS_DEBUG` | unset | Set to `1` for debug logging to `/tmp/wings-debug.log` |
+| `WINGS_HISTORY_ROLLBACK` | `1000` | Max input history entries; `0` disables history |
+| `WINGS_PROVIDERS__<NAME>__API_KEY` | — | Override API key for a provider |
 
 ## Architecture
 
 ```
 src/
 ├── index.ts              # CLI entry point
-├── cli/                  # REPL (raw mode + readline), bootstrap wiring
-│   ├── main.ts           # chat + run commands, permission dialog
+├── cli/                  # Ink v7 React TUI
+│   ├── ink-app.tsx       # Ink render() entry, stdin setup
+│   ├── app.tsx           # <App> root
+│   ├── repl.tsx          # <REPL> layout: Messages, PromptInput, StatusBar
+│   ├── components/       # Messages, PromptInput, PermissionDialog, StatusBar, WorkingIndicator
+│   ├── hooks.ts          # useStore, useAgent (agent loop + streaming)
+│   ├── app-state.ts      # AppState store (createStore + immutable updates)
+│   ├── store.ts          # createStore<T>() utility
 │   ├── bootstrap.ts      # Dependency injection (composition root)
-│   └── ink-app.tsx        # Ink/React REPL (future)
-├── agent/                # AgentLoop (per-call model selection), HandoffDetector
-│   ├── loop.ts           # Main conversation loop with async generator
-│   ├── subagent.ts       # 3 built-in + custom agent types, runSubagent
-│   ├── handoff.ts        # Model handoff detection between turns
-│   └── agent_loader.ts   # Custom agent discovery from .wings/agents/
-├── query/                # QueryEngine (retry with exponential backoff), TokenBudget
-├── tools/                # buildTool() + Zod, 9 built-in tools
-│   └── builtin/          # read/write/edit/bash/glob/grep/skill_view/agent/web_fetch/web_search
-├── permissions/          # 4-stage pipeline: rules → scoped → classify → hooks → ask
-├── models/               # Anthropic + OpenAI adapters (streaming, max_tokens escalation)
-├── routing/              # APIPoolManager (softmax selection), ModelSelector Protocol
-├── messages/             # Internal types + Anthropic/OpenAI format conversion
-├── config/               # 2-file JSON deep merge (global + project)
-├── skills/               # SkillLoader (3-layer), SkillInjector
-├── memory/               # MEMORY.md index + per-topic files, auto-extraction
-├── hooks/                # Shell command lifecycle hooks (PreToolUse/PostToolUse)
-├── mcp/                  # MCP client (@modelcontextprotocol/sdk stdio transport)
-└── services/             # Compaction, Session Memory
-```
-
-Module dependency order: messages/routing → models → tools → query → permissions → agent → config/skills/memory/hooks/mcp → cli.
-
+│   └── main.ts           # runSingle + readline fallback for non-TTY
 ## Development
 
 ```bash

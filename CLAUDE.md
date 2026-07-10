@@ -15,6 +15,8 @@ bun x tsc --noEmit             # type-check
 node --import tsx src/index.ts chat              # interactive REPL
 node --import tsx src/index.ts run "prompt"      # single turn
 node --import tsx src/index.ts chat -m anthropic/claude-sonnet-4-6
+node --import tsx src/index.ts chat --continue     # resume last session
+node --import tsx src/index.ts chat --resume <hash> # resume by hash
 
 # Python (legacy)
 uv sync --extra dev

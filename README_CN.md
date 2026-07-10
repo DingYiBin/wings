@@ -99,10 +99,12 @@ node --import tsx src/index.ts chat
 # 单轮执行
 node --import tsx src/index.ts run "这个项目是做什么的？"
 
-# 带日志
-
 # 指定模型
 node --import tsx src/index.ts chat -m anthropic/claude-opus-4-6
+
+# 恢复上次会话
+node --import tsx src/index.ts chat --continue
+node --import tsx src/index.ts chat --resume abc123def4567890
 ```
 
 ### 对话命令
@@ -113,49 +115,59 @@ node --import tsx src/index.ts chat -m anthropic/claude-opus-4-6
 | `/pool` | 查看 API 候选池分数 |
 | `/pool up <api>` | 提高某个 API 的分数（+0.5） |
 | `/pool down <api>` | 降低某个 API 的分数（-0.5） |
-| Ctrl+C | 退出 |
+| Ctrl+C 两次 | 退出（显示 session hash 用于恢复） |
+
+### 键盘快捷键
+
+| 按键 | 功能 |
+|------|------|
+| `↑`/`↓` 或 Ctrl+P/N | 浏览输入历史 |
+| `←`/`→` 或 Ctrl+B/F | 移动光标 |
+| Ctrl+←/→ | 按词跳转 |
+| Home/End 或 Ctrl+A/E | 跳到行首/行尾 |
+| Ctrl+W | 删除前一个词 |
+| Ctrl+K | 删至行尾 |
+| Ctrl+U | 删至行首 |
+| Esc 或 Ctrl+C | 中断正在运行的 agent |
+| Ctrl+C 两次 | 退出 |
 
 ### 权限确认
 
-当工具需要用户批准时，弹出方向键导航的对话框：
-- `↑`/`↓` 或 `j`/`k` — 移动光标
-- `Enter` — 选中高亮项
-- `y` — 允许, `n`/`Esc` — 拒绝
+```
+bash(ls -la)
 
-### 日志格式
+❯ Yes
+  Yes, and don't ask again
+  No, tell Wings differently
 
+  Enter = allow · Esc = deny
+```
+
+`↑`/`↓` 移动光标，`Enter`/`y` 允许，`Esc`/`n` 拒绝。拒绝一个工具会跳过本轮剩余所有工具。
+
+### 环境变量
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `WINGS_DEBUG` | 不设置 | 设为 `1` 启用调试日志（写入 `/tmp/wings-debug.log`） |
+| `WINGS_HISTORY_ROLLBACK` | `1000` | 输入历史最大条数；`0` 禁用历史 |
+| `WINGS_PROVIDERS__<NAME>__API_KEY` | — | 覆盖指定 provider 的 API key |
 
 ## 架构
 
 ```
 src/
 ├── index.ts              # CLI 入口
-├── cli/                  # REPL（raw mode + readline），bootstrap 依赖注入
-│   ├── main.ts           # chat + run 命令，权限对话框
+├── cli/                  # Ink v7 React TUI
+│   ├── ink-app.tsx       # Ink render() 入口，stdin 处理
+│   ├── app.tsx           # <App> 根组件
+│   ├── repl.tsx          # <REPL> 布局：Messages, PromptInput, StatusBar
+│   ├── components/       # Messages, PromptInput, PermissionDialog, StatusBar, WorkingIndicator
+│   ├── hooks.ts          # useStore, useAgent（agent loop + streaming）
+│   ├── app-state.ts      # AppState store（createStore + 不可变更新）
+│   ├── store.ts          # createStore<T>() 工具
 │   ├── bootstrap.ts      # 组合根（依赖注入）
-│   └── ink-app.tsx        # Ink/React REPL（预留）
-├── agent/                # AgentLoop（每次调用独立选模型），HandoffDetector
-│   ├── loop.ts           # 主对话循环（async generator）
-│   ├── subagent.ts       # 3 内置 + 自定义 agent 类型，runSubagent
-│   ├── handoff.ts        # 模型切换检测
-│   └── agent_loader.ts   # 从 .wings/agents/ 发现自定义 agent
-├── query/                # QueryEngine（指数退避重试），TokenBudget
-├── tools/                # buildTool() + Zod，10 个内置工具
-│   └── builtin/          # read/write/edit/bash/glob/grep/skill_view/agent/web_fetch/web_search
-├── permissions/          # 4 阶段管道：静态规则 → 作用域 → 自动分类只读 → hooks → 交互
-├── models/               # Anthropic + OpenAI 适配器（流式，max_tokens 升级）
-├── routing/              # APIPoolManager（softmax 选择），ModelSelector 接口
-├── messages/             # 内部类型 + Anthropic/OpenAI 格式转换
-├── config/               # 双文件 JSON deep merge（全局 + 项目）
-├── skills/               # SkillLoader（3 层），SkillInjector
-├── memory/               # MEMORY.md 索引 + 主题文件，自动提取
-├── hooks/                # Shell 命令生命周期钩子
-├── mcp/                  # MCP 客户端（@modelcontextprotocol/sdk stdio 传输）
-└── services/             # Compaction，Session Memory
-```
-
-模块依赖顺序：messages/routing → models → tools → query → permissions → agent → config/skills/memory/hooks/mcp → cli。
-
+│   └── main.ts           # runSingle + 非 TTY 的 readline 回退
 ## 开发
 
 ```bash
