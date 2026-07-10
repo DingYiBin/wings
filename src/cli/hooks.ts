@@ -181,6 +181,8 @@ export function useAgent() {
     }
     appendOutput({ type: "text", text: "" });
     appendOutput({ type: "separator" });
+    // Restore DECCKM so terminal scrolling works (WSL may disable it).
+    process.stdout.write("\x1b[?1l");
     // Save session state for --resume / --continue.
     const hash = getSessionHash();
     const msgs = loop.messages as Array<{ role: string; content: unknown[] }>;
