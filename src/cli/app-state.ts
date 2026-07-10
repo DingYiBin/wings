@@ -102,6 +102,7 @@ export function finalizeStreamLine() {
 }
 
 export function setInputChars(n: number) { appStore.setState((s) => ({ ...s, inputChars: n })); }
+export function addInputChars(n: number) { appStore.setState((s) => ({ ...s, inputChars: s.inputChars + n })); }
 export function setOutputChars(n: number) { appStore.setState((s) => ({ ...s, outputChars: n })); }
 export function addTotalOutputChars(n: number) { appStore.setState((s) => ({ ...s, totalOutputChars: s.totalOutputChars + n })); }
 export function setMode(mode: AppState["mode"]) {

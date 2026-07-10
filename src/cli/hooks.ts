@@ -4,7 +4,7 @@
 
 import { useSyncExternalStore, useCallback, useEffect, useRef } from "react";
 import { appStore, type AppState } from "./app-state.ts";
-import { appendOutput, setMode, setPermission, setInitialized, setInputChars, setOutputChars, addTotalOutputChars } from "./app-state.ts";
+import { appendOutput, setMode, setPermission, setInitialized, setInputChars, setOutputChars, addTotalOutputChars, addInputChars } from "./app-state.ts";
 import { createSession, makeAgentContext } from "./bootstrap.ts";
 
 export function useStore<T>(selector: (state: AppState) => T): T {
@@ -135,7 +135,10 @@ export function useAgent() {
           case "tool_result": {
             finalizeStream();
             const tr = event as any;
+            appendOutput({ type: "separator" }); // blank line before result
             appendOutput({ type: "tool_result", content: tr.content.slice(0, 200), isError: tr.is_error });
+            // Tool results are sent to the API as input — count them.
+            addInputChars((tr.content ?? "").length);
             break;
           }
           case "permission_request": {
