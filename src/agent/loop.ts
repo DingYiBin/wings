@@ -324,7 +324,7 @@ export class AgentLoop {
           // Yield tool_use right before its result (not all upfront).
           yield block;
 
-          if (this._aborted) break; // ESC abort — skip remaining tools
+          if (this._aborted || permissionDenied) break;
           const tool = this._toolRegistry.get(block.name);
           if (!tool) {
             const tr: ToolResultBlock = {
