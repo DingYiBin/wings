@@ -48,25 +48,26 @@ export function REPL() {
       <Box flexDirection="column" marginY={1} flexGrow={1}>
         <Messages lines={output} />
       </Box>
-      {mode === "permission" && permission && (
+      <WorkingIndicator inputChars={inputChars} outputChars={outputChars} totalOutput={totalOutput} mode={mode} />
+      <Text> </Text>
+      <Text dimColor>{"─".repeat(divWidth)}</Text>
+      {mode === "permission" && permission ? (
         <PermissionDialog
           permission={permission}
           onUpdate={(p) => setPermission(p)}
           onResolve={(response) => permission._resolve?.(response)}
         />
+      ) : (
+        <PromptInput
+          value={input}
+          onChange={setInput}
+          onSubmit={handleSubmit}
+          onExit={handleExit}
+          onInterrupt={handleInterrupt}
+          onExitHint={setExitHint}
+          isLoading={mode === "running"}
+        />
       )}
-      <WorkingIndicator inputChars={inputChars} outputChars={outputChars} totalOutput={totalOutput} mode={mode} />
-      <Text> </Text>
-      <Text dimColor>{"─".repeat(divWidth)}</Text>
-      <PromptInput
-        value={input}
-        onChange={setInput}
-        onSubmit={handleSubmit}
-        onExit={handleExit}
-        onInterrupt={handleInterrupt}
-        onExitHint={setExitHint}
-        isLoading={mode === "running"}
-      />
       <Text dimColor>{"─".repeat(divWidth)}</Text>
       <StatusBar mode={mode} showExitHint={exitHint} showAbortHint={true} />
     </Box>

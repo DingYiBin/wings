@@ -46,19 +46,17 @@ export function PermissionDialog({
   });
 
   return (
-    <Box flexDirection="column" position="absolute" top={2} left={2}
-         borderStyle="round" borderColor="yellow" paddingX={2} paddingY={2}
-         backgroundColor="#1a1a2e">
-      <Text bold color="yellow">🔒 Permission</Text>
-      <Text dimColor>  {permission.toolInput.slice(0, 70)}</Text>
+    <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={2} paddingY={1} marginY={1}>
+      <Text bold color="yellow">Permission</Text>
+      <Text dimColor>{permission.toolName}  {permission.toolInput.slice(0, 60)}</Text>
       <Box flexDirection="column" marginTop={1}>
         {options.map((opt, i) => (
           <Text key={i} dimColor={i !== permission.selected}>
-            {i === permission.selected ? `❯ ${opt.label}` : `  ${opt.label}`}
+            {i === permission.selected ? `  ❯ ${opt.label}` : `    ${opt.label}`}
           </Text>
         ))}
       </Box>
-      <Text dimColor>  ↑↓ select · Enter confirm · y=allow n=deny esc=deny</Text>
+      <Text dimColor>  Enter=confirm · y=allow · n/esc=deny · ↑↓ select</Text>
     </Box>
   );
 }
