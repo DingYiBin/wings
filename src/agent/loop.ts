@@ -430,6 +430,9 @@ export class AgentLoop {
                     g({ type: "text", text: (e as any).text ?? "" });
                   } else if (e.type === "tool_use") {
                     g({ type: "tool_use", name: e.name, input: JSON.stringify(e.input).slice(0, 100) });
+                  } else if (e.type === "tool_result") {
+                    const tr = e as any;
+                    g({ type: "tool_result", content: tr.content ?? "" });
                   }
                 }
               } catch {}

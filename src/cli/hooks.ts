@@ -35,13 +35,16 @@ export function useAgent() {
 
   useEffect(() => {
     // Expose for subagent capture in loop.ts.
-    (globalThis as any).__appendOutput = (line: { type: string; text?: string; name?: string; input?: string; }) => {
+    (globalThis as any).__appendOutput = (line: { type: string; text?: string; name?: string; input?: string; content?: string; }) => {
       if (line.type === "text" && line.text !== undefined) {
         _subBuf += line.text;
         appStore.setState((s) => ({ ...s, outputChars: s.outputChars + line.text!.length }));
       } else if (line.type === "tool_use") {
         flushText(_subBuf); _subBuf = "";
         appendOutput({ type: "tool_use", name: line.name!, input: line.input! });
+      } else if (line.type === "tool_result" && line.content !== undefined) {
+        appendOutput({ type: "tool_result", content: line.content.slice(0, 200), isError: false });
+        addInputChars(line.content.length);
       }
     };
     createSession(process.cwd(), _logger).then(({ loop, config, poolMgr }) => {
