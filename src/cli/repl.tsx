@@ -51,7 +51,7 @@ export function REPL() {
           onResolve={(response) => permission._resolve?.(response)}
         />
       )}
-      <WorkingIndicator inputChars={inputChars} outputChars={outputChars} totalOutput={totalOutput} visible={mode === "running"} />
+      <WorkingIndicator inputChars={inputChars} outputChars={outputChars} totalOutput={totalOutput} mode={mode} />
       <Text> </Text>
       <Text dimColor>{"─".repeat(divWidth)}</Text>
       <PromptInput
