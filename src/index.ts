@@ -8,7 +8,7 @@
  *   node --import tsx src/index.ts chat --log    # with logging to .wings/logs/
  */
 
-import { runChat, runSingle } from "./cli/main.ts";
+import { runChatFallback, runSingle } from "./cli/main.ts";
 import { TurnLogger } from "./cli/logging.ts";
 import { initSessionHash } from "./services/session-paths.ts";
 
@@ -33,10 +33,10 @@ if (!command || command === "chat") {
       const { runInkApp } = await import("./cli/ink-app.tsx");
       await runInkApp({ logger });
     } catch {
-      await runChat({ model, logger });
+      await runChatFallback({ model, logger });
     }
   } else {
-    await runChat({ model, logger });
+    await runChatFallback({ model, logger });
   }
 } else if (command === "run") {
   const prompt = rest
