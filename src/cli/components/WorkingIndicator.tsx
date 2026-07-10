@@ -12,12 +12,14 @@ export function WorkingIndicator({ inputChars, outputChars, totalOutput, mode }:
     return () => clearInterval(id);
   }, []);
 
-  const label = mode === "running" ? "Working" : "Waiting";
+  const isRunning = mode === "running";
+  const label = isRunning ? "Working" : "Waiting";
+  const d = isRunning ? ".".repeat(dots) + " ".repeat(6 - dots) : "......";
   const totalOutputChars = outputChars + totalOutput;
 
   return (
     <Text dimColor>
-      {label}{".".repeat(dots)}{" ".repeat(6 - dots)}
+      {label}{d}
       {"  ( input: "}{inputChars}{" chars, output: "}{totalOutputChars}{" chars )"}
     </Text>
   );
