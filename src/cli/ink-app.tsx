@@ -25,13 +25,23 @@ function ensureStdin(): NodeJS.ReadStream {
 
 export function runInkApp(opts: { resumeMessages?: Array<{ role: string; content: unknown[] }> | null } = {}) {
   if (opts.resumeMessages) {
-    // Pass resume messages to the global store for hooks.ts to pick up.
     (globalThis as any).__resumeMessages = opts.resumeMessages;
   }
+  // Enter alternate screen buffer so Ink frames don't pollute scrollback.
+  process.stdout.write("\x1b[?1049h");
+  const cleanup = () => {
+    process.stdout.write("\x1b[?1049l"); // restore main screen
+    process.stdout.write("\x1b[?25h");   // show cursor
+    try { (process.stdin as any).setRawMode?.(false); } catch {}
+  };
+  process.on("exit", cleanup);
+  process.on("SIGINT", () => { cleanup(); process.exit(0); });
+  process.on("SIGTERM", () => { cleanup(); process.exit(0); });
+
   const { waitUntilExit } = render(React.createElement(App), {
     stdin: ensureStdin(),
     stdout: process.stdout,
     exitOnCtrlC: false,
   });
-  return waitUntilExit();
+  return waitUntilExit().then(cleanup).catch(cleanup);
 }
