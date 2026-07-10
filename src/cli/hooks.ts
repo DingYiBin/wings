@@ -4,7 +4,7 @@
 
 import { useSyncExternalStore, useCallback, useEffect, useRef } from "react";
 import { appStore, type AppState } from "./app-state.ts";
-import { appendOutput, setMode, setPermission, setInitialized, setCharCount } from "./app-state.ts";
+import { appendOutput, setMode, setPermission, setInitialized, setCharCount, addTotalOutputChars } from "./app-state.ts";
 import { createSession, makeAgentContext } from "./bootstrap.ts";
 
 export function useStore<T>(selector: (state: AppState) => T): T {
@@ -57,7 +57,7 @@ export function useAgent() {
 
     // Flush accumulated text to output as a single line.
     const flushBuf = (buf: string) => {
-      if (buf) appendOutput({ type: "text", text: buf });
+      if (buf) { appendOutput({ type: "text", text: buf }); addTotalOutputChars(buf.length); }
     };
 
     try {

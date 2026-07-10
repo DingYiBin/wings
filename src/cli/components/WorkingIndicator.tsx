@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Text } from "ink";
 
-export function WorkingIndicator({ charCount, visible }: { charCount: number; visible: boolean }) {
+export function WorkingIndicator({ charCount, totalOutput, visible }: { charCount: number; totalOutput: number; visible: boolean }) {
   const [dots, setDots] = useState(0);
 
   useEffect(() => {
@@ -15,7 +15,7 @@ export function WorkingIndicator({ charCount, visible }: { charCount: number; vi
   return (
     <Text dimColor>
       {"Working"}{".".repeat(dots)}{" ".repeat(6 - dots)}
-      {charCount > 0 ? `  ${charCount} chars` : ""}
+      {"  ( input: "}{charCount}{" chars, output: "}{totalOutput}{" chars )"}
     </Text>
   );
 }
