@@ -43,7 +43,7 @@ export function useAgent() {
         flushText(_subBuf); _subBuf = "";
         appendOutput({ type: "tool_use", name: line.name!, input: line.input! });
       } else if (line.type === "tool_result" && line.content !== undefined) {
-        appendOutput({ type: "tool_result", content: line.content.slice(0, 200), isError: false });
+        // Count but don't display — subagent tool results are internal.
         addInputChars(line.content.length);
       }
     };
