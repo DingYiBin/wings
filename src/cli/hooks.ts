@@ -72,8 +72,47 @@ export function useAgent() {
       skills: (loop as any).skillsList ?? [],
     });
 
+    // Throttle: flush display every 100ms while running.
+    let streamBuf = "";
+    let lastFlushed = "";
+    const displayTimer = setInterval(() => {
+      if (streamBuf !== lastFlushed) {
+        // Update the last text OutputLine in-place.
+        appStore.setState((s) => {
+          const out = [...s.output];
+          const last = out[out.length - 1];
+          if (last?.type === "text" && last._stream === true) {
+            out[out.length - 1] = { type: "text", text: streamBuf, _stream: true } as any;
+          } else {
+            out.push({ type: "text", text: streamBuf, _stream: true } as any);
+          }
+          return { ...s, output: out };
+        });
+        lastFlushed = streamBuf;
+      }
+    }, 100);
+
+    const finalizeStream = () => {
+      clearInterval(displayTimer);
+      if (streamBuf) {
+        // Replace the _stream line with a finalized non-streaming one.
+        appStore.setState((s) => {
+          const out = [...s.output];
+          const last = out[out.length - 1];
+          if (last?.type === "text" && (last as any)._stream === true) {
+            out[out.length - 1] = { type: "text", text: streamBuf };
+          } else if (streamBuf) {
+            out.push({ type: "text", text: streamBuf });
+          }
+          return { ...s, output: out };
+        });
+        addTotalOutputChars(streamBuf.length);
+        streamBuf = "";
+        lastFlushed = "";
+      }
+    };
+
     try {
-      let streamBuf = "";
       for await (const event of loop.run(userInput, ctx)) {
         switch (event.type) {
           case "text_delta": {
@@ -82,18 +121,18 @@ export function useAgent() {
             break;
           }
           case "tool_use": {
-            flushText(streamBuf); streamBuf = "";
+            finalizeStream();
             appendOutput({ type: "tool_use", name: event.name, input: JSON.stringify(event.input).slice(0, 100) });
             break;
           }
           case "tool_result": {
-            flushText(streamBuf); streamBuf = "";
+            finalizeStream();
             const tr = event as any;
             appendOutput({ type: "tool_result", content: tr.content.slice(0, 200), isError: tr.is_error });
             break;
           }
           case "permission_request": {
-            flushText(streamBuf); streamBuf = "";
+            finalizeStream();
             const pr = event;
             const response = await new Promise<string>((resolve) => {
               setPermission({ toolName: pr.tool_name, toolInput: JSON.stringify(pr.tool_input), scope: pr.scope, selected: 0, _resolve: resolve });
@@ -103,21 +142,23 @@ export function useAgent() {
             break;
           }
           case "subagent_start": {
-            flushText(streamBuf); streamBuf = "";
+            finalizeStream();
             _subBuf = "";
             appendOutput({ type: "subagent_start", agentType: (event as any).agent_type, description: (event as any).description ?? "" });
             break;
           }
           case "subagent_end": {
-            flushText(_subBuf); flushText(streamBuf);
-            streamBuf = ""; _subBuf = "";
+            // Flush subagent buffer as a finalized line.
+            flushText(_subBuf); _subBuf = "";
+            finalizeStream();
             appendOutput({ type: "subagent_end" });
             break;
           }
         }
       }
-      flushText(_subBuf); flushText(streamBuf);
+      finalizeStream();
     } catch (e) {
+      clearInterval(displayTimer);
       appendOutput({ type: "text", text: `Error: ${(e as Error).message}` });
     }
     appendOutput({ type: "text", text: "" });

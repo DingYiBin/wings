@@ -10,7 +10,7 @@ import { createStore, type Store } from "./store.ts";
 // -- Message types for display --
 
 export type OutputLine =
-  | { type: "text"; text: string; streaming?: boolean }
+  | { type: "text"; text: string; streaming?: boolean; _stream?: boolean }
   | { type: "tool_use"; name: string; input: string }
   | { type: "tool_result"; content: string; isError?: boolean }
   | { type: "subagent_start"; agentType: string; description: string }
