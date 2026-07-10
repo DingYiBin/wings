@@ -6,6 +6,7 @@ import { useSyncExternalStore, useCallback, useEffect, useRef } from "react";
 import { appStore, type AppState } from "./app-state.ts";
 import { appendOutput, setMode, setPermission, setInitialized, setInputChars, setOutputChars, addTotalOutputChars, addInputChars } from "./app-state.ts";
 import { createSession, makeAgentContext } from "./bootstrap.ts";
+import { saveNewMessages, updateSessionIndex, saveSessionMeta, updateSessionMeta, getSessionHash } from "../services/session-paths.ts";
 
 export function useStore<T>(selector: (state: AppState) => T): T {
   return useSyncExternalStore(appStore.subscribe, () => selector(appStore.getState()));
@@ -26,6 +27,8 @@ export function useAgent() {
   let _subBuf = "";
   // Prevent concurrent turn execution.
   const runningRef = useRef(false);
+  const turnCountRef = useRef(0);
+  const firstSaveRef = useRef(true);
 
   // Centralized output: buffers text from any source (main loop or subagent),
   // flushes only on non-text events or after turn completes.
@@ -52,6 +55,12 @@ export function useAgent() {
       configRef.current = config;
       (globalThis as any).__poolMgr = poolMgr;
       (globalThis as any).__loop = loop;
+      // Inject resume messages if restoring a session.
+      const resumeMsgs = (globalThis as any).__resumeMessages as Array<{ role: string; content: unknown[] }> | undefined;
+      if (resumeMsgs && resumeMsgs.length > 0) {
+        (loop as any)._messages = resumeMsgs as any;
+        // Skip adding system prompt since messages already have it.
+      }
       setInitialized();
     });
   }, []);
@@ -177,6 +186,20 @@ export function useAgent() {
     }
     appendOutput({ type: "text", text: "" });
     appendOutput({ type: "separator" });
+    // Save session state for --resume / --continue.
+    const hash = getSessionHash();
+    const msgs = loop.messages as Array<{ role: string; content: unknown[] }>;
+    if (msgs && msgs.length > 0) {
+      saveNewMessages(hash, msgs);
+      if (firstSaveRef.current) {
+        saveSessionMeta(hash, process.cwd(), turnCountRef.current);
+        updateSessionIndex(process.cwd(), hash);
+        firstSaveRef.current = false;
+      } else {
+        updateSessionMeta(hash, turnCountRef.current);
+      }
+    }
+    turnCountRef.current++;
     setMode("ready");
     runningRef.current = false;
   }, []);

@@ -25,8 +25,12 @@ function ensureStdin(): NodeJS.ReadStream {
   }) as unknown as NodeJS.ReadStream;
 }
 
-export function runInkApp(opts: { logger?: TurnLogger | null } = {}) {
+export function runInkApp(opts: { logger?: TurnLogger | null; resumeMessages?: Array<{ role: string; content: unknown[] }> | null } = {}) {
   if (opts.logger) setGlobalLogger(opts.logger);
+  if (opts.resumeMessages) {
+    // Pass resume messages to the global store for hooks.ts to pick up.
+    (globalThis as any).__resumeMessages = opts.resumeMessages;
+  }
   const { waitUntilExit } = render(React.createElement(App), {
     stdin: ensureStdin(),
     stdout: process.stdout,
