@@ -37,13 +37,14 @@ function formatInput(name: string, input: string): string {
   return input.length > 60 ? `(${input.slice(0, 57)}…)` : `(${input})`;
 }
 
-function renderLine(line: OutputLine) {
+function renderLine(line: OutputLine, key?: number) {
+  const k = key != null ? String(key) : undefined;
   switch (line.type) {
     case "text":
-      return <Text>{line.text}</Text>;
+      return <Text key={k}>{line.text}</Text>;
     case "tool_use":
       return (
-        <Box flexDirection="row" marginTop={1}>
+        <Box key={k} flexDirection="row" marginTop={1}>
           <Text color="cyan">●</Text>
           <Text bold> {line.name}</Text>
           <Text dimColor>{formatInput(line.name, line.input)}</Text>
@@ -51,34 +52,31 @@ function renderLine(line: OutputLine) {
       );
     case "tool_result":
       return (
-        <Text dimColor color={line.isError ? "red" : undefined}>
+        <Text key={k} dimColor color={line.isError ? "red" : undefined}>
           {"  ⎿ "}{formatResult(line.content)}
         </Text>
       );
     case "subagent_start":
-      return <Text dimColor>{"  ┌ subagent "}{line.agentType}{" "}{line.description}</Text>;
+      return <Text key={k} dimColor>{"  ┌ subagent "}{line.agentType}{" "}{line.description}</Text>;
     case "subagent_end":
-      return <Text dimColor>{"  └ done"}</Text>;
+      return <Text key={k} dimColor>{"  └ done"}</Text>;
     case "separator":
-      return <Text> </Text>;
+      return <Text key={k}> </Text>;
   }
 }
 
 export function Messages({ lines }: { lines: OutputLine[] }) {
-  // Only the very last item is dynamic (streaming text). Everything else
-  // is Static so the frame height stays stable and the terminal doesn't
-  // auto-scroll to the bottom on every refresh.
   if (lines.length === 0) return <Box flexDirection="column" />;
   if (lines.length === 1) {
-    return <Box flexDirection="column">{renderLine(lines[0]!)}</Box>;
+    return <Box flexDirection="column">{renderLine(lines[0]!, 0)}</Box>;
   }
   const staticLines = lines.slice(0, -1);
   const last = lines[lines.length - 1]!;
 
   return (
     <Box flexDirection="column">
-      <Static items={staticLines}>{(line) => renderLine(line)}</Static>
-      <Box flexDirection="column">{renderLine(last)}</Box>
+      <Static items={staticLines}>{(line, idx) => renderLine(line, idx)}</Static>
+      <Box flexDirection="column">{renderLine(last, staticLines.length)}</Box>
     </Box>
   );
 }
