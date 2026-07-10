@@ -10,7 +10,6 @@ import { Box, Text, Static } from "ink";
 import type { OutputLine } from "../app-state.ts";
 
 const MAX_RESULT_LINES = 3;
-const DYNAMIC_TAIL = 4; // last N items rendered dynamically for streaming updates
 
 function formatResult(content: string): string {
   const formatted = content.replace(/\t/g, "    ");
@@ -66,22 +65,20 @@ function renderLine(line: OutputLine, i: number) {
 }
 
 export function Messages({ lines }: { lines: OutputLine[] }) {
-  // Clip to terminal height to prevent Ink frame overflow and scroll jumping.
-  const termRows = process.stdout.rows || 24;
-  const maxLines = Math.max(6, termRows - 8); // reserve for header, prompt, dividers
-  const visible = lines.length > maxLines ? lines.slice(-maxLines) : lines;
-
-  if (visible.length <= DYNAMIC_TAIL) {
-    return <Box flexDirection="column">{visible.map(renderLine)}</Box>;
+  // Only the very last item is dynamic (streaming text). Everything else
+  // is Static so the frame height stays stable and the terminal doesn't
+  // auto-scroll to the bottom on every refresh.
+  if (lines.length === 0) return <Box flexDirection="column" />;
+  if (lines.length === 1) {
+    return <Box flexDirection="column">{renderLine(lines[0]!, 0)}</Box>;
   }
-  const staticLines = visible.slice(0, -DYNAMIC_TAIL);
-  const dynamicLines = visible.slice(-DYNAMIC_TAIL);
+  const staticLines = lines.slice(0, -1);
+  const last = lines[lines.length - 1]!;
 
   return (
     <Box flexDirection="column">
-      {lines.length > maxLines && <Text dimColor>  … {lines.length - maxLines} earlier lines</Text>}
       <Static items={staticLines}>{(line) => renderLine(line, 0)}</Static>
-      <Box flexDirection="column">{dynamicLines.map(renderLine)}</Box>
+      <Box flexDirection="column">{renderLine(last, 0)}</Box>
     </Box>
   );
 }
