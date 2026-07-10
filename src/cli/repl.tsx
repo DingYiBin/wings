@@ -49,6 +49,7 @@ export function REPL() {
           onResolve={(response) => permission._resolve?.(response)}
         />
       )}
+      <Text dimColor>{"─".repeat(process.stdout.columns || 80)}</Text>
       <WorkingIndicator charCount={charCount} visible={mode === "running"} />
       <PromptInput
         value={input}
@@ -57,6 +58,7 @@ export function REPL() {
         onExit={handleExit}
         isLoading={mode === "running"}
       />
+      <Text dimColor>{"─".repeat(process.stdout.columns || 80)}</Text>
     </Box>
   );
 }
