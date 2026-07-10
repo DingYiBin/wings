@@ -10,7 +10,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 const HISTORY_PATH = join(homedir(), ".wings", "history.jsonl");
-const MAX_HISTORY = 1000;
+const MAX_HISTORY = (() => { const v = parseInt(process.env["WINGS_HISTORY_ROLLBACK"] ?? "1000", 10); return isNaN(v) ? 1000 : v; })();
+const HISTORY_ENABLED = MAX_HISTORY > 0;
 
 function graphemeBackspace(s: string): string {
   if (!s) return s;
@@ -41,6 +42,7 @@ export function PromptInput({
 
   // Load cross-session history on mount.
   useEffect(() => {
+    if (!HISTORY_ENABLED) return;
     try {
       if (existsSync(HISTORY_PATH)) {
         const raw = readFileSync(HISTORY_PATH, "utf-8").trim();
@@ -66,10 +68,12 @@ export function PromptInput({
       h.push(v);
       if (h.length > MAX_HISTORY) h.shift();
       // Persist to ~/.wings/history.jsonl.
-      try {
-        mkdirSync(join(homedir(), ".wings"), { recursive: true });
-        appendFileSync(HISTORY_PATH, JSON.stringify({ text: v }) + "\n");
-      } catch {}
+      if (HISTORY_ENABLED) {
+        try {
+          mkdirSync(join(homedir(), ".wings"), { recursive: true });
+          appendFileSync(HISTORY_PATH, JSON.stringify({ text: v }) + "\n");
+        } catch {}
+      }
     }
     histIdx.current = h.length;
     onChange(""); setCursor(0);
