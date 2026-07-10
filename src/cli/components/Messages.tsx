@@ -37,16 +37,13 @@ function formatInput(name: string, input: string): string {
   return input.length > 60 ? `(${input.slice(0, 57)}…)` : `(${input})`;
 }
 
-let _nextId = 1;
-function nextKey() { return String(_nextId++); }
 function renderLine(line: OutputLine) {
-  const k = nextKey();
   switch (line.type) {
     case "text":
-      return <Text key={k}>{line.text}</Text>;
+      return <Text>{line.text}</Text>;
     case "tool_use":
       return (
-        <Box key={k} flexDirection="row" marginTop={1}>
+        <Box flexDirection="row" marginTop={1}>
           <Text color="cyan">●</Text>
           <Text bold> {line.name}</Text>
           <Text dimColor>{formatInput(line.name, line.input)}</Text>
@@ -54,21 +51,20 @@ function renderLine(line: OutputLine) {
       );
     case "tool_result":
       return (
-        <Text key={k} dimColor color={line.isError ? "red" : undefined}>
+        <Text dimColor color={line.isError ? "red" : undefined}>
           {"  ⎿ "}{formatResult(line.content)}
         </Text>
       );
     case "subagent_start":
-      return <Text key={k} dimColor>{"  ┌ subagent "}{line.agentType}{" "}{line.description}</Text>;
+      return <Text dimColor>{"  ┌ subagent "}{line.agentType}{" "}{line.description}</Text>;
     case "subagent_end":
-      return <Text key={k} dimColor>{"  └ done"}</Text>;
+      return <Text dimColor>{"  └ done"}</Text>;
     case "separator":
-      return <Text key={k}> </Text>;
+      return <Text> </Text>;
   }
 }
 
 export function Messages({ lines }: { lines: OutputLine[] }) {
-  _nextId = 1; // reset key counter each render
   // Only the very last item is dynamic (streaming text). Everything else
   // is Static so the frame height stays stable and the terminal doesn't
   // auto-scroll to the bottom on every refresh.
