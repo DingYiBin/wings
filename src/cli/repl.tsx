@@ -32,7 +32,9 @@ export function REPL() {
   }, [runTurn]);
 
   const handleExit = useCallback(() => {
+    try { (process.stdin as any).setRawMode?.(false); } catch {}
     process.stderr.write(`\nSession: ${getSessionHash()}\n  node --import tsx src/index.ts chat --resume ${getSessionHash()}\n\n`);
+    process.stdout.write("\x1b[?25h"); // show cursor
     process.exit(0);
   }, []);
   const handleInterrupt = useCallback(() => {
