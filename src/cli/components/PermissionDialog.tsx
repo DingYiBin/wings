@@ -64,7 +64,8 @@ export function PermissionDialog({
           </Text>
         ))}
       </Box>
-      <Text dimColor>  enter=allow · esc=deny</Text>
+      <Text> </Text>
+      <Text dimColor>  Enter = allow · Esc = deny</Text>
     </Box>
   );
 }
