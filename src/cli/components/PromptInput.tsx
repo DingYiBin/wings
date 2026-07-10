@@ -1,39 +1,37 @@
 /**
- * PromptInput — claude-code style input bar with full keybindings.
+ * PromptInput — Ink v7 input bar with full keybindings.
+ *
+ * Ink v7 Key type includes home/end/delete/backspace natively.
  */
 
 import React, { useState, useCallback, useRef } from "react";
-import { Box, Text } from "ink";
-import { useInput } from "ink";
+import { Box, Text, useInput } from "ink";
 
-// Simple grapheme-aware cursor. In production, use Intl.Segmenter.
-function graphemeLen(s: string): number {
-  try { return [...new Intl.Segmenter("en", { granularity: "grapheme" }).segment(s)].length; } catch { return s.length; }
-}
-function graphemeSlice(s: string, start: number): string {
-  try { return [...new Intl.Segmenter("en", { granularity: "grapheme" }).segment(s)].slice(start).map(x => x.segment).join(""); } catch { return s.slice(start); }
-}
 function graphemeBackspace(s: string): string {
   if (!s) return s;
-  try { return [...new Intl.Segmenter("en", { granularity: "grapheme" }).segment(s)].slice(0, -1).map(x => x.segment).join(""); } catch { return s.slice(0, -1); }
+  try { return [...new Intl.Segmenter("en",{granularity:"grapheme"}).segment(s)].slice(0,-1).map(x=>x.segment).join(""); } catch { return s.slice(0,-1); }
 }
-function wordLeft(s: string, pos: number): number {
-  let p = pos; while (p > 0 && s[p - 1] === " ") p--; while (p > 0 && s[p - 1] !== " ") p--; return p;
+function graphemeDelete(s: string): string {
+  if (!s) return s;
+  try { return [...new Intl.Segmenter("en",{granularity:"grapheme"}).segment(s)].slice(1).map(x=>x.segment).join(""); } catch { return s.slice(1); }
 }
-function wordRight(s: string, pos: number): number {
-  let p = pos; while (p < s.length && s[p] !== " ") p++; while (p < s.length && s[p] === " ") p++; return p;
+function wordLeft(s: string, p: number): number {
+  while (p>0&&s[p-1]===" ") p--; while (p>0&&s[p-1]!==" ") p--; return p;
+}
+function wordRight(s: string, p: number): number {
+  while (p<s.length&&s[p]!==" ") p++; while (p<s.length&&s[p]===" ") p++; return p;
 }
 
 export function PromptInput({
-  value, onChange, onSubmit, onExit, isLoading, placeholder,
+  value, onChange, onSubmit, onExit, isLoading,
 }: {
   value: string; onChange: (v: string) => void; onSubmit: (v: string) => void;
-  onExit: () => void; isLoading: boolean; placeholder?: string;
+  onExit: () => void; isLoading: boolean;
 }) {
   const [cursor, setCursor] = useState(value.length);
-  const [exitMsg, setExitMsg] = useState(false);
   const lastCtrlC = useRef(0);
-  const historyRef = useRef<string[]>([]);
+  const lastCtrlD = useRef(0);
+  const history = useRef<string[]>([]);
   const histIdx = useRef(-1);
 
   const setValue = useCallback((v: string, c: number) => {
@@ -43,114 +41,108 @@ export function PromptInput({
 
   const commit = useCallback((v: string) => {
     if (!v.trim()) return;
-    historyRef.current = historyRef.current.filter(h => h !== v);
-    historyRef.current.push(v);
-    histIdx.current = historyRef.current.length;
+    const h = history.current;
+    h.push(v); if (h.length > 1000) h.shift();
+    histIdx.current = h.length;
     onChange(""); setCursor(0);
     onSubmit(v);
   }, [onSubmit, onChange]);
 
-  useInput((char, key) => {
+  useInput((input, key) => {
     if (isLoading) return;
 
     // ── Ctrl+C: double-press to exit ──
-    if (key.ctrl && char === "c") {
+    if (key.ctrl && input === "c") {
       const now = Date.now();
-      if (exitMsg || (lastCtrlC.current > 0 && now - lastCtrlC.current < 800)) {
-        onExit();
-        return;
-      }
+      if (lastCtrlC.current > 0 && now - lastCtrlC.current < 800) { onExit(); return; }
       lastCtrlC.current = now;
-      if (value === "") { setExitMsg(true); setTimeout(() => setExitMsg(false), 2000); }
-      else { onChange(""); setCursor(0); }
+      if (value === "") return; // Ink's exitOnCtrlC:false lets us handle it, but no exit hint needed
+      onChange(""); setCursor(0);
       return;
     }
-    // Ctrl+D: double-press to exit on empty, else delete
-    if (key.ctrl && char === "d") {
+    // Ctrl+D: double-press exit on empty, else delete forward
+    if (key.ctrl && input === "d") {
       if (value === "") {
         const now = Date.now();
-        if (lastCtrlC.current > 0 && now - lastCtrlC.current < 800) { onExit(); return; }
-        lastCtrlC.current = now;
-        setExitMsg(true); setTimeout(() => setExitMsg(false), 2000);
+        if (lastCtrlD.current > 0 && now - lastCtrlD.current < 800) { onExit(); return; }
+        lastCtrlD.current = now;
         return;
       }
-      setValue(graphemeSlice(value, cursor + 1) ? value.slice(0, cursor) + graphemeSlice(value, cursor + 1) : value.slice(0, cursor), cursor);
+      setValue(value.slice(0, cursor) + graphemeDelete(value.slice(cursor)), cursor);
       return;
     }
 
     // ── Navigation ──
-    if (key.upArrow) { // History up
-      const h = historyRef.current;
-      if (h.length > 0 && histIdx.current > 0) {
-        histIdx.current--;
-        const v = h[histIdx.current]!; onChange(v); setCursor(v.length);
+    if (key.upArrow) {
+      const h = history.current;
+      if (h.length > 0) {
+        if (histIdx.current === h.length || histIdx.current < 0) histIdx.current = h.length - 1;
+        else if (histIdx.current > 0) histIdx.current--;
+        const v = h[histIdx.current] ?? ""; onChange(v); setCursor(v.length);
       }
       return;
     }
-    if (key.downArrow) { // History down
-      const h = historyRef.current;
-      if (histIdx.current < h.length - 1) { histIdx.current++; const v = h[histIdx.current]!; onChange(v); setCursor(v.length); }
+    if (key.downArrow) {
+      const h = history.current;
+      if (histIdx.current < h.length - 1) { histIdx.current++; const v = h[histIdx.current] ?? ""; onChange(v); setCursor(v.length); }
       else { histIdx.current = h.length; onChange(""); setCursor(0); }
       return;
     }
-    if (key.leftArrow && !key.ctrl) { setCursor(Math.max(0, cursor - 1)); return; }
-    if (key.rightArrow && !key.ctrl) { setCursor(Math.min(value.length, cursor + 1)); return; }
-    // Ctrl+Left/Right: word navigation
-    if (key.leftArrow && key.ctrl) { setCursor(wordLeft(value, cursor)); return; }
-    if (key.rightArrow && key.ctrl) { setCursor(wordRight(value, cursor)); return; }
+    if ((key.leftArrow && !key.ctrl && !key.meta) || (key.ctrl && input === "b")) {
+      setCursor(Math.max(0, cursor - 1)); return;
+    }
+    if ((key.rightArrow && !key.ctrl && !key.meta) || (key.ctrl && input === "f")) {
+      setCursor(Math.min(value.length, cursor + 1)); return;
+    }
+    if ((key.leftArrow && key.ctrl) || (key.meta && input === "b")) {
+      setCursor(wordLeft(value, cursor)); return;
+    }
+    if ((key.rightArrow && key.ctrl) || (key.meta && input === "f")) {
+      setCursor(wordRight(value, cursor)); return;
+    }
+    // v7: home/end are native!
+    if (key.home || (key.ctrl && input === "a")) { setCursor(0); return; }
+    if (key.end || (key.ctrl && input === "e")) { setCursor(value.length); return; }
 
     // ── Editing ──
     if (key.return) { commit(value); return; }
-    if (key.delete || (char === "\x1b[3~")) {
-      if (cursor < value.length) setValue(value.slice(0, cursor) + graphemeSlice(value, cursor + 1), cursor);
+    // v7: delete/backspace are native!
+    if (key.delete || (key.ctrl && input === "d" && value !== "")) {
+      if (cursor < value.length) setValue(value.slice(0, cursor) + graphemeDelete(value.slice(cursor)), cursor);
       return;
     }
-    // Backspace: Ink key.backspace, or raw DEL (127), or raw BS (8)
-    if (key.backspace || char === "\x7f" || char === "\x08" || (key.ctrl && char === "h")) {
+    if (key.backspace || (key.ctrl && input === "h")) {
       if (cursor > 0) {
         const before = value.slice(0, cursor);
-        const newBefore = graphemeBackspace(before);
-        setValue(newBefore + value.slice(cursor), cursor - (before.length - newBefore.length));
+        const nb = graphemeBackspace(before);
+        setValue(nb + value.slice(cursor), cursor - (before.length - nb.length));
       }
       return;
     }
-    // Home/End via Ctrl+A/E (Ink doesn't expose home/end keys)
-    if (key.ctrl && char === "a") { setCursor(0); return; }
-    if (key.ctrl && char === "e") { setCursor(value.length); return; }
-    // Ctrl+W: delete word before
-    if (key.ctrl && char === "w") {
-      const p = wordLeft(value, cursor);
-      setValue(value.slice(0, p) + value.slice(cursor), p);
-      return;
-    }
-    // Ctrl+K: kill to end
-    if (key.ctrl && char === "k") { setValue(value.slice(0, cursor), cursor); return; }
-    // Ctrl+U: kill to start
-    if (key.ctrl && char === "u") { setValue(value.slice(cursor), 0); return; }
+    if (key.ctrl && input === "w") { const p = wordLeft(value, cursor); setValue(value.slice(0, p) + value.slice(cursor), p); return; }
+    if (key.ctrl && input === "k") { setValue(value.slice(0, cursor), cursor); return; }
+    if (key.ctrl && input === "u") { setValue(value.slice(cursor), 0); return; }
 
-    // ── Printable ──
-    if (char && char.length === 1 && !key.ctrl && !key.meta) {
-      setValue(value.slice(0, cursor) + char + value.slice(cursor), cursor + 1);
+    // ── Printable (non-control, non-meta single char or IME composed text) ──
+    if (input && !key.ctrl && !key.meta && !key.escape) {
+      setValue(value.slice(0, cursor) + input + value.slice(cursor), cursor + input.length);
     }
   });
 
-  const displayValue = value || (placeholder ?? "");
-  const before = displayValue.slice(0, cursor);
-  const at = displayValue[cursor] ?? " ";
-  const after = displayValue.slice(cursor + 1);
-  const isPlaceholder = !value && !!placeholder;
+  const before = value.slice(0, cursor);
+  const at = value[cursor] ?? " ";
+  const after = value.slice(cursor + 1);
 
   return (
     <Box flexDirection="column">
       <Box>
         <Text color="green">❯ </Text>
-        <Text dimColor={isPlaceholder}>
+        <Text>
           {before}
           <Text inverse>{at}</Text>
           {after}
         </Text>
       </Box>
-      {exitMsg && <Text dimColor>  Press Ctrl+C again to exit</Text>}
     </Box>
   );
 }

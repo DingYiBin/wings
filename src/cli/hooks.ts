@@ -1,34 +1,22 @@
 /**
- * React hooks — useStore for state subscriptions, useAgent for session.
+ * React hooks for Ink REPL — useStore, useAgent.
  */
 
 import { useSyncExternalStore, useCallback, useEffect, useRef } from "react";
 import { appStore, type AppState } from "./app-state.ts";
-import {
-  appendOutput,
-  setMode,
-  setPermission,
-  setPoolInfo,
-  setInitialized,
-} from "./app-state.ts";
+import { appendOutput, setMode, setPermission, setInitialized } from "./app-state.ts";
 import { createSession, makeAgentContext } from "./bootstrap.ts";
-import type { GlobalSettingsData } from "../config/settings.ts";
 
 export function useStore<T>(selector: (state: AppState) => T): T {
-  return useSyncExternalStore(
-    appStore.subscribe,
-    () => selector(appStore.getState()),
-  );
+  return useSyncExternalStore(appStore.subscribe, () => selector(appStore.getState()));
 }
 
-/** Pass logger from CLI entry point. */
-let _logger: { recordCycle(opts: Record<string, unknown>): void } | null = null;
+let _logger: { recordCycle(o: Record<string, unknown>): void } | null = null;
 export function setGlobalLogger(l: typeof _logger) { _logger = l; }
 
 export function useAgent() {
   const loopRef = useRef<any>(null);
-  const configRef = useRef<GlobalSettingsData | null>(null);
-  const poolMgrRef = useRef<any>(null);
+  const configRef = useRef<any>(null);
   const initialized = useSyncExternalStore(
     appStore.subscribe,
     () => appStore.getState().initialized,
@@ -38,7 +26,6 @@ export function useAgent() {
     createSession(process.cwd(), _logger).then(({ loop, config, poolMgr }) => {
       loopRef.current = loop;
       configRef.current = config;
-      poolMgrRef.current = poolMgr;
       (globalThis as any).__poolMgr = poolMgr;
       (globalThis as any).__loop = loop;
       setInitialized();
@@ -50,77 +37,73 @@ export function useAgent() {
     const config = configRef.current;
     if (!loop) return;
 
-    const ctx = makeAgentContext(config!, {
-      modelOverride: config!.model,
+    setMode("running");
+    appendOutput({ type: "text", text: "" });
+    appendOutput({ type: "separator" });
+
+    const ctx = makeAgentContext(config, {
+      modelOverride: config.model,
       customAgents: (loop as any).customAgents ?? null,
       skills: (loop as any).skillsList ?? [],
     });
-    setMode("running");
-    appendOutput({ type: "text", text: `▸ ${userInput}` });
-    appendOutput({ type: "separator" });
 
     try {
+      // Track streaming text: append to last OutputLine if it's a streaming text.
+      let streamBuf = "";
       for await (const event of loop.run(userInput, ctx)) {
         switch (event.type) {
-          case "text_delta":
+          case "text_delta": {
+            streamBuf += (event as any).text;
             appStore.setState((s) => {
               const out = [...s.output];
               const last = out[out.length - 1];
               if (last?.type === "text" && last.streaming) {
-                out[out.length - 1] = { type: "text", text: last.text + (event as any).text, streaming: true };
+                out[out.length - 1] = { type: "text", text: streamBuf, streaming: true };
               } else {
-                out.push({ type: "text", text: (event as any).text, streaming: true });
+                out.push({ type: "text", text: streamBuf, streaming: true });
               }
               return { ...s, output: out };
             });
             break;
+          }
           case "tool_use": {
-            const short = JSON.stringify(event.input).slice(0, 100);
-            appendOutput({ type: "tool_use", name: event.name, input: short });
+            streamBuf = "";
+            appendOutput({ type: "tool_use", name: event.name, input: JSON.stringify(event.input).slice(0, 100) });
             break;
           }
           case "tool_result": {
+            streamBuf = "";
             const tr = event as any;
             appendOutput({ type: "tool_result", content: tr.content.slice(0, 200), isError: tr.is_error });
             break;
           }
           case "permission_request": {
+            streamBuf = "";
             const pr = event;
             const response = await new Promise<string>((resolve) => {
-              setPermission({
-                toolName: pr.tool_name,
-                toolInput: JSON.stringify(pr.tool_input),
-                scope: pr.scope,
-                selected: 0,
-                _resolve: resolve,
-              });
+              setPermission({ toolName: pr.tool_name, toolInput: JSON.stringify(pr.tool_input), scope: pr.scope, selected: 0, _resolve: resolve });
             });
             loop.setPermissionResponse(response);
             setPermission(null);
             break;
           }
-          case "subagent_start":
-            appendOutput({ type: "subagent_start", agentType: (event as any).agent_type, description: (event as any).description });
+          case "subagent_start": {
+            streamBuf = "";
+            appendOutput({ type: "subagent_start", agentType: (event as any).agent_type, description: (event as any).description ?? "" });
             break;
-          case "subagent_end":
+          }
+          case "subagent_end": {
+            streamBuf = "";
             appendOutput({ type: "subagent_end" });
             break;
+          }
         }
       }
-      // Finalize streaming text.
-      appStore.setState((s) => {
-        const out = [...s.output];
-        const last = out[out.length - 1];
-        if (last?.type === "text" && last.streaming) {
-          out[out.length - 1] = { ...last, streaming: false };
-        }
-        return { ...s, output: out };
-      });
     } catch (e) {
       appendOutput({ type: "text", text: `Error: ${(e as Error).message}` });
     }
     setMode("ready");
   }, []);
 
-  return { initialized, runTurn, poolMgr: poolMgrRef.current };
+  return { initialized, runTurn };
 }

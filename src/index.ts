@@ -26,7 +26,18 @@ const model = modelIdx !== -1 ? rest[modelIdx + 1] : null;
 if (!command || command === "chat") {
   const logger = hasLog ? new TurnLogger() : null;
   if (logger) console.log(`Logging to ${logger.path}`);
-  await runChat({ model, logger });
+
+  // Ink v7 (3rdparty) if raw mode available, else raw ANSI fallback.
+  if (typeof (process.stdin as any).setRawMode === "function") {
+    try {
+      const { runInkApp } = await import("./cli/ink-app.tsx");
+      await runInkApp({ logger });
+    } catch {
+      await runChat({ model, logger });
+    }
+  } else {
+    await runChat({ model, logger });
+  }
 } else if (command === "run") {
   const prompt = rest
     .filter((a, i) => {
