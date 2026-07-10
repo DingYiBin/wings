@@ -308,11 +308,6 @@ export class AgentLoop {
 
       // Execute tools.
       if (toolUseBlocks.length > 0) {
-        // Yield tool_use blocks for CLI display.
-        for (const block of toolUseBlocks) {
-          yield block;
-        }
-
         const assistantContent: MessageContent[] = [
           ...thinkingBlocks,
           ...textBlocks,
@@ -322,10 +317,13 @@ export class AgentLoop {
 
         // Collect all tool results into a single user message.
         const toolResults: ToolResultBlock[] = [];
-        const toolResultOutputs = new Map<string, string>(); // tool_use_id → original output
+        const toolResultOutputs = new Map<string, string>();
         let permissionDenied = false;
 
         for (const block of toolUseBlocks) {
+          // Yield tool_use right before its result (not all upfront).
+          yield block;
+
           if (this._aborted) break; // ESC abort — skip remaining tools
           const tool = this._toolRegistry.get(block.name);
           if (!tool) {
