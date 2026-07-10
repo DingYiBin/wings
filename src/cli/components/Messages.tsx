@@ -8,6 +8,18 @@ import React from "react";
 import { Box, Text } from "ink";
 import type { OutputLine } from "../app-state.ts";
 
+/** Format tool result for display: replace tabs, indent multi-line output. */
+function formatResult(content: string): string {
+  // Replace tabs with 4 spaces for consistent display.
+  let formatted = content.replace(/\t/g, "    ");
+  // Split into lines and indent continuation lines.
+  const lines = formatted.split("\n");
+  if (lines.length <= 1) return formatted;
+  // First line is the summary (e.g. "Read N lines from path"),
+  // subsequent lines are the content and get indented.
+  return lines.map((l, i) => i === 0 ? l : `    ${l}`).join("\n");
+}
+
 export function Messages({ lines }: { lines: OutputLine[] }) {
   return (
     <Box flexDirection="column">
@@ -28,7 +40,7 @@ export function Messages({ lines }: { lines: OutputLine[] }) {
           case "tool_result":
             return (
               <Text key={i} dimColor color={line.isError ? "red" : undefined}>
-                {"      ↳ "}{line.content}
+                {"      ↳ "}{formatResult(line.content)}
               </Text>
             );
           case "subagent_start":

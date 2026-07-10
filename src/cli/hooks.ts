@@ -128,7 +128,7 @@ export function useAgent() {
           }
           case "tool_use": {
             finalizeStream();
-            appendOutput({ type: "text", text: "" }); // blank line before tool call
+            appendOutput({ type: "separator" }); // blank line before tool call
             appendOutput({ type: "tool_use", name: event.name, input: JSON.stringify(event.input).slice(0, 100) });
             break;
           }
