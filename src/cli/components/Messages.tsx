@@ -66,14 +66,20 @@ function renderLine(line: OutputLine, i: number) {
 }
 
 export function Messages({ lines }: { lines: OutputLine[] }) {
-  if (lines.length <= DYNAMIC_TAIL) {
-    return <Box flexDirection="column">{lines.map(renderLine)}</Box>;
+  // Clip to terminal height to prevent Ink frame overflow and scroll jumping.
+  const termRows = process.stdout.rows || 24;
+  const maxLines = Math.max(6, termRows - 8); // reserve for header, prompt, dividers
+  const visible = lines.length > maxLines ? lines.slice(-maxLines) : lines;
+
+  if (visible.length <= DYNAMIC_TAIL) {
+    return <Box flexDirection="column">{visible.map(renderLine)}</Box>;
   }
-  const staticLines = lines.slice(0, -DYNAMIC_TAIL);
-  const dynamicLines = lines.slice(-DYNAMIC_TAIL);
+  const staticLines = visible.slice(0, -DYNAMIC_TAIL);
+  const dynamicLines = visible.slice(-DYNAMIC_TAIL);
 
   return (
     <Box flexDirection="column">
+      {lines.length > maxLines && <Text dimColor>  … {lines.length - maxLines} earlier lines</Text>}
       <Static items={staticLines}>{(line) => renderLine(line, 0)}</Static>
       <Box flexDirection="column">{dynamicLines.map(renderLine)}</Box>
     </Box>
