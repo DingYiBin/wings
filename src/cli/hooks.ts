@@ -4,7 +4,7 @@
 
 import { useSyncExternalStore, useCallback, useEffect, useRef } from "react";
 import { appStore, type AppState } from "./app-state.ts";
-import { appendOutput, setMode, setPermission, setInitialized, setCharCount, addTotalOutputChars } from "./app-state.ts";
+import { appendOutput, setMode, setPermission, setInitialized, setInputChars, setOutputChars, addTotalOutputChars } from "./app-state.ts";
 import { createSession, makeAgentContext } from "./bootstrap.ts";
 
 export function useStore<T>(selector: (state: AppState) => T): T {
@@ -38,7 +38,7 @@ export function useAgent() {
     (globalThis as any).__appendOutput = (line: { type: string; text?: string; name?: string; input?: string; }) => {
       if (line.type === "text" && line.text !== undefined) {
         _subBuf += line.text;
-        appStore.setState((s) => ({ ...s, charCount: s.charCount + line.text!.length }));
+        appStore.setState((s) => ({ ...s, outputChars: s.outputChars + line.text!.length }));
       } else if (line.type === "tool_use") {
         flushText(_subBuf); _subBuf = "";
         appendOutput({ type: "tool_use", name: line.name!, input: line.input! });
@@ -61,7 +61,8 @@ export function useAgent() {
 
     _subBuf = "";
     setMode("running");
-    setCharCount(0);
+    setInputChars(userInput.length);
+    setOutputChars(0);
     appendOutput({ type: "text", text: "" });
     appendOutput({ type: "text", text: `❯ ${userInput}` });
     appendOutput({ type: "separator" });
@@ -117,7 +118,7 @@ export function useAgent() {
         switch (event.type) {
           case "text_delta": {
             streamBuf += (event as any).text as string;
-            setCharCount(streamBuf.length + _subBuf.length);
+            setOutputChars(streamBuf.length + _subBuf.length);
             break;
           }
           case "tool_use": {

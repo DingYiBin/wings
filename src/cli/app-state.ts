@@ -31,8 +31,10 @@ export interface PermissionPrompt {
 // -- Main app state --
 
 export interface AppState {
-  /** Characters received in current turn. */
-  charCount: number;
+  /** User input chars (current turn). */
+  inputChars: number;
+  /** Output chars received so far (current turn, from model). */
+  outputChars: number;
   /** Total output characters across all turns. */
   totalOutputChars: number;
   output: OutputLine[];
@@ -49,7 +51,8 @@ export interface AppState {
 }
 
 export const INITIAL_STATE: AppState = {
-  charCount: 0,
+  inputChars: 0,
+  outputChars: 0,
   totalOutputChars: 0,
   output: [],
   input: "",
@@ -98,7 +101,8 @@ export function finalizeStreamLine() {
   });
 }
 
-export function setCharCount(n: number) { appStore.setState((s) => ({ ...s, charCount: n })); }
+export function setInputChars(n: number) { appStore.setState((s) => ({ ...s, inputChars: n })); }
+export function setOutputChars(n: number) { appStore.setState((s) => ({ ...s, outputChars: n })); }
 export function addTotalOutputChars(n: number) { appStore.setState((s) => ({ ...s, totalOutputChars: s.totalOutputChars + n })); }
 export function setMode(mode: AppState["mode"]) {
   appStore.setState((s) => ({ ...s, mode }));

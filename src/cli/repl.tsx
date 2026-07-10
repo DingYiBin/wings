@@ -15,7 +15,8 @@ export function REPL() {
   const output = useStore((s) => s.output);
   const input = useStore((s) => s.input);
   const mode = useStore((s) => s.mode);
-  const charCount = useStore((s) => s.charCount);
+  const inputChars = useStore((s) => s.inputChars);
+  const outputChars = useStore((s) => s.outputChars);
   const totalOutput = useStore((s) => s.totalOutputChars);
   const permission = useStore((s) => s.permission);
   const { initialized, runTurn } = useAgent();
@@ -52,7 +53,7 @@ export function REPL() {
           onResolve={(response) => permission._resolve?.(response)}
         />
       )}
-      <WorkingIndicator charCount={charCount} totalOutput={totalOutput} visible={mode === "running"} />
+      <WorkingIndicator inputChars={inputChars} outputChars={outputChars} totalOutput={totalOutput} visible={mode === "running"} />
       <Text> </Text>
       <Text dimColor>{"─".repeat(divWidth)}</Text>
       <PromptInput
