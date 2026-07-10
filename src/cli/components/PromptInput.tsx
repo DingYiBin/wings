@@ -1,11 +1,16 @@
 /**
  * PromptInput — Ink v7 input bar with full keybindings.
- *
- * Ink v7 Key type includes home/end/delete/backspace natively.
+ * History loaded from ~/.wings/history.jsonl (cross-session).
  */
 
-import React, { useState, useCallback, useRef } from "react";
+import React, { useState, useCallback, useRef, useEffect } from "react";
 import { Box, Text, useInput } from "ink";
+import { existsSync, readFileSync, appendFileSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+const HISTORY_PATH = join(homedir(), ".wings", "history.jsonl");
+const MAX_HISTORY = 1000;
 
 function graphemeBackspace(s: string): string {
   if (!s) return s;
@@ -34,6 +39,20 @@ export function PromptInput({
   const history = useRef<string[]>([]);
   const histIdx = useRef(-1);
 
+  // Load cross-session history on mount.
+  useEffect(() => {
+    try {
+      if (existsSync(HISTORY_PATH)) {
+        const raw = readFileSync(HISTORY_PATH, "utf-8").trim();
+        history.current = raw.split("\n")
+          .map(l => { try { return (JSON.parse(l) as any).text as string; } catch { return ""; } })
+          .filter(Boolean);
+        if (history.current.length > MAX_HISTORY) history.current = history.current.slice(-MAX_HISTORY);
+        histIdx.current = history.current.length;
+      }
+    } catch {}
+  }, []);
+
   const setValue = useCallback((v: string, c: number) => {
     onChange(v);
     setCursor(Math.max(0, Math.min(v.length, c)));
@@ -42,7 +61,16 @@ export function PromptInput({
   const commit = useCallback((v: string) => {
     if (!v.trim()) return;
     const h = history.current;
-    h.push(v); if (h.length > 1000) h.shift();
+    // No consecutive duplicates.
+    if (h.length === 0 || h[h.length - 1] !== v) {
+      h.push(v);
+      if (h.length > MAX_HISTORY) h.shift();
+      // Persist to ~/.wings/history.jsonl.
+      try {
+        mkdirSync(join(homedir(), ".wings"), { recursive: true });
+        appendFileSync(HISTORY_PATH, JSON.stringify({ text: v }) + "\n");
+      } catch {}
+    }
     histIdx.current = h.length;
     onChange(""); setCursor(0);
     onSubmit(v);
