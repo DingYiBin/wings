@@ -39,7 +39,7 @@ export function useAgent() {
 
     setMode("running");
     appendOutput({ type: "text", text: "" });  // blank line
-    appendOutput({ type: "text", text: `▸ ${userInput}` });
+    appendOutput({ type: "text", text: `❯ ${userInput}` });
     appendOutput({ type: "separator" });
 
     const ctx = makeAgentContext(config, {

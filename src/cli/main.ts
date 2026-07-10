@@ -120,7 +120,7 @@ export async function runChat(opts: { workingDir?: string; model?: string|null; 
 
   let buffer = "", running = false;
   const DIV = dim("───");
-  const PROMPT = `${GREEN}▸${RESET} `;
+  const PROMPT = `${GREEN}❯${RESET} `;
 
   // Draw divider + prompt.
   write(`\r\n${DIV}\r\n`);
@@ -222,7 +222,7 @@ async function runChatFallback(loop: any, ctx: any, poolMgr: any, config: any) {
   const { createInterface } = await import("node:readline");
   const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
   const sp = () => { try { rl.prompt(); } catch {} };
-  rl.setPrompt(`${GREEN}▸${RESET} `); sp();
+  rl.setPrompt(`${GREEN}❯${RESET} `); sp();
   rl.on("line", async (line) => {
     const text = line.trim(); if (!text) { sp(); return; }
     if (text.startsWith("/")) { handleCommand(text, poolMgr); sp(); return; }
