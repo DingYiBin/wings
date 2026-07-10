@@ -23,6 +23,8 @@ export function useAgent() {
   );
 
   useEffect(() => {
+    // Expose appendOutput globally so subagent capture can use it.
+    (globalThis as any).__appendOutput = appendOutput;
     createSession(process.cwd(), _logger).then(({ loop, config, poolMgr }) => {
       loopRef.current = loop;
       configRef.current = config;

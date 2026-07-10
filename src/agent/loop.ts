@@ -405,14 +405,15 @@ export class AgentLoop {
             const capture = (evt: unknown) => {
               const e = evt as StreamEvent;
               subagentEvents.push(e);
-              // Write subagent events to stdout in real-time so the user
-              // sees progress during long subagent execution.
+              // Push into global app state for Ink rendering (if available).
               try {
-                if (e.type === "text_delta") {
-                  process.stdout.write((e as any).text ?? "");
-                } else if (e.type === "tool_use") {
-                  const short = JSON.stringify(e.input).slice(0, 80);
-                  process.stdout.write(`\n  sub ${e.name} ${short}\n`);
+                const g = (globalThis as any).__appendOutput;
+                if (g) {
+                  if (e.type === "text_delta") {
+                    g({ type: "text", text: (e as any).text ?? "", streaming: true });
+                  } else if (e.type === "tool_use") {
+                    g({ type: "tool_use", name: e.name, input: JSON.stringify(e.input).slice(0, 100) });
+                  }
                 }
               } catch {}
             };
