@@ -83,7 +83,11 @@ async *run(user_input, context, config?): AsyncGenerator<StreamEvent> {
 
 权限同步：Python `asyncio.Event` → TS `Promise` + resolver 模式。`APIPoolManager` 无需锁（JS 单线程）。
 
-## 8 个阶段（每阶段一次 commit）
+> 最后更新: 2026-07-11
+> 状态: 8 阶段全部完成，276 测试，Ink v7 CLI 就绪
+> 当前: 功能增强阶段
+
+## 8 个阶段（全部完成 ✅）
 
 ### Phase 1: 项目初始化 + messages + routing ✅ `4ce6745`
 - **[done]** 创建 `package.json`/`tsconfig.json`/`bunfig.toml`
@@ -108,46 +112,89 @@ async *run(user_input, context, config?): AsyncGenerator<StreamEvent> {
 - **[done]** `src/permissions/{rules,pipeline}.ts` — 4 阶段管道
 - **[done]** `tests/ts/query.test.ts`, `tests/ts/permissions.test.ts` — 144 total tests
 
-### Phase 5: agent loop + subagent + compaction 🔲
-- `src/agent/{loop,handoff,subagent,agent_loader}.ts`
-- `src/services/compact.ts`
-- `src/tools/builtin/agent.ts` — agent 工具
-- `tests/agent.test.ts`, `tests/subagent.test.ts`, `tests/compact.test.ts`
+### Phase 5: agent loop + subagent + compaction ✅ `c2e1148`
+- **[done]** `src/agent/{loop,handoff,subagent,agent_loader}.ts`
+- **[done]** `src/services/compact.ts` — auto-compaction (token budget > 80%)
+- **[done]** `src/tools/builtin/agent.ts` — agent 工具
+- **[done]** 180 total tests
 
-### Phase 6: config + skills + memory + hooks + mcp 🔲
-- `src/config/settings.ts` — 2 文件 deep merge（无 pydantic-settings）
-- `src/skills/` — 3 层加载、SKILL.md frontmatter
-- `src/memory/` — MEMORY.md + 4 类型 + 提取器
-- `src/hooks/` — shell 命令钩子
-- `src/mcp/` — stdio transport + 工具适配
-- 对应 5 个测试文件
+### Phase 6: config + skills + memory + hooks + mcp ✅ `1b113b5`
+- **[done]** `src/config/settings.ts` — 2-file JSON deep merge
+- **[done]** `src/skills/` — 3-layer loader, SKILL.md, SkillInjector
+- **[done]** `src/memory/` — MEMORY.md + 4 types + extractor at ~/.wings/projects/
+- **[done]** `src/hooks/` — Shell PreToolUse/PostToolUse
+- **[done]** `src/mcp/` — stdio transport with @modelcontextprotocol/sdk
+- **[done]** 195 total tests
 
-### Phase 7: CLI + bootstrap ✅ `22a7615`
-- **[done]** Ink v7.1.0 React TUI (3rdparty/ink submodule)
-- **[done]** Component tree: App → REPL → Messages + PermissionDialog + PromptInput + StatusBar
-- **[done]** Contextual status bar, working indicator, throttled text display (100ms)
-- **[done]** ESC/Ctrl+C interrupt with shared abort flag, double-press Ctrl+C exit
-- **[done]** Arrow-key permission dialog via /dev/tty
-- **[done]** Raw ANSI code dropped — readline fallback only for non-TTY
+### Phase 7: CLI (Ink v7 React TUI) ✅ `22a7615`
+- **[done]** Ink v7.1.0 (3rdparty/ink submodule), React 19
+- **[done]** Components: App → REPL → Messages + PermissionDialog + PromptInput + StatusBar + WorkingIndicator
+- **[done]** Full keybindings: arrows, Ctrl+A/E/W/K/U, history up/down, grapheme cursor
+- **[done]** ESC/Ctrl+C interrupt (shared abort flag), double-press Ctrl+C exit
+- **[done]** Arrow-key permission dialog (/dev/tty)
+- **[done]** Session resume (--resume / --continue), session saving (messages.jsonl)
+- **[done]** Cross-session input history (~/.wings/history.jsonl)
+- **[done]** Large tool result persistence (~/.wings/sessions/<hash>/tool-results/)
 
-### Phase 8: 移除 Python + 收尾 ✅
-- **[done]** Python code kept for reference, TypeScript is primary
-- **[done]** 全量测试 `bun test` (228 tests)
-- 烟雾测试：`bun run src/index.ts chat` 和 `bun run src/index.ts run "hello"`
+### Phase 8: cleanup ✅
+- **[done]** Python kept for reference, TypeScript is primary
+- **[done]** 276 tests, 18 test files, 715 expect() calls
+- **[done]** node --import tsx src/index.ts chat / run 可用
+
+---
+
+## 后续增强计划
+
+### 1. `/compact` 手动压缩 🔲
+
+参考 claude-code：`/compact [instructions]`。用户可手动触发上下文压缩，可选摘要指示。
+- `src/cli/commands/compact.ts`
+- PromptInput 解析 `/compact` 前缀
+- 调用 `compactMessages()` + `buildSessionMemoryCompactMessage()`
+
+### 2. Session Goals (`--goal`) 🔲
+
+参考 deer-flow。`--goal "分析架构并生成文档"`，目标注入 system prompt。
+
+### 3. Skills 元数据增强 🔲
+
+`version`, `dependencies`, `tools`, `timeout` 字段。
+
+### 4. MCP Server 模式 🔲
+
+wings 作为 MCP server 暴露给其他 agent。
+
+### 5. 自动补全 🔲
+
+文件路径、命令的 Tab 补全。参考 claude-code useTypeahead。
+
+### 6. 消息虚拟滚动 🔲
+
+参考 claude-code VirtualMessageList + useVirtualScroll。
 
 ## 测试策略
 
-283 个 Python 测试 → Bun 测试 1:1 移植。16 个 `*.test.ts` 文件。用 `bun:test` 的 `describe/test/expect`。Mock provider 用假 `ModelProvider` 实现。文件系统测试用 `fs.mkdtemp()` 临时目录。
+283 个 Python 测试 → Bun 测试 1:1 移植。16 个 `*.test.ts` 文件。用 `bun:test`。当前 276 tests, 715 expect() calls。
 
 ## 关键决策
 
-1. **buildTool 而非类/装饰器** — 参考 claude-code，plain object + Zod，更简洁
-2. **权限同步** — `Promise` + resolver 替代 `asyncio.Event`
+1. **buildTool 而非类/装饰器** — 参考 claude-code，plain object + Zod
+2. **权限同步** — `Promise` + resolver，`_permResolve` 在 `yield` 前设置
 3. **APIPoolManager 无锁** — JS 单线程
 4. **配置兼容** — 同样的 `~/.wings/config.json` + `.wings/config.json` JSON schema
 5. **文件格式兼容** — SKILL.md / MEMORY.md / agents/*.md 格式不变
+6. **CLI: Ink v7** — 3rdparty/ink submodule，React 19，组件树架构
 
 ## 验证
+
+- [x] `bun test` 全过（18 测试文件，276 测试）
+- [x] `node --import tsx src/index.ts chat` 交互式 REPL 可用
+- [x] `node --import tsx src/index.ts run "prompt"` 单轮可用
+- [x] `/pool`、`/help` 斜杠命令可用
+- [x] MCP server 可连接、工具可见
+- [x] 配置文件加载正确
+- [x] `--resume` / `--continue` session 恢复
+- [x] `--continue` 跨 session 历史记录
 
 - [ ] `bun test` 全过（16 测试文件，~283 测试）
 - [ ] `bun run src/index.ts chat` 交互式 REPL 可用

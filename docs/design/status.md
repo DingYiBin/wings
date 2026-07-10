@@ -1,6 +1,6 @@
 # Wings 项目实现状态
 
-> 最后更新: 2026-07-07
+> 最后更新: 2026-07-11
 
 ## Python 实现（已完成）
 
@@ -38,7 +38,7 @@
 | Phase 7: CLI (Ink v7 React TUI) | ✅ | — | `22a7615` |
 | Phase 8: remove Python + cleanup | ✅ | — | — |
 
-**TS 总计**: 228 测试, 15 测试文件, ~70 源文件. All phases complete.
+**TS 总计**: 276 测试, 15 测试文件, ~70 源文件. All phases complete.
 
 ### CLI (Ink v7, 3rdparty/ink)
 
