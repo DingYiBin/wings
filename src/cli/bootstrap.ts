@@ -57,7 +57,6 @@ async function createProvider(protocol: string) {
 
 export async function createSession(
   workingDir?: string,
-  logger?: { recordCycle(opts: Record<string, unknown>): void } | null,
 ): Promise<{
   loop: AgentLoop;
   config: GlobalSettingsData;
@@ -163,7 +162,6 @@ export async function createSession(
 
   // -- Agent loop --
   const loop = new AgentLoop(engine, tools, pipeline, poolMgr, registry);
-  if (logger) loop.setLogger(logger);
   (loop as any).skillLoader = loader;
   (loop as any).availableSkills = availableSkills;
   (loop as any).skillsList = skillsList;

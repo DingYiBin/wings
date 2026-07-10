@@ -66,9 +66,9 @@ async function promptPermission(
 
 export async function runSingle(
   prompt: string,
-  opts: { workingDir?: string; model?: string | null; logger?: { recordCycle(o: Record<string, unknown>): void } | null } = {},
+  opts: { workingDir?: string; model?: string | null } = {},
 ): Promise<void> {
-  const { loop, config } = await createSession(opts.workingDir, opts.logger);
+  const { loop, config } = await createSession(opts.workingDir);
   const ctx = makeAgentContext(config, { workingDir: opts.workingDir, modelOverride: opts.model ?? null, customAgents: (loop as any).customAgents ?? null, skills: (loop as any).skillsList ?? [] });
   for await (const event of loop.run(prompt, ctx)) {
     if (event.type === "text_delta") write((event as any).text);
@@ -81,8 +81,8 @@ export async function runSingle(
 
 // -- Readline fallback for non-TTY environments --
 
-export async function runChatFallback(opts: { model?: string | null; logger?: { recordCycle(o: Record<string, unknown>): void } | null } = {}): Promise<void> {
-  const { loop, config, poolMgr } = await createSession(undefined, opts.logger);
+export async function runChatFallback(opts: { model?: string | null } = {}): Promise<void> {
+  const { loop, config, poolMgr } = await createSession(undefined);
   const ctx = makeAgentContext(config, { modelOverride: opts.model ?? null, customAgents: (loop as any).customAgents ?? null, skills: (loop as any).skillsList ?? [] });
 
   write(`\r\n${BOLD}wings${RESET} ${dim("— each model is a wing")}\r\n`);

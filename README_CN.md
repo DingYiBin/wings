@@ -100,7 +100,6 @@ node --import tsx src/index.ts chat
 node --import tsx src/index.ts run "这个项目是做什么的？"
 
 # 带日志
-node --import tsx src/index.ts chat --log
 
 # 指定模型
 node --import tsx src/index.ts chat -m anthropic/claude-opus-4-6
@@ -125,17 +124,15 @@ node --import tsx src/index.ts chat -m anthropic/claude-opus-4-6
 
 ### 日志格式
 
-`--log` 将 JSON Lines 写入 `~/.wings/sessions/<hash>/logs/`。每行记录一次 API 调用周期，包含模型、时间、token 数、工具调用和响应内容。
 
 ## 架构
 
 ```
 src/
 ├── index.ts              # CLI 入口
-├── cli/                  # REPL（raw mode + readline），bootstrap 依赖注入，日志
+├── cli/                  # REPL（raw mode + readline），bootstrap 依赖注入
 │   ├── main.ts           # chat + run 命令，权限对话框
 │   ├── bootstrap.ts      # 组合根（依赖注入）
-│   ├── logging.ts        # --log: JSONL 请求/响应日志
 │   └── ink-app.tsx        # Ink/React REPL（预留）
 ├── agent/                # AgentLoop（每次调用独立选模型），HandoffDetector
 │   ├── loop.ts           # 主对话循环（async generator）

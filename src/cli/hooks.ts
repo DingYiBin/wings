@@ -12,9 +12,6 @@ export function useStore<T>(selector: (state: AppState) => T): T {
   return useSyncExternalStore(appStore.subscribe, () => selector(appStore.getState()));
 }
 
-let _logger: { recordCycle(o: Record<string, unknown>): void } | null = null;
-export function setGlobalLogger(l: typeof _logger) { _logger = l; }
-
 export function useAgent() {
   const loopRef = useRef<any>(null);
   const configRef = useRef<any>(null);
@@ -50,7 +47,7 @@ export function useAgent() {
         addInputChars(line.content.length);
       }
     };
-    createSession(process.cwd(), _logger).then(({ loop, config, poolMgr }) => {
+    createSession(process.cwd()).then(({ loop, config, poolMgr }) => {
       loopRef.current = loop;
       configRef.current = config;
       (globalThis as any).__poolMgr = poolMgr;

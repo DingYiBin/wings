@@ -14,7 +14,6 @@ bun x tsc --noEmit             # type-check
 # Run (Node.js)
 node --import tsx src/index.ts chat              # interactive REPL
 node --import tsx src/index.ts run "prompt"      # single turn
-node --import tsx src/index.ts chat --log        # with logging to ~/.wings/sessions/<hash>/logs/
 node --import tsx src/index.ts chat -m anthropic/claude-sonnet-4-6
 
 # Python (legacy)

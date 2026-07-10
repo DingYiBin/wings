@@ -1,8 +1,6 @@
 import React from "react";
 import { render } from "ink";
 import { App } from "./app.tsx";
-import { TurnLogger } from "./logging.ts";
-import { setGlobalLogger } from "./hooks.ts";
 
 function ensureStdin(): NodeJS.ReadStream {
   const stdin = process.stdin as any;
@@ -25,8 +23,7 @@ function ensureStdin(): NodeJS.ReadStream {
   }) as unknown as NodeJS.ReadStream;
 }
 
-export function runInkApp(opts: { logger?: TurnLogger | null; resumeMessages?: Array<{ role: string; content: unknown[] }> | null } = {}) {
-  if (opts.logger) setGlobalLogger(opts.logger);
+export function runInkApp(opts: { resumeMessages?: Array<{ role: string; content: unknown[] }> | null } = {}) {
   if (opts.resumeMessages) {
     // Pass resume messages to the global store for hooks.ts to pick up.
     (globalThis as any).__resumeMessages = opts.resumeMessages;

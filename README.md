@@ -99,9 +99,6 @@ node --import tsx src/index.ts chat
 # Single turn
 node --import tsx src/index.ts run "What does this project do?"
 
-# With session logging
-node --import tsx src/index.ts chat --log
-
 # Model override
 node --import tsx src/index.ts chat -m anthropic/claude-opus-4-6
 ```
@@ -123,19 +120,15 @@ When a tool needs approval, an arrow-key navigable dialog appears:
 - `Enter` — select highlighted option
 - `y` — allow, `n`/`Esc` — deny
 
-### Log Format
-
-`--log` writes JSON Lines to `~/.wings/sessions/<hash>/logs/`. Each line is one API call cycle with model, timing, token counts, tool calls, and response content.
 
 ## Architecture
 
 ```
 src/
 ├── index.ts              # CLI entry point
-├── cli/                  # REPL (raw mode + readline), bootstrap wiring, logging
+├── cli/                  # REPL (raw mode + readline), bootstrap wiring
 │   ├── main.ts           # chat + run commands, permission dialog
 │   ├── bootstrap.ts      # Dependency injection (composition root)
-│   ├── logging.ts        # --log: JSONL request/response logger
 │   └── ink-app.tsx        # Ink/React REPL (future)
 ├── agent/                # AgentLoop (per-call model selection), HandoffDetector
 │   ├── loop.ts           # Main conversation loop with async generator
