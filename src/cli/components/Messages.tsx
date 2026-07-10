@@ -37,13 +37,16 @@ function formatInput(name: string, input: string): string {
   return input.length > 60 ? `(${input.slice(0, 57)}…)` : `(${input})`;
 }
 
-function renderLine(line: OutputLine, i: number) {
+let _id = 0;
+function renderLine(line: OutputLine) {
+  _id++;
+  const k = String(_id);
   switch (line.type) {
     case "text":
-      return <Text key={i}>{line.text}</Text>;
+      return <Text key={k}>{line.text}</Text>;
     case "tool_use":
       return (
-        <Box key={i} flexDirection="row" marginTop={1}>
+        <Box key={k} flexDirection="row" marginTop={1}>
           <Text color="cyan">●</Text>
           <Text bold> {line.name}</Text>
           <Text dimColor>{formatInput(line.name, line.input)}</Text>
@@ -51,16 +54,16 @@ function renderLine(line: OutputLine, i: number) {
       );
     case "tool_result":
       return (
-        <Text key={i} dimColor color={line.isError ? "red" : undefined}>
+        <Text key={k} dimColor color={line.isError ? "red" : undefined}>
           {"  ⎿ "}{formatResult(line.content)}
         </Text>
       );
     case "subagent_start":
-      return <Text key={i} dimColor>{"  ┌ subagent "}{line.agentType}{" "}{line.description}</Text>;
+      return <Text key={k} dimColor>{"  ┌ subagent "}{line.agentType}{" "}{line.description}</Text>;
     case "subagent_end":
-      return <Text key={i} dimColor>{"  └ done"}</Text>;
+      return <Text key={k} dimColor>{"  └ done"}</Text>;
     case "separator":
-      return <Text key={i}> </Text>;
+      return <Text key={k}> </Text>;
   }
 }
 
@@ -70,15 +73,15 @@ export function Messages({ lines }: { lines: OutputLine[] }) {
   // auto-scroll to the bottom on every refresh.
   if (lines.length === 0) return <Box flexDirection="column" />;
   if (lines.length === 1) {
-    return <Box flexDirection="column">{renderLine(lines[0]!, 0)}</Box>;
+    return <Box flexDirection="column">{renderLine(lines[0]!)}</Box>;
   }
   const staticLines = lines.slice(0, -1);
   const last = lines[lines.length - 1]!;
 
   return (
     <Box flexDirection="column">
-      <Static items={staticLines}>{(line) => renderLine(line, 0)}</Static>
-      <Box flexDirection="column">{renderLine(last, 0)}</Box>
+      <Static items={staticLines}>{(line) => renderLine(line)}</Static>
+      <Box flexDirection="column">{renderLine(last)}</Box>
     </Box>
   );
 }
