@@ -88,8 +88,10 @@ export class AgentLoop {
   // Permission sync — Promise + resolver replaces asyncio.Event.
   private _permResolve: ((response: string) => void) | null = null;
 
-  // Set by CLI (ESC key) to abort the current agent run.
-  _aborted = false;
+  // Set by CLI (ESC/Ctrl+C) to abort the current run.
+  // Shared with subagents via globalThis.__abortFlag.
+  get _aborted() { return !!(globalThis as any).__abortFlag; }
+  set _aborted(v: boolean) { (globalThis as any).__abortFlag = v; }
 
   // CLI-accessible state.
   skillLoader: unknown = null;

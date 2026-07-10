@@ -49,9 +49,13 @@ export function PromptInput({
   }, [onSubmit, onChange]);
 
   useInput((input, key) => {
-    // ── Ctrl+C: interrupt if loading, double-press exit if idle ──
-    if (key.ctrl && input === "c") {
-      if (isLoading) { onInterrupt(); return; }
+    // ── ESC / Ctrl+C during loading: interrupt ──
+    if (isLoading && (key.escape || (key.ctrl && input === "c"))) {
+      onInterrupt();
+      return;
+    }
+    // ── Ctrl+C when idle: double-press to exit ──
+    if (!isLoading && key.ctrl && input === "c") {
       const now = Date.now();
       if (lastCtrlC.current > 0 && now - lastCtrlC.current < 800) { onExit(); return; }
       lastCtrlC.current = now;
