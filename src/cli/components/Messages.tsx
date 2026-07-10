@@ -5,8 +5,8 @@
  * Only the last few items (streaming text, active tool) render dynamically.
  */
 
-import React, { useMemo } from "react";
-import { Box, Text, Static, useWindowSize } from "ink";
+import React from "react";
+import { Box, Text, Static } from "ink";
 import type { OutputLine } from "../app-state.ts";
 
 const MAX_RESULT_LINES = 3;
@@ -55,20 +55,11 @@ function renderLine(line: OutputLine, i: number) {
 }
 
 export function Messages({ lines }: { lines: OutputLine[] }) {
-  const { rows } = useWindowSize();
-  // Reserve bottom rows for prompt, dividers, status bar (~6 lines).
-  const maxVisible = Math.max(4, (rows || 24) - 6);
-
-  const visibleLines = useMemo(() => {
-    if (lines.length <= maxVisible) return lines;
-    return lines.slice(-maxVisible);
-  }, [lines, maxVisible]);
-
-  if (visibleLines.length <= DYNAMIC_TAIL) {
-    return <Box flexDirection="column">{visibleLines.map(renderLine)}</Box>;
+  if (lines.length <= DYNAMIC_TAIL) {
+    return <Box flexDirection="column">{lines.map(renderLine)}</Box>;
   }
-  const staticLines = visibleLines.slice(0, -DYNAMIC_TAIL);
-  const dynamicLines = visibleLines.slice(-DYNAMIC_TAIL);
+  const staticLines = lines.slice(0, -DYNAMIC_TAIL);
+  const dynamicLines = lines.slice(-DYNAMIC_TAIL);
 
   return (
     <Box flexDirection="column">
