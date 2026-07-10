@@ -38,7 +38,7 @@ export function useAgent() {
     if (!loop) return;
 
     setMode("running");
-    appendOutput({ type: "text", text: "" });
+    appendOutput({ type: "text", text: `▸ ${userInput}` });
     appendOutput({ type: "separator" });
 
     const ctx = makeAgentContext(config, {
