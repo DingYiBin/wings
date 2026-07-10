@@ -37,10 +37,10 @@ function formatInput(name: string, input: string): string {
   return input.length > 60 ? `(${input.slice(0, 57)}…)` : `(${input})`;
 }
 
-let _id = 0;
+let _nextId = 1;
+function nextKey() { return String(_nextId++); }
 function renderLine(line: OutputLine) {
-  _id++;
-  const k = String(_id);
+  const k = nextKey();
   switch (line.type) {
     case "text":
       return <Text key={k}>{line.text}</Text>;
@@ -68,6 +68,7 @@ function renderLine(line: OutputLine) {
 }
 
 export function Messages({ lines }: { lines: OutputLine[] }) {
+  _nextId = 1; // reset key counter each render
   // Only the very last item is dynamic (streaming text). Everything else
   // is Static so the frame height stays stable and the terminal doesn't
   // auto-scroll to the bottom on every refresh.
