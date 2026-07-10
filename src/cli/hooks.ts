@@ -113,16 +113,22 @@ export function useAgent() {
       }
     };
 
+    let prevEv = "";
     try {
       for await (const event of loop.run(userInput, ctx)) {
         switch (event.type) {
           case "text_delta": {
+            // Add blank line when transitioning from tool results to summary text.
+            if (prevEv === "tool_result" && !streamBuf) {
+              appendOutput({ type: "text", text: "" });
+            }
             streamBuf += (event as any).text as string;
             setOutputChars(streamBuf.length + _subBuf.length);
             break;
           }
           case "tool_use": {
             finalizeStream();
+            appendOutput({ type: "text", text: "" }); // blank line before tool call
             appendOutput({ type: "tool_use", name: event.name, input: JSON.stringify(event.input).slice(0, 100) });
             break;
           }
@@ -156,6 +162,7 @@ export function useAgent() {
             break;
           }
         }
+        prevEv = event.type;
       }
       finalizeStream();
     } catch (e) {

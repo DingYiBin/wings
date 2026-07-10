@@ -28,7 +28,7 @@ export function Messages({ lines }: { lines: OutputLine[] }) {
           case "tool_result":
             return (
               <Text key={i} dimColor color={line.isError ? "red" : undefined}>
-                {"  ↳ "}{line.content}
+                {"      ↳ "}{line.content}
               </Text>
             );
           case "subagent_start":
