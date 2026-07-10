@@ -21,8 +21,8 @@
     "@modelcontextprotocol/sdk": "^1.12.1",
     "openai": "^4.77.0",
     "zod": "^3.24.0",
-    "ink": "^5.0.1",
-    "react": "^18.3.1",
+    "ink": "file:./3rdparty/ink",
+    "react": "^19.2.0",
     "yaml": "^2.6.0",
     "html-to-text": "^9.0.5",
     "zod-to-json-schema": "^3.24.0"
@@ -30,7 +30,7 @@
   "devDependencies": {
     "typescript": "^5.7.0",
     "tsx": "^4.19.0",
-    "@types/react": "^18.3.0",
+    "@types/react": "^19.0.0",
     "@types/html-to-text": "^9.0.4",
     "@types/node": "^22.0.0"
   }

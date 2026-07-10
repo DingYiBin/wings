@@ -1,0 +1,3 @@
+[submodule "3rdparty/ink"]
+	path = 3rdparty/ink
+	url = git@github.com:vadimdemedes/ink.git
