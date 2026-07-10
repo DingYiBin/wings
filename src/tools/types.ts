@@ -83,6 +83,10 @@ export interface ToolDef<I> {
   description: string;
   search_hint: string;
   inputSchema: z.ZodType<I>;
+  /** Optional raw JSON Schema returned verbatim by inputSchema(), bypassing
+   * zod-to-json-schema conversion. Used by MCP tools to pass through the
+   * server-defined schema unchanged (preserving properties/required). */
+  raw_input_schema?: Record<string, unknown>;
   call(input: I, context: ToolContext): Promise<string | ToolResult>;
   is_read_only?: boolean;
   is_destructive?: boolean;
@@ -108,6 +112,7 @@ export function buildTool<I>(def: ToolDef<I>): Tool {
     search_hint: def.search_hint,
 
     inputSchema(): Record<string, unknown> {
+      if (def.raw_input_schema) return def.raw_input_schema;
       const schema = zodToJsonSchema(def.inputSchema, { target: "openApi3" });
       return schema as Record<string, unknown>;
     },

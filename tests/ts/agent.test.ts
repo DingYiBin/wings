@@ -241,6 +241,56 @@ describe("AgentLoop", () => {
     const systemCount = loop.messages.filter((m) => m.role === "system").length;
     expect(systemCount).toBe(1);
   });
+
+  test("handoff injects System notice when model switches mid-session", async () => {
+    // Mirrors test_agent.py:296-339. Selector alternates model-a → model-b →
+    // model-a; on the third turn the loop should inject a [System notice] user
+    // message because model-a was used, then model-b intervened, then model-a
+    // returned.
+    async function* stream() {
+      yield { type: "text_delta", text: "ok" };
+      yield { type: "text", text: "ok" };
+    }
+    class SwitchingSelector implements ModelSelector {
+      calls = 0;
+      select(_taskType: string, _override?: string | null): string {
+        this.calls += 1;
+        return this.calls % 2 === 1 ? "model-a" : "model-b";
+      }
+    }
+    const selector = new SwitchingSelector();
+    const registry = new ModelRegistry(selector);
+    const provider = makeStream(stream);
+    // Register both model ids so buildConfig can resolve either.
+    const cfg = makeModelConfig({ model: "test", api_key: "sk-test" });
+    registry.register("model-a", provider, { config: cfg });
+    registry.register("model-b", provider, { config: cfg });
+    const engine = new QueryEngine(registry);
+
+    const loop = new AgentLoop(
+      engine,
+      new ToolRegistry(),
+      new PermissionPipeline(new PermissionRules()),
+      selector,
+      registry,
+    );
+    const ctx = new AgentContext({ task_type: "main" });
+
+    for await (const _ of loop.run("first", ctx, cfg)) {}
+    for await (const _ of loop.run("second", ctx, cfg)) {}
+    for await (const _ of loop.run("third", ctx, cfg)) {}
+
+    // A handoff [System notice] user message must have been injected.
+    const handoffFound = loop.messages.some(
+      (m) =>
+        m.role === "user" &&
+        Array.isArray(m.content) &&
+        m.content.some(
+          (b) => (b as TextBlock).type === "text" && (b as TextBlock).text.includes("System notice"),
+        ),
+    );
+    expect(handoffFound).toBe(true);
+  });
 });
 
 // -- Token budget & truncation --

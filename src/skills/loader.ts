@@ -13,7 +13,7 @@ import type { SkillSpec } from "./types.ts";
 
 const MAX_FILE_SIZE = 256 * 1024; // 256 KB
 
-function parseFrontmatter(text: string): [Record<string, unknown>, string] {
+export function parseFrontmatter(text: string): [Record<string, unknown>, string] {
   const m = /^---\s*\n(.*?)\n---\s*\n/s.exec(text);
   if (!m) return [{}, text];
   const raw = m[1]!;
@@ -26,7 +26,7 @@ function parseFrontmatter(text: string): [Record<string, unknown>, string] {
   }
 }
 
-function parseSkillFile(path: string): SkillSpec | null {
+export function parseSkillFile(path: string): SkillSpec | null {
   try {
     const stat = readFileSync(path);
     if (stat.length > MAX_FILE_SIZE) return null;

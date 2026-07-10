@@ -24,9 +24,9 @@ const BLOCKED_CIDRS: RegExp[] = [
 ];
 
 // -- Cache --
-const cache = new Map<string, { ts: number; content: string }>();
+export const cache = new Map<string, { ts: number; content: string }>();
 
-function isBlockedHost(hostname: string): boolean {
+export function isBlockedHost(hostname: string): boolean {
   hostname = hostname.toLowerCase().replace(/\.$/, "");
   if (BLOCKED_HOSTS.has(hostname)) return true;
   if (hostname.startsWith("[")) return true; // IPv6, blocked
@@ -36,7 +36,7 @@ function isBlockedHost(hostname: string): boolean {
   return false;
 }
 
-function decodeContent(raw: Uint8Array): string | null {
+export function decodeContent(raw: Uint8Array): string | null {
   // Try UTF-8 first (covers most modern sites). Use TextDecoder with fatal:true
   // so invalid sequences cause an error, letting us fall back to other encodings.
   try {
@@ -64,7 +64,7 @@ function decodeContent(raw: Uint8Array): string | null {
   }
 }
 
-function htmlToMarkdown(html: string): string {
+export function htmlToMarkdown(html: string): string {
   return convert(html, {
     wordwrap: 0,
     selectors: [
