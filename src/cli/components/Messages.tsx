@@ -1,23 +1,33 @@
 /**
- * Messages — renders the output history. Matches claude-code's Messages component.
+ * Messages — renders output history matching claude-code visual format.
  *
- * Streams text in-place while the agent is running.
+ * ● ToolName(input)   — tool call (cyan bullet, bold name, dim input)
+ *   ⎿ result          — tool result (dimmed, 2-space indent + ⎿ prefix)
+ * … +N lines           — truncation indicator for long results
  */
 
 import React from "react";
 import { Box, Text } from "ink";
 import type { OutputLine } from "../app-state.ts";
 
-/** Format tool result for display: replace tabs, indent multi-line output. */
+const MAX_RESULT_LINES = 3;
+
+/** Format tool result: show first N lines, append truncation hint if needed. */
 function formatResult(content: string): string {
-  // Replace tabs with 4 spaces for consistent display.
-  let formatted = content.replace(/\t/g, "    ");
-  // Split into lines and indent continuation lines.
+  const formatted = content.replace(/\t/g, "    ");
   const lines = formatted.split("\n");
-  if (lines.length <= 1) return formatted;
-  // First line is the summary (e.g. "Read N lines from path"),
-  // subsequent lines are the content and get indented.
-  return lines.map((l, i) => i === 0 ? l : `    ${l}`).join("\n");
+  if (lines.length <= MAX_RESULT_LINES) {
+    return lines.map((l, i) => (i === 0 ? l : `    ${l}`)).join("\n");
+  }
+  const shown = lines.slice(0, MAX_RESULT_LINES);
+  const remaining = lines.length - MAX_RESULT_LINES;
+  return shown.map((l, i) => (i === 0 ? l : `    ${l}`)).join("\n") +
+    `\n    … +${remaining} lines`;
+}
+
+/** Format tool input: truncate and wrap in parens. */
+function formatInput(input: string): string {
+  return input.length > 80 ? `(${input.slice(0, 77)}…)` : `(${input})`;
 }
 
 export function Messages({ lines }: { lines: OutputLine[] }) {
@@ -27,20 +37,20 @@ export function Messages({ lines }: { lines: OutputLine[] }) {
         switch (line.type) {
           case "text":
             return (
-              <Text key={i} dimColor={line.streaming}>
-                {line.text}
-              </Text>
+              <Text key={i}>{line.text}</Text>
             );
           case "tool_use":
             return (
-              <Text key={i} dimColor>
-                {"  ⚙ "}{line.name}{" "}{line.input}
-              </Text>
+              <Box key={i} flexDirection="row" marginTop={1}>
+                <Text color="cyan">●</Text>
+                <Text bold> {line.name}</Text>
+                <Text dimColor>{formatInput(line.input)}</Text>
+              </Box>
             );
           case "tool_result":
             return (
               <Text key={i} dimColor color={line.isError ? "red" : undefined}>
-                {"      ↳ "}{formatResult(line.content)}
+                {"  ⎿ "}{formatResult(line.content)}
               </Text>
             );
           case "subagent_start":

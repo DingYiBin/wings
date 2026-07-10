@@ -137,15 +137,13 @@ export function useAgent() {
           }
           case "tool_use": {
             finalizeStream();
-            appendOutput({ type: "separator" }); // blank line before tool call
             appendOutput({ type: "tool_use", name: event.name, input: JSON.stringify(event.input).slice(0, 100) });
             break;
           }
           case "tool_result": {
             finalizeStream();
             const tr = event as any;
-            appendOutput({ type: "separator" }); // blank line before result
-            appendOutput({ type: "tool_result", content: tr.content.slice(0, 200), isError: tr.is_error });
+            appendOutput({ type: "tool_result", content: tr.content, isError: tr.is_error });
             // Tool results are sent to the API as input — count them.
             addInputChars((tr.content ?? "").length);
             break;
