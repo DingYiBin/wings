@@ -5,6 +5,7 @@
 import React, { useCallback, useState } from "react";
 import { Box, Text, useWindowSize } from "ink";
 import { useStore, useAgent } from "./hooks.ts";
+import { getSessionHash } from "../services/session-paths.ts";
 import { setInput, setPermission, setPoolInfo, appendOutput } from "./app-state.ts";
 import { Messages } from "./components/Messages.tsx";
 import { PromptInput } from "./components/PromptInput.tsx";
@@ -30,7 +31,10 @@ export function REPL() {
     runTurn(text);
   }, [runTurn]);
 
-  const handleExit = useCallback(() => { process.exit(0); }, []);
+  const handleExit = useCallback(() => {
+    process.stderr.write(`\nSession: ${getSessionHash()}\n  node --import tsx src/index.ts chat --resume ${getSessionHash()}\n\n`);
+    process.exit(0);
+  }, []);
   const handleInterrupt = useCallback(() => {
     const loop = (globalThis as any).__loop;
     if (loop) loop._aborted = true;
