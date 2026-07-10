@@ -32,10 +32,14 @@ export function useAgent() {
     });
   }, []);
 
+  // Prevent concurrent turn execution.
+  const runningRef = useRef(false);
+
   const runTurn = useCallback(async (userInput: string) => {
     const loop = loopRef.current;
     const config = configRef.current;
-    if (!loop) return;
+    if (!loop || runningRef.current) return;
+    runningRef.current = true;
 
     setMode("running");
     setCharCount(0);
@@ -118,6 +122,7 @@ export function useAgent() {
       return { ...s, output: out };
     });
     setMode("ready");
+    runningRef.current = false;
   }, []);
 
   return { initialized, runTurn };
