@@ -3,7 +3,7 @@
  */
 
 import React, { useCallback, useState } from "react";
-import { Box, Text } from "ink";
+import { Box, Text, useWindowSize } from "ink";
 import { useStore, useAgent } from "./hooks.ts";
 import { setInput, setPermission, setPoolInfo, appendOutput } from "./app-state.ts";
 import { Messages } from "./components/Messages.tsx";
@@ -19,6 +19,8 @@ export function REPL() {
   const permission = useStore((s) => s.permission);
   const { initialized, runTurn } = useAgent();
   const [exitCount, setExitCount] = useState(0);
+  const { columns } = useWindowSize();
+  const divWidth = Math.max(1, (columns || 80) - 2);
 
   const handleSubmit = useCallback((text: string) => {
     if (text.startsWith("/")) {
@@ -49,7 +51,7 @@ export function REPL() {
           onResolve={(response) => permission._resolve?.(response)}
         />
       )}
-      <Text dimColor>{"─".repeat(process.stdout.columns || 80)}</Text>
+      <Text dimColor>{"─".repeat(divWidth)}</Text>
       <WorkingIndicator charCount={charCount} visible={mode === "running"} />
       <PromptInput
         value={input}
@@ -58,7 +60,7 @@ export function REPL() {
         onExit={handleExit}
         isLoading={mode === "running"}
       />
-      <Text dimColor>{"─".repeat(process.stdout.columns || 80)}</Text>
+      <Text dimColor>{"─".repeat(divWidth)}</Text>
     </Box>
   );
 }
