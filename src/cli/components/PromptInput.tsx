@@ -23,14 +23,14 @@ function wordRight(s: string, p: number): number {
 }
 
 export function PromptInput({
-  value, onChange, onSubmit, onExit, isLoading,
+  value, onChange, onSubmit, onExit, onInterrupt, onExitHint, isLoading,
 }: {
   value: string; onChange: (v: string) => void; onSubmit: (v: string) => void;
-  onExit: () => void; isLoading: boolean;
+  onExit: () => void; onInterrupt: () => void; onExitHint: (show: boolean) => void;
+  isLoading: boolean;
 }) {
   const [cursor, setCursor] = useState(value.length);
   const lastCtrlC = useRef(0);
-  const lastCtrlD = useRef(0);
   const history = useRef<string[]>([]);
   const histIdx = useRef(-1);
 
@@ -49,23 +49,30 @@ export function PromptInput({
   }, [onSubmit, onChange]);
 
   useInput((input, key) => {
-    if (isLoading) return;
-
-    // ── Ctrl+C: double-press to exit ──
+    // ── Ctrl+C: interrupt if loading, double-press exit if idle ──
     if (key.ctrl && input === "c") {
+      if (isLoading) { onInterrupt(); return; }
       const now = Date.now();
       if (lastCtrlC.current > 0 && now - lastCtrlC.current < 800) { onExit(); return; }
       lastCtrlC.current = now;
-      if (value === "") return; // Ink's exitOnCtrlC:false lets us handle it, but no exit hint needed
-      onChange(""); setCursor(0);
+      if (value === "") {
+        onExitHint(true);
+        setTimeout(() => onExitHint(false), 2000);
+      } else {
+        onChange(""); setCursor(0);
+      }
       return;
     }
-    // Ctrl+D: double-press exit on empty, else delete forward
+    if (isLoading) return;
+
+    // ── Ctrl+D: double-press exit on empty, else delete forward ──
     if (key.ctrl && input === "d") {
       if (value === "") {
         const now = Date.now();
-        if (lastCtrlD.current > 0 && now - lastCtrlD.current < 800) { onExit(); return; }
-        lastCtrlD.current = now;
+        if (lastCtrlC.current > 0 && now - lastCtrlC.current < 800) { onExit(); return; }
+        lastCtrlC.current = now;
+        onExitHint(true);
+        setTimeout(() => onExitHint(false), 2000);
         return;
       }
       setValue(value.slice(0, cursor) + graphemeDelete(value.slice(cursor)), cursor);

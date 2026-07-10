@@ -10,6 +10,7 @@ import { Messages } from "./components/Messages.tsx";
 import { PromptInput } from "./components/PromptInput.tsx";
 import { PermissionDialog } from "./components/PermissionDialog.tsx";
 import { WorkingIndicator } from "./components/WorkingIndicator.tsx";
+import { StatusBar } from "./components/StatusBar.tsx";
 
 export function REPL() {
   const output = useStore((s) => s.output);
@@ -20,23 +21,20 @@ export function REPL() {
   const totalOutput = useStore((s) => s.totalOutputChars);
   const permission = useStore((s) => s.permission);
   const { initialized, runTurn } = useAgent();
-  const [exitCount, setExitCount] = useState(0);
+  const [exitHint, setExitHint] = useState(false);
   const { columns } = useWindowSize();
   const divWidth = Math.max(1, (columns || 80) - 2);
 
   const handleSubmit = useCallback((text: string) => {
-    if (text.startsWith("/")) {
-      handleSlashCommand(text);
-      return;
-    }
+    if (text.startsWith("/")) { handleSlashCommand(text); return; }
     runTurn(text);
   }, [runTurn]);
 
-  const handleExit = useCallback(() => {
-    setExitCount((n) => n + 1);
-    if (exitCount >= 1) process.exit(0);
-    setTimeout(() => setExitCount(0), 2000);
-  }, [exitCount]);
+  const handleExit = useCallback(() => { process.exit(0); }, []);
+  const handleInterrupt = useCallback(() => {
+    const loop = (globalThis as any).__loop;
+    if (loop) loop._aborted = true;
+  }, []);
 
   if (!initialized) return <Text dimColor>Initializing…</Text>;
 
@@ -61,9 +59,12 @@ export function REPL() {
         onChange={setInput}
         onSubmit={handleSubmit}
         onExit={handleExit}
+        onInterrupt={handleInterrupt}
+        onExitHint={setExitHint}
         isLoading={mode === "running"}
       />
       <Text dimColor>{"─".repeat(divWidth)}</Text>
+      <StatusBar mode={mode} showExitHint={exitHint} showAbortHint={true} />
     </Box>
   );
 }
