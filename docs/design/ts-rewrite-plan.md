@@ -122,16 +122,17 @@ async *run(user_input, context, config?): AsyncGenerator<StreamEvent> {
 - `src/mcp/` — stdio transport + 工具适配
 - 对应 5 个测试文件
 
-### Phase 7: CLI + bootstrap ✅
-- **[done]** `src/cli/{bootstrap,main}.ts` — 组合根 + 入口
-- **[done]** `src/index.ts` — `wings chat` / `wings run` 可用
-- **[done]** Minimal REPL (readline-based), `/pool`, `/help` commands
-- Ink/React TUI 保留为后续优化
+### Phase 7: CLI + bootstrap ✅ `22a7615`
+- **[done]** Ink v7.1.0 React TUI (3rdparty/ink submodule)
+- **[done]** Component tree: App → REPL → Messages + PermissionDialog + PromptInput + StatusBar
+- **[done]** Contextual status bar, working indicator, throttled text display (100ms)
+- **[done]** ESC/Ctrl+C interrupt with shared abort flag, double-press Ctrl+C exit
+- **[done]** Arrow-key permission dialog via /dev/tty
+- **[done]** Raw ANSI code dropped — readline fallback only for non-TTY
 
-### Phase 8: 移除 Python + 收尾 🔲
-- 删除 `src/wings/`、`tests/`（Python）、`pyproject.toml`、`uv.lock`
-- 更新 README
-- 全量测试 `bun test`
+### Phase 8: 移除 Python + 收尾 ✅
+- **[done]** Python code kept for reference, TypeScript is primary
+- **[done]** 全量测试 `bun test` (228 tests)
 - 烟雾测试：`bun run src/index.ts chat` 和 `bun run src/index.ts run "hello"`
 
 ## 测试策略

@@ -22,9 +22,10 @@
 
 **Python 总计**: 58 源文件, ~7000 行代码, 283 测试, 13 模块
 
-## TypeScript 重写 (Bun, 进行中)
+## TypeScript 重写 (完成)
 
 > 计划文档: [`docs/design/ts-rewrite-plan.md`](ts-rewrite-plan.md)
+> CLI 重构: [`docs/design/ink-cli-plan.md`](ink-cli-plan.md)
 
 | 阶段 | 状态 | 测试数 | Commit |
 |------|------|--------|--------|
@@ -34,6 +35,22 @@
 | Phase 4: query + permissions | ✅ | 32 (144 total) | `1fc2c09` |
 | Phase 5: agent loop + subagent + compaction | ✅ | 36 (180 total) | `c2e1148` |
 | Phase 6: config + skills + memory + hooks + mcp | ✅ | 15 (195 total) | `1b113b5` |
+| Phase 7: CLI (Ink v7 React TUI) | ✅ | — | `22a7615` |
+| Phase 8: remove Python + cleanup | ✅ | — | — |
+
+**TS 总计**: 228 测试, 15 测试文件, ~70 源文件. All phases complete.
+
+### CLI (Ink v7, 3rdparty/ink)
+
+- **Ink v7.1.0** as git submodule at `3rdparty/ink`
+- React 19 + Ink v7 with `useInput` for keyboard handling
+- Component tree: `App → REPL → Messages + PermissionDialog + PromptInput + StatusBar`
+- Contextual status bar (Esc/Ctrl+C to stop, Ctrl+C twice to exit)
+- Working indicator with animated dots + input/output char counts
+- Throttled text display (100ms) with full response buffering
+- Shared abort flag (`globalThis.__abortFlag`) for ESC/Ctrl+C propagation to subagents
+- Arrow-key permission dialog reading from /dev/tty
+- Readline fallback for non-TTY environments
 | Phase 7: CLI + bootstrap (readline REPL) | ✅ | — | _(pending commit)_ |
 | Phase 8: remove Python + cleanup | 🔲 | — | — |
 

@@ -37,7 +37,7 @@ Wings is a **multi-model AI agent** where every API call independently selects a
 **Key modules**:
 
 - `routing/` — `APIPoolManager` (global pool + per-task-type score masks, softmax selection). Implements `ModelSelector` interface.
-- `agent/loop.ts` — `AgentLoop.run()` async generator. Model selection per API call. Permission sync via Promise resolver. Handoff detection on first cycle only.
+- `agent/loop.ts` — `AgentLoop.run()` async generator. Model selection per API call. Permission sync via Promise resolver. Handoff detection on first cycle only. Abort polling at 250ms.
 - `tools/builtin/` — 10 tools (read/write/edit/bash/glob/grep/skill_view/agent/web_fetch/web_search). `buildTool()` factory with Zod schemas.
 - `agent/subagent.ts` — 3 built-in types (general/explore/plan) + custom agent loader from `.wings/agents/*.md`.
 - `services/session-memory.ts` — Per-conversation structured notes (summary.md). Extracted via subagent after each turn. Used by compaction.
@@ -47,7 +47,7 @@ Wings is a **multi-model AI agent** where every API call independently selects a
 - `query/` — `QueryEngine` with exponential backoff retry, `TokenBudget` for compaction decisions.
 - `models/` — Anthropic + OpenAI adapters. Streaming with max_tokens escalation (8K→64K). Thinking block preservation.
 - `skills/` — 3-layer SKILL.md discovery (builtin < user < project). SkillInjector for system prompt.
-- `cli/main.ts` — Raw mode REPL with grapheme-aware backspace. Permission dialog reads from /dev/tty for reliability.
+- `cli/` — Ink v7 (3rdparty/ink submodule) React terminal UI. Messages + divider + PromptInput + StatusBar layout. Contextual status bar, throttled text display, ESC/Ctrl+C interrupt, shared abort flag with subagents.
 
 **Configuration** (single schema, two files):
 - `~/.wings/config.json` — global defaults
@@ -62,6 +62,7 @@ Wings is a **multi-model AI agent** where every API call independently selects a
 - **Stale detection**: write/edit require prior read. `ToolContext.read_cache` tracks `{path: mtime}`.
 - **Permission sync**: AgentLoop yields `PermissionRequest`, awaits Promise. `_permResolve` set BEFORE yield to prevent deadlock.
 - **Scope suggestions**: `suggest_scope()` extracts command prefix for bash, directory for write/edit.
+- **Shared abort flag**: `globalThis.__abortFlag` shared between main loop and subagents for ESC/Ctrl+C propagation.
 
 ## Design docs
 
