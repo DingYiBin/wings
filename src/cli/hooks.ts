@@ -4,7 +4,7 @@
 
 import { useSyncExternalStore, useCallback, useEffect, useRef } from "react";
 import { appStore, type AppState } from "./app-state.ts";
-import { appendOutput, setMode, setPermission, setInitialized } from "./app-state.ts";
+import { appendOutput, setMode, setPermission, setInitialized, setCharCount } from "./app-state.ts";
 import { createSession, makeAgentContext } from "./bootstrap.ts";
 
 export function useStore<T>(selector: (state: AppState) => T): T {
@@ -38,6 +38,7 @@ export function useAgent() {
     if (!loop) return;
 
     setMode("running");
+    setCharCount(0);
     appendOutput({ type: "text", text: "" });  // blank line
     appendOutput({ type: "text", text: `❯ ${userInput}` });
     appendOutput({ type: "separator" });
@@ -54,7 +55,9 @@ export function useAgent() {
       for await (const event of loop.run(userInput, ctx)) {
         switch (event.type) {
           case "text_delta": {
-            streamBuf += (event as any).text;
+            const dt = (event as any).text as string;
+            streamBuf += dt;
+            setCharCount(streamBuf.length);
             appStore.setState((s) => {
               const out = [...s.output];
               const last = out[out.length - 1];

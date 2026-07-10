@@ -32,6 +32,7 @@ export interface PermissionPrompt {
 
 export interface AppState {
   /** Rendered output lines (message history for this session). */
+  charCount: number;
   output: OutputLine[];
   /** Current input buffer text. */
   input: string;
@@ -46,6 +47,7 @@ export interface AppState {
 }
 
 export const INITIAL_STATE: AppState = {
+  charCount: 0,
   output: [],
   input: "",
   mode: "ready",
@@ -93,6 +95,7 @@ export function finalizeStreamLine() {
   });
 }
 
+export function setCharCount(n: number) { appStore.setState((s) => ({ ...s, charCount: n })); }
 export function setMode(mode: AppState["mode"]) {
   appStore.setState((s) => ({ ...s, mode }));
 }

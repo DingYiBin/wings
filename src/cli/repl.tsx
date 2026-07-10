@@ -9,11 +9,13 @@ import { setInput, setPermission, setPoolInfo, appendOutput } from "./app-state.
 import { Messages } from "./components/Messages.tsx";
 import { PromptInput } from "./components/PromptInput.tsx";
 import { PermissionDialog } from "./components/PermissionDialog.tsx";
+import { WorkingIndicator } from "./components/WorkingIndicator.tsx";
 
 export function REPL() {
   const output = useStore((s) => s.output);
   const input = useStore((s) => s.input);
   const mode = useStore((s) => s.mode);
+  const charCount = useStore((s) => s.charCount);
   const permission = useStore((s) => s.permission);
   const { initialized, runTurn } = useAgent();
   const [exitCount, setExitCount] = useState(0);
@@ -47,6 +49,7 @@ export function REPL() {
           onResolve={(response) => permission._resolve?.(response)}
         />
       )}
+      <WorkingIndicator charCount={charCount} visible={mode === "running"} />
       <PromptInput
         value={input}
         onChange={setInput}
