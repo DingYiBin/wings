@@ -23,8 +23,19 @@ function formatResult(content: string): string {
     `\n    … +${lines.length - MAX_RESULT_LINES} lines`;
 }
 
-function formatInput(input: string): string {
-  return input.length > 80 ? `(${input.slice(0, 77)}…)` : `(${input})`;
+/** Format tool input: extract key field (command/file_path), not raw JSON. */
+function formatInput(name: string, input: string): string {
+  let parsed: Record<string, unknown> = {};
+  try { parsed = JSON.parse(input); } catch {}
+  if (name === "bash") {
+    const cmd = (parsed["command"] as string) ?? input;
+    return cmd.length > 80 ? `(${cmd.slice(0, 77)}…)` : `(${cmd})`;
+  }
+  if (name === "read" || name === "write" || name === "edit") {
+    const fp = (parsed["file_path"] as string) ?? input;
+    return fp.length > 60 ? `(${fp.slice(0, 57)}…)` : `(${fp})`;
+  }
+  return input.length > 60 ? `(${input.slice(0, 57)}…)` : `(${input})`;
 }
 
 function renderLine(line: OutputLine, i: number) {
@@ -36,7 +47,7 @@ function renderLine(line: OutputLine, i: number) {
         <Box key={i} flexDirection="row" marginTop={1}>
           <Text color="cyan">●</Text>
           <Text bold> {line.name}</Text>
-          <Text dimColor>{formatInput(line.input)}</Text>
+          <Text dimColor>{formatInput(line.name, line.input)}</Text>
         </Box>
       );
     case "tool_result":

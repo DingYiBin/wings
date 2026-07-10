@@ -45,9 +45,18 @@ export function PermissionDialog({
     }
   });
 
+  const input = permission.toolInput;
+  const desc = input["description"] as string | undefined;
+  const cmd = permission.toolName === "bash"
+    ? (input["command"] as string) ?? ""
+    : permission.toolName === "write" || permission.toolName === "edit" || permission.toolName === "read"
+    ? (input["file_path"] as string) ?? ""
+    : "";
+
   return (
     <Box flexDirection="column" paddingY={1}>
-      <Text dimColor>{permission.toolName}  {permission.toolInput.slice(0, 60)}</Text>
+      {desc ? <Text dimColor>Description: {desc}</Text> : null}
+      <Text dimColor>{permission.toolName}{cmd ? `(${cmd.slice(0, 80)})` : ""}</Text>
       <Box flexDirection="column" marginTop={1}>
         {options.map((opt, i) => (
           <Text key={i} dimColor={i !== permission.selected}>

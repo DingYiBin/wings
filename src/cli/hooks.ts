@@ -152,7 +152,7 @@ export function useAgent() {
             finalizeStream();
             const pr = event;
             const response = await new Promise<string>((resolve) => {
-              setPermission({ toolName: pr.tool_name, toolInput: JSON.stringify(pr.tool_input), scope: pr.scope, selected: 0, _resolve: resolve });
+              setPermission({ toolName: pr.tool_name, toolInput: pr.tool_input as Record<string, unknown>, scope: pr.scope, selected: 0, _resolve: resolve });
             });
             loop.setPermissionResponse(response);
             setPermission(null);

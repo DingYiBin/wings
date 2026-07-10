@@ -21,7 +21,7 @@ export type OutputLine =
 
 export interface PermissionPrompt {
   toolName: string;
-  toolInput: string;
+  toolInput: Record<string, unknown>;
   scope?: string;
   selected: number;
   /** Internal: Promise resolver set by useAgent, called by PermissionDialog. */
