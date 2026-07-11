@@ -103,6 +103,12 @@ function renderLine(line: OutputLine, prev: OutputLine | undefined, key?: number
       );
     case "subagent_end":
       return <Text key={k} dimColor>{"  └ done"}</Text>;
+    case "banner":
+      return (
+        <Box key={k} marginBottom={1}>
+          <Text dimColor>Wings — each model is a wing</Text>
+        </Box>
+      );
     case "separator":
       return <Text key={k}> </Text>;
   }

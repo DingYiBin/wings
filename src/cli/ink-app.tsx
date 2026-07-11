@@ -23,13 +23,13 @@ function ensureStdin(): NodeJS.ReadStream {
   }) as unknown as NodeJS.ReadStream;
 }
 
-export function runInkApp(opts: { resumeMessages?: Array<{ role: string; content: unknown[] }> | null } = {}) {
+export function runInkApp(opts: { resumeMessages?: Array<{ role: string; content: unknown[] }> | null; resumeStats?: { input: number; output: number } | null } = {}) {
   if (opts.resumeMessages) {
     (globalThis as any).__resumeMessages = opts.resumeMessages;
   }
-  // One-time startup banner — printed to scrollback before Ink mounts so it is
-  // never part of the live (re-rendered) frame.
-  process.stdout.write("\n\x1b[2mwings — each model is a wing\x1b[0m\n\n");
+  if (opts.resumeStats) {
+    (globalThis as any).__resumeStats = opts.resumeStats;
+  }
   const { waitUntilExit } = render(React.createElement(App), {
     stdin: ensureStdin(),
     stdout: process.stdout,

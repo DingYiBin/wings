@@ -74,26 +74,34 @@ export interface SessionMeta {
   created: string;
   updated: string;
   turnCount: number;
+  /** Cumulative input chars. Optional for backward compat (absent → 0). */
+  totalInputChars?: number;
+  /** Cumulative output chars. Optional for backward compat (absent → 0). */
+  totalOutputChars?: number;
 }
 
-export function saveSessionMeta(hash: string, cwd: string, turnCount: number) {
+export function saveSessionMeta(hash: string, cwd: string, turnCount: number, totalInputChars = 0, totalOutputChars = 0) {
   const meta: SessionMeta = {
     hash, cwd,
     created: new Date().toISOString(),
     updated: new Date().toISOString(),
     turnCount,
+    totalInputChars,
+    totalOutputChars,
   };
   const dir = getSessionDir(hash);
   mkdirSync(dir, { recursive: true });
   writeFileSync(getSessionMetaPath(hash), JSON.stringify(meta, null, 2));
 }
 
-export function updateSessionMeta(hash: string, turnCount: number) {
+export function updateSessionMeta(hash: string, turnCount: number, totalInputChars?: number, totalOutputChars?: number) {
   const path = getSessionMetaPath(hash);
   try {
     const meta = JSON.parse(readFileSync(path, "utf-8")) as SessionMeta;
     meta.updated = new Date().toISOString();
     meta.turnCount = turnCount;
+    if (totalInputChars !== undefined) meta.totalInputChars = totalInputChars;
+    if (totalOutputChars !== undefined) meta.totalOutputChars = totalOutputChars;
     writeFileSync(path, JSON.stringify(meta, null, 2));
   } catch {}
 }
@@ -130,6 +138,10 @@ export function saveNewMessages(hash: string, allMessages: Array<{ role: string;
 }
 
 export function resetSaveIndex() { _lastSavedIndex = 0; }
+
+/** Mark the first N messages as already persisted (used when resuming a session
+ * so a later save doesn't re-append the loaded history). */
+export function setSaveIndex(n: number) { _lastSavedIndex = n; }
 
 /**
  * Load message history from a session transcript.

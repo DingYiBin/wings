@@ -3,10 +3,10 @@
  */
 
 import { useSyncExternalStore, useCallback, useEffect, useRef } from "react";
-import { appStore, type AppState } from "./app-state.ts";
-import { appendOutput, setMode, setPermission, setInitialized, setInputChars, setOutputChars, addTotalOutputChars, addInputChars, messagesToOutputLines } from "./app-state.ts";
+import { appStore, type AppState, type OutputLine } from "./app-state.ts";
+import { appendOutput, setMode, setPermission, setInitialized, setInputChars, setOutputChars, addTotalOutputChars, addInputChars, addTotalInputChars, setSessionTotals, messagesToOutputLines } from "./app-state.ts";
 import { createSession, makeAgentContext } from "./bootstrap.ts";
-import { saveNewMessages, updateSessionIndex, saveSessionMeta, updateSessionMeta, getSessionHash } from "../services/session-paths.ts";
+import { saveNewMessages, updateSessionIndex, saveSessionMeta, updateSessionMeta, getSessionHash, setSaveIndex } from "../services/session-paths.ts";
 
 export function useStore<T>(selector: (state: AppState) => T): T {
   return useSyncExternalStore(appStore.subscribe, () => selector(appStore.getState()));
@@ -55,15 +55,21 @@ export function useAgent() {
       (globalThis as any).__loop = loop;
       // Inject resume messages if restoring a session.
       const resumeMsgs = (globalThis as any).__resumeMessages as Array<{ role: string; content: unknown[] }> | undefined;
+      // Startup banner is the first transcript line (fresh or resumed).
+      const initialOutput: OutputLine[] = [{ type: "banner" }];
       if (resumeMsgs && resumeMsgs.length > 0) {
         (loop as any)._messages = resumeMsgs as any;
         // Skip adding system prompt since messages already have it.
+        // Don't re-save the loaded history, and update (not recreate) its meta.
+        setSaveIndex(resumeMsgs.length);
+        firstSaveRef.current = false;
         // Rebuild the visible transcript so the prior conversation is shown.
-        const restored = messagesToOutputLines(resumeMsgs);
-        if (restored.length > 0) {
-          appStore.setState((s) => ({ ...s, output: [...s.output, ...restored] }));
-        }
+        initialOutput.push(...messagesToOutputLines(resumeMsgs));
+        // Restore cumulative stats (0 if the session predates stat tracking).
+        const stats = (globalThis as any).__resumeStats as { input: number; output: number } | undefined;
+        if (stats) setSessionTotals(stats.input, stats.output);
       }
+      appStore.setState((s) => ({ ...s, output: [...s.output, ...initialOutput] }));
       setInitialized();
     });
   }, []);
@@ -77,6 +83,7 @@ export function useAgent() {
     _subBuf = "";
     setMode("running");
     setInputChars(userInput.length);
+    addTotalInputChars(userInput.length);
     setOutputChars(0);
     appendOutput({ type: "text", text: "" });
     appendOutput({ type: "text", text: `❯ ${userInput}` });
@@ -191,12 +198,13 @@ export function useAgent() {
     const msgs = loop.messages as Array<{ role: string; content: unknown[] }>;
     if (msgs && msgs.length > 0) {
       saveNewMessages(hash, msgs);
+      const stats = appStore.getState();
       if (firstSaveRef.current) {
-        saveSessionMeta(hash, process.cwd(), turnCountRef.current);
+        saveSessionMeta(hash, process.cwd(), turnCountRef.current, stats.totalInputChars, stats.totalOutputChars);
         updateSessionIndex(process.cwd(), hash);
         firstSaveRef.current = false;
       } else {
-        updateSessionMeta(hash, turnCountRef.current);
+        updateSessionMeta(hash, turnCountRef.current, stats.totalInputChars, stats.totalOutputChars);
       }
     }
     turnCountRef.current++;

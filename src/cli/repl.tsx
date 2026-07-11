@@ -17,7 +17,7 @@ export function REPL() {
   const output = useStore((s) => s.output);
   const input = useStore((s) => s.input);
   const mode = useStore((s) => s.mode);
-  const inputChars = useStore((s) => s.inputChars);
+  const totalInput = useStore((s) => s.totalInputChars);
   const outputChars = useStore((s) => s.outputChars);
   const totalOutput = useStore((s) => s.totalOutputChars);
   const permission = useStore((s) => s.permission);
@@ -48,7 +48,7 @@ export function REPL() {
         <Messages lines={output} />
       </Box>
       <Box flexDirection="column" paddingX={1}>
-        <WorkingIndicator inputChars={inputChars} outputChars={outputChars} totalOutput={totalOutput} mode={mode} />
+        <WorkingIndicator totalInput={totalInput} outputChars={outputChars} totalOutput={totalOutput} mode={mode} />
         <Text> </Text>
         <Text dimColor>{"─".repeat(divWidth)}</Text>
         {mode === "permission" && permission ? (

@@ -15,6 +15,7 @@ export type OutputLine =
   | { type: "tool_result"; content: string; isError?: boolean }
   | { type: "subagent_start"; agentType: string; description: string }
   | { type: "subagent_end" }
+  | { type: "banner" }
   | { type: "separator" };
 
 // -- Permission prompt state --
@@ -33,6 +34,8 @@ export interface PermissionPrompt {
 export interface AppState {
   /** User input chars (current turn). */
   inputChars: number;
+  /** Cumulative input chars across the whole session (persisted for resume). */
+  totalInputChars: number;
   /** Output chars received so far (current turn, from model). */
   outputChars: number;
   /** Total output characters across all turns. */
@@ -52,6 +55,7 @@ export interface AppState {
 
 export const INITIAL_STATE: AppState = {
   inputChars: 0,
+  totalInputChars: 0,
   outputChars: 0,
   totalOutputChars: 0,
   output: [],
@@ -150,9 +154,14 @@ export function finalizeStreamLine() {
 }
 
 export function setInputChars(n: number) { appStore.setState((s) => ({ ...s, inputChars: n })); }
-export function addInputChars(n: number) { appStore.setState((s) => ({ ...s, inputChars: s.inputChars + n })); }
+export function addInputChars(n: number) { appStore.setState((s) => ({ ...s, inputChars: s.inputChars + n, totalInputChars: s.totalInputChars + n })); }
+export function addTotalInputChars(n: number) { appStore.setState((s) => ({ ...s, totalInputChars: s.totalInputChars + n })); }
 export function setOutputChars(n: number) { appStore.setState((s) => ({ ...s, outputChars: n })); }
 export function addTotalOutputChars(n: number) { appStore.setState((s) => ({ ...s, totalOutputChars: s.totalOutputChars + n })); }
+/** Restore cumulative stats when resuming a session (0 if not recorded). */
+export function setSessionTotals(totalInputChars: number, totalOutputChars: number) {
+  appStore.setState((s) => ({ ...s, totalInputChars, totalOutputChars }));
+}
 export function setMode(mode: AppState["mode"]) {
   appStore.setState((s) => ({ ...s, mode }));
 }

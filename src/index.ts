@@ -9,7 +9,7 @@
  */
 
 import { runChatFallback, runSingle } from "./cli/main.ts";
-import { initSessionHash, getLatestSessionHash, loadSessionMessages } from "./services/session-paths.ts";
+import { initSessionHash, getLatestSessionHash, loadSessionMessages, loadSessionMeta } from "./services/session-paths.ts";
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -50,10 +50,17 @@ if (!command || command === "chat") {
 
   initSessionHash(sessionHash ?? undefined);
 
+  // Restore cumulative stats for resumed sessions (0 if not recorded).
+  let resumeStats: { input: number; output: number } | null = null;
+  if (sessionHash) {
+    const meta = loadSessionMeta(sessionHash);
+    resumeStats = { input: meta?.totalInputChars ?? 0, output: meta?.totalOutputChars ?? 0 };
+  }
+
   if (typeof (process.stdin as any).setRawMode === "function") {
     try {
       const { runInkApp } = await import("./cli/ink-app.tsx");
-      await runInkApp({ resumeMessages });
+      await runInkApp({ resumeMessages, resumeStats });
     } catch {
       await runChatFallback({ model });
     }
