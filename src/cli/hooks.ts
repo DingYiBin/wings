@@ -123,16 +123,12 @@ export function useAgent() {
       }
     };
 
-    let prevEv = "";
     try {
       for await (const event of loop.run(userInput, ctx)) {
         switch (event.type) {
           case "text_delta": {
-            // Add blank line when transitioning from tool results to summary text.
-            if (!streamBuf) {
-              appendOutput({ type: "text", text: " " });
-            }
-            // White dot marker for model response (like claude-code).
+            // White dot marker for model response (like claude-code). The blank
+            // line above a text block is handled by the renderer (gapAboveText).
             if (!streamBuf) streamBuf = "● ";
             streamBuf += (event as any).text as string;
             setOutputChars(streamBuf.length + _subBuf.length);
@@ -175,7 +171,6 @@ export function useAgent() {
             break;
           }
         }
-        prevEv = event.type;
       }
       finalizeStream();
     } catch (e) {

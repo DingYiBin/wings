@@ -48,12 +48,38 @@ function needsGap(prev: OutputLine | undefined): boolean {
   return false;
 }
 
+/** Whether a text block should have a blank line above it. A model response /
+ * reasoning line is treated as an island: separated from a preceding tool call,
+ * result, subagent header, or non-empty text by one blank line. */
+function gapAboveText(prev: OutputLine | undefined): boolean {
+  if (!prev) return false;
+  switch (prev.type) {
+    case "tool_use":
+    case "subagent_start":
+      return true;
+    case "text":
+      return prev.text.trim() !== "";
+    case "tool_result":
+      return prev.content.trim() !== "";
+    default:
+      return false; // separator, subagent_end
+  }
+}
+
 function renderLine(line: OutputLine, prev: OutputLine | undefined, key?: number) {
   const k = key != null ? String(key) : undefined;
   switch (line.type) {
     case "text":
-      return <Markdown key={k} content={line.text} />;
+      // A text block (model response/reasoning) is an island: one blank line
+      // above, separating it from the preceding tool call / result / header.
+      return (
+        <Box key={k} marginTop={gapAboveText(prev) ? 1 : 0}>
+          <Markdown content={line.text} />
+        </Box>
+      );
     case "tool_use":
+      // A tool call right after the "┌ subagent" header stays tight (needsGap
+      // is false for a subagent_start prev); otherwise gap after real content.
       return (
         <Box key={k} flexDirection="row" marginTop={needsGap(prev) ? 1 : 0}>
           <Text color="cyan">●</Text>
@@ -69,7 +95,12 @@ function renderLine(line: OutputLine, prev: OutputLine | undefined, key?: number
         </Text>
       );
     case "subagent_start":
-      return <Text key={k} dimColor>{"  ┌ subagent "}{line.agentType}{" "}{line.description}</Text>;
+      // Always separate a subagent block from what precedes it.
+      return (
+        <Box key={k} marginTop={prev ? 1 : 0}>
+          <Text dimColor>{"  ┌ subagent "}{line.agentType}{" "}{line.description}</Text>
+        </Box>
+      );
     case "subagent_end":
       return <Text key={k} dimColor>{"  └ done"}</Text>;
     case "separator":
