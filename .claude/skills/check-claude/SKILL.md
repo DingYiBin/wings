@@ -1,6 +1,6 @@
 ---
 name: check-claude
-description: 在开发 Agent 新能力时，自动检索 reference/claude-code 源码，若存在相似实现则尽力模仿其架构、接口与代码风格。
+description: 在开发 Agent 时，自动检索 reference/claude-code 源码，若存在相似实现则尽力模仿其架构、接口与代码风格。
 allowed-tools: Read, Write, Edit, Grep, Bash
 license: MIT
 ---
