@@ -31,6 +31,10 @@ export function runInkApp(opts: { resumeMessages?: Array<{ role: string; content
     stdin: ensureStdin(),
     stdout: process.stdout,
     exitOnCtrlC: false,
+    // Enable the kitty keyboard protocol (auto-detected, safe on any terminal)
+    // so modified Enter — Ctrl+Enter / Shift+Enter — is reported distinctly
+    // from a plain Enter, letting PromptInput insert a newline instead of submitting.
+    kittyKeyboard: { mode: "auto", flags: ["disambiguateEscapeCodes"] },
   });
   return waitUntilExit();
 }

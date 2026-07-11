@@ -148,7 +148,17 @@ export function PromptInput({
     if (key.end || (key.ctrl && input === "e")) { setCursor(value.length); return; }
 
     // ── Editing ──
-    if (key.return) { commit(value); return; }
+    if (key.return) {
+      // Ctrl+Enter / Shift+Enter (and Meta+Enter) insert a newline instead of
+      // submitting. Requires a terminal that supports the kitty keyboard
+      // protocol to disambiguate modified Enter; plain Enter still submits.
+      if (key.shift || key.ctrl || key.meta) {
+        setValue(value.slice(0, cursor) + "\n" + value.slice(cursor), cursor + 1);
+        return;
+      }
+      commit(value);
+      return;
+    }
     // v7: delete/backspace are native!
     if (key.delete || (key.ctrl && input === "d" && value !== "")) {
       if (cursor < value.length) setValue(value.slice(0, cursor) + graphemeDelete(value.slice(cursor)), cursor);
@@ -173,8 +183,12 @@ export function PromptInput({
   });
 
   const before = value.slice(0, cursor);
-  const at = value[cursor] ?? " ";
-  const after = value.slice(cursor + 1);
+  const atChar = value[cursor];
+  const onNewline = atChar === "\n";
+  // The cursor glyph is an inverse space when it sits on a line break or at the
+  // end of input; the newline itself is emitted after it so the break still happens.
+  const cursorGlyph = atChar === undefined || onNewline ? " " : atChar;
+  const after = onNewline ? "\n" + value.slice(cursor + 1) : value.slice(cursor + 1);
 
   return (
     <Box flexDirection="column">
@@ -182,7 +196,7 @@ export function PromptInput({
         <Text color="green">❯ </Text>
         <Text>
           {before}
-          <Text inverse>{at}</Text>
+          <Text inverse>{cursorGlyph}</Text>
           {after}
         </Text>
       </Box>
