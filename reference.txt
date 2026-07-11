@@ -5,3 +5,4 @@
 opensquilla https://github.com/opensquilla/opensquilla.git
 #no-update claude-code https://github.com/tanbiralam/claude-code.git
 deer-flow https://github.com/bytedance/deer-flow.git
+opencode https://github.com/anomalyco/opencode.git
