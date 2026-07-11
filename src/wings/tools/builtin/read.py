@@ -127,6 +127,6 @@ async def read_file(input: ReadInput, context: ToolContext) -> str:
         summary += f" (lines {start + 1}-{end} of {total})"
     summary += f" from {path}"
 
-    result = [summary, ""]
+    result = [summary]
     result.extend(f"{i}\t{line}" for i, line in enumerate(selected, start=start + 1))
     return "\n".join(result)
