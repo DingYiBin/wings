@@ -3,7 +3,6 @@
   "version": "0.1.0",
   "description": "Multi-model AI agent CLI with per-call softmax-weighted API selection",
   "type": "module",
-  "private": true,
   "bin": {
     "wings": "src/index.ts"
   },
@@ -13,7 +12,6 @@
     "chat": "npx tsx src/index.ts chat",
     "run": "npx tsx src/index.ts run",
     "test": "bun test",
-    "test:node": "echo 'TODO: migrate tests from bun:test to node:test'",
     "typecheck": "npx tsc --noEmit"
   },
   "dependencies": {
@@ -23,6 +21,7 @@
     "ink": "file:./3rdparty/ink",
     "openai": "^4.77.0",
     "react": "^19.2.0",
+    "tsx": "^4.19.0",
     "yaml": "^2.6.0",
     "zod": "^3.24.0",
     "zod-to-json-schema": "^3.24.0"
@@ -32,7 +31,6 @@
     "@types/node": "^22.0.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   }
 }
