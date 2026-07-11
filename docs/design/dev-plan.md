@@ -55,19 +55,6 @@
 - 入口点：`wings.plugin` group
 - 类似 claude-code 的 plugin 机制
 
-### 阶段 5: Orchestrator-Worker 架构重构（重大方向）
-
-> 详见 [`docs/design/orchestrator-design.md`](orchestrator-design.md)
-
-将主 session 从扁平 agent loop 改为纯 orchestrator。主 agent 不再持有任何工具（仅 `agent` 工具），所有工具操作通过 subagent 分发执行。
-
-核心目标：
-- **Context 不再膨胀**：主 session 只有 subagent 摘要，不是原始文件内容
-- **多 API 池语义清晰**：`main` 池 = 规划模型，`subagent/<type>` 池 = 执行模型
-- **显式失败恢复**：subagent 失败上报 → 主 agent 重新规划 → 换 subagent 重试
-
-实现分 5 阶段（工具集裁剪 → 报告结构化 → 失败重规划 → 池语义重定义 → 移除扁平模式），保留 `orchestrator_mode` 开关以便对比和回退。
-
 ### P5: 远期方向
 
 - Fork subagent（上下文继承，最大化 prompt cache 命中）
