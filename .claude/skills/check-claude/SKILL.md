@@ -1,6 +1,6 @@
 ---
 name: check-claude
-description: 在开发新功能或者调整现有功能时，自动检索 reference/claude-code 源码，若存在相似实现则尽力模仿其架构、接口与代码风格。
+description: 在修改现有能力或者开发新能力时，都自动检索 reference/claude-code 源码，若存在相似实现则尽力模仿其架构、接口与代码风格。
 allowed-tools: Read, Write, Edit, Grep, Bash
 license: MIT
 ---
