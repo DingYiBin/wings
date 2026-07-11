@@ -4,7 +4,7 @@
 
 import { useSyncExternalStore, useCallback, useEffect, useRef } from "react";
 import { appStore, type AppState } from "./app-state.ts";
-import { appendOutput, setMode, setPermission, setInitialized, setInputChars, setOutputChars, addTotalOutputChars, addInputChars } from "./app-state.ts";
+import { appendOutput, setMode, setPermission, setInitialized, setInputChars, setOutputChars, addTotalOutputChars, addInputChars, messagesToOutputLines } from "./app-state.ts";
 import { createSession, makeAgentContext } from "./bootstrap.ts";
 import { saveNewMessages, updateSessionIndex, saveSessionMeta, updateSessionMeta, getSessionHash } from "../services/session-paths.ts";
 
@@ -58,6 +58,11 @@ export function useAgent() {
       if (resumeMsgs && resumeMsgs.length > 0) {
         (loop as any)._messages = resumeMsgs as any;
         // Skip adding system prompt since messages already have it.
+        // Rebuild the visible transcript so the prior conversation is shown.
+        const restored = messagesToOutputLines(resumeMsgs);
+        if (restored.length > 0) {
+          appStore.setState((s) => ({ ...s, output: [...s.output, ...restored] }));
+        }
       }
       setInitialized();
     });

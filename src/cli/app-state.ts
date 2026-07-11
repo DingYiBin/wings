@@ -72,6 +72,54 @@ export function appendOutput(line: OutputLine) {
   appStore.setState((s) => ({ ...s, output: [...s.output, line] }));
 }
 
+/**
+ * Rebuild visible transcript lines from restored message history, so resuming a
+ * session (--continue/--resume) shows the prior conversation instead of a blank
+ * screen. Mirrors the formatting the live loop produces (❯ for user input,
+ * ● for assistant text, tool_use/tool_result lines).
+ */
+export function messagesToOutputLines(
+  messages: Array<{ role: string; content: unknown[] }>,
+): OutputLine[] {
+  const out: OutputLine[] = [];
+  for (const msg of messages) {
+    const blocks = Array.isArray(msg.content) ? (msg.content as any[]) : [];
+    if (msg.role === "system") continue;
+    if (msg.role === "assistant") {
+      for (const b of blocks) {
+        if (b?.type === "text" && b.text) {
+          out.push({ type: "text", text: `● ${b.text}` });
+        } else if (b?.type === "tool_use") {
+          out.push({
+            type: "tool_use",
+            name: String(b.name ?? ""),
+            input: JSON.stringify(b.input ?? {}).slice(0, 100),
+          });
+        }
+        // thinking blocks are not displayed
+      }
+      continue;
+    }
+    // user role — either tool results, or a typed-input turn.
+    const toolResults = blocks.filter((b) => b?.type === "tool_result");
+    if (toolResults.length > 0) {
+      for (const tr of toolResults) {
+        const content = typeof tr.content === "string" ? tr.content : JSON.stringify(tr.content ?? "");
+        out.push({ type: "tool_result", content, isError: !!tr.is_error });
+      }
+      continue;
+    }
+    for (const b of blocks) {
+      if (b?.type === "text" && b.text) {
+        out.push({ type: "text", text: "" });
+        out.push({ type: "text", text: `❯ ${b.text}` });
+        out.push({ type: "separator" });
+      }
+    }
+  }
+  return out;
+}
+
 export function updateStreamLine(text: string) {
   appStore.setState((s) => {
     const out = [...s.output];
