@@ -129,7 +129,7 @@ export const readTool = buildTool({
     }
     summary += ` from ${pathStr}`;
 
-    const result = [summary, ""];
+    const result = [summary];
     for (let i = 0; i < selected.length; i++) {
       result.push(`${start + 1 + i}\t${selected[i]}`);
     }

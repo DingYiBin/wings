@@ -8,13 +8,13 @@ export function WorkingIndicator({ inputChars, outputChars, totalOutput, mode }:
   const [dots, setDots] = useState(0);
 
   useEffect(() => {
-    const id = setInterval(() => setDots((d) => (d + 1) % 7), 100);
+    const id = setInterval(() => setDots((d) => (d + 1) % 4), 100);
     return () => clearInterval(id);
   }, []);
 
   const isRunning = mode === "running";
   const label = isRunning ? "Working" : "Waiting";
-  const d = isRunning ? ".".repeat(dots) + " ".repeat(6 - dots) : "......";
+  const d = isRunning ? ".".repeat(dots) + " ".repeat(3 - dots) : "...";
   const totalOutputChars = outputChars + totalOutput;
 
   return (

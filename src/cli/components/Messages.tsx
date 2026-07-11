@@ -38,20 +38,31 @@ function formatInput(name: string, input: string): string {
   return input.length > 60 ? `(${input.slice(0, 57)}…)` : `(${input})`;
 }
 
-function renderLine(line: OutputLine, key?: number) {
+/** Whether a tool call should have a blank line above it, given the prior line.
+ * Only separate from real text or a non-empty result — consecutive tool calls
+ * with no visible output between them stay tight. */
+function needsGap(prev: OutputLine | undefined): boolean {
+  if (!prev) return false;
+  if (prev.type === "text") return prev.text.trim() !== "";
+  if (prev.type === "tool_result") return prev.content.trim() !== "";
+  return false;
+}
+
+function renderLine(line: OutputLine, prev: OutputLine | undefined, key?: number) {
   const k = key != null ? String(key) : undefined;
   switch (line.type) {
     case "text":
       return <Markdown key={k} content={line.text} />;
     case "tool_use":
       return (
-        <Box key={k} flexDirection="row" marginTop={1}>
+        <Box key={k} flexDirection="row" marginTop={needsGap(prev) ? 1 : 0}>
           <Text color="cyan">●</Text>
           <Text bold> {line.name}</Text>
           <Text dimColor>{formatInput(line.name, line.input)}</Text>
         </Box>
       );
     case "tool_result":
+      if (line.content.trim() === "") return null;
       return (
         <Text key={k} dimColor color={line.isError ? "red" : undefined}>
           {"  ⎿ "}{formatResult(line.content)}
@@ -69,15 +80,15 @@ function renderLine(line: OutputLine, key?: number) {
 export function Messages({ lines }: { lines: OutputLine[] }) {
   if (lines.length === 0) return <Box flexDirection="column" />;
   if (lines.length === 1) {
-    return <Box flexDirection="column">{renderLine(lines[0]!, 0)}</Box>;
+    return <Box flexDirection="column">{renderLine(lines[0]!, undefined, 0)}</Box>;
   }
   const staticLines = lines.slice(0, -1);
   const last = lines[lines.length - 1]!;
 
   return (
     <Box flexDirection="column">
-      <Static items={staticLines}>{(line, idx) => renderLine(line, idx)}</Static>
-      <Box flexDirection="column">{renderLine(last, staticLines.length)}</Box>
+      <Static items={staticLines}>{(line, idx) => renderLine(line, staticLines[idx - 1], idx)}</Static>
+      <Box flexDirection="column">{renderLine(last, staticLines[staticLines.length - 1], staticLines.length)}</Box>
     </Box>
   );
 }

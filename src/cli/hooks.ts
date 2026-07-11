@@ -28,9 +28,10 @@ export function useAgent() {
   const firstSaveRef = useRef(true);
 
   // Centralized output: buffers text from any source (main loop or subagent),
-  // flushes only on non-text events or after turn completes.
+  // flushes only on non-text events or after turn completes. Subagent text gets
+  // the same "● " marker as main-agent text for visual consistency.
   const flushText = (buf: string) => {
-    if (buf) { appendOutput({ type: "text", text: buf }); addTotalOutputChars(buf.length); }
+    if (buf) { appendOutput({ type: "text", text: `● ${buf}` }); addTotalOutputChars(buf.length); }
   };
 
   useEffect(() => {
@@ -128,9 +129,11 @@ export function useAgent() {
         switch (event.type) {
           case "text_delta": {
             // Add blank line when transitioning from tool results to summary text.
-            if (prevEv === "tool_result" && !streamBuf) {
-              appendOutput({ type: "text", text: "" });
+            if (!streamBuf) {
+              appendOutput({ type: "text", text: " " });
             }
+            // White dot marker for model response (like claude-code).
+            if (!streamBuf) streamBuf = "● ";
             streamBuf += (event as any).text as string;
             setOutputChars(streamBuf.length + _subBuf.length);
             break;

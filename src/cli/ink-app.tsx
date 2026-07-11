@@ -27,6 +27,9 @@ export function runInkApp(opts: { resumeMessages?: Array<{ role: string; content
   if (opts.resumeMessages) {
     (globalThis as any).__resumeMessages = opts.resumeMessages;
   }
+  // One-time startup banner — printed to scrollback before Ink mounts so it is
+  // never part of the live (re-rendered) frame.
+  process.stdout.write("\n\x1b[2mwings — each model is a wing\x1b[0m\n");
   const { waitUntilExit } = render(React.createElement(App), {
     stdin: ensureStdin(),
     stdout: process.stdout,

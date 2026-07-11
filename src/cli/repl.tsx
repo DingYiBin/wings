@@ -44,7 +44,6 @@ export function REPL() {
 
   return (
     <Box flexDirection="column" paddingX={1} paddingY={1}>
-      <Text dimColor>wings — each model is a wing</Text>
       <Box flexDirection="column" marginY={1} flexGrow={1}>
         <Messages lines={output} />
       </Box>
