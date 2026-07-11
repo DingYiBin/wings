@@ -168,7 +168,16 @@ wings 作为 MCP server 暴露给其他 agent。
 
 文件路径、命令的 Tab 补全。参考 claude-code useTypeahead。
 
-### 6. 消息虚拟滚动 🔲
+### 6. Bundled Skills（TypeScript 硬编码） 🔲
+
+参考 claude-code `bundledSkills.ts` + `bundled/*.ts`。将内置 skills 从 SKILL.md 文件切换为 TypeScript 硬编码格式，支持动态 prompt、自定义工具限制、hooks。详见 `docs/design/bundled-skills-plan.md`。
+
+- `src/skills/bundledSkills.ts` — BundledSkillDefinition + registerBundledSkill()
+- `src/skills/bundled/index.ts` — registerAllBundledSkills()
+- SkillInjector 更新支持 bundled skills
+- bootstrap 集成
+
+### 7. 消息虚拟滚动 🔲
 
 参考 claude-code VirtualMessageList + useVirtualScroll。
 
