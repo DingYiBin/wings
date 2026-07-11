@@ -85,7 +85,7 @@ export async function runChatFallback(opts: { model?: string | null } = {}): Pro
   const { loop, config, poolMgr } = await createSession(undefined);
   const ctx = makeAgentContext(config, { modelOverride: opts.model ?? null, customAgents: (loop as any).customAgents ?? null, skills: (loop as any).skillsList ?? [] });
 
-  write(`\r\n${BOLD}wings${RESET} ${dim("— each model is a wing")}\r\n`);
+  write(`\r\n${BOLD}wings${RESET} ${dim("— each model is a wing")}\r\n\r\n`);
   write(dim("Type /help, Ctrl+C to exit\r\n\r\n"));
 
   const { createInterface } = await import("node:readline");
