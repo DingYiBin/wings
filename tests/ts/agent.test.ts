@@ -102,6 +102,24 @@ class FakeTool implements Tool {
   activityDescription() { return "echoing..."; }
 }
 
+// Non-read-only tool → permission pipeline falls through to interactive "ask".
+class MutatingTool implements Tool {
+  name = "mutate";
+  description = "mutates state";
+  search_hint = "mutate";
+  inputSchema() {
+    return { type: "object", properties: { msg: { type: "string" } } };
+  }
+  async call(input: any, _context: ToolContext) {
+    return makeToolResult({ output: `mutated: ${input.msg}` });
+  }
+  isEnabled() { return true; }
+  isReadOnly() { return false; }
+  isDestructive() { return true; }
+  renderResult(result: { output: string }) { return result.output; }
+  activityDescription() { return "mutating..."; }
+}
+
 class MockSelector implements ModelSelector {
   select(_taskType: string, override?: string | null): string {
     return override ?? "test/model";
@@ -203,6 +221,47 @@ describe("AgentLoop", () => {
     const ctx = new AgentContext({ task_type: "main" });
     for await (const _ of loop.run("echo x", ctx, makeModelConfig({ model: "test", api_key: "sk-test" }))) {}
     expect(callCount).toBe(2);
+  });
+
+  test("interactive deny leaves no dangling tool_use for sibling calls", async () => {
+    // Repro: model emits two tool calls in one assistant message; the user
+    // denies the first interactively, which stops the turn. The second
+    // tool_use must still receive a tool_result, else the next API request
+    // fails with "tool_use ids were found without tool_result blocks".
+    async function* stream() {
+      yield { type: "tool_use", id: "A", name: "mutate", input: { msg: "one" } };
+      yield { type: "tool_use", id: "B", name: "mutate", input: { msg: "two" } };
+    }
+    const { engine, registry } = makeEngine(stream);
+    const tools = new ToolRegistry();
+    tools.register(new MutatingTool());
+    const pipeline = new PermissionPipeline(new PermissionRules());
+    const selector = new MockSelector();
+
+    const loop = new AgentLoop(engine, tools, pipeline, selector, registry);
+    const ctx = new AgentContext({ task_type: "main" });
+    let prompts = 0;
+    for await (const evt of loop.run("do both", ctx, makeModelConfig({ model: "test", api_key: "sk-test" }))) {
+      if ((evt as any).type === "permission_request") {
+        prompts += 1;
+        loop.setPermissionResponse("deny");
+      }
+    }
+
+    // Only the first tool prompts; the second is skipped after denial.
+    expect(prompts).toBe(1);
+
+    // Every tool_use in history must have a matching tool_result.
+    const useIds: string[] = [];
+    const resultIds = new Set<string>();
+    for (const m of loop.messages) {
+      for (const b of m.content as any[]) {
+        if (b.type === "tool_use") useIds.push(b.id);
+        if (b.type === "tool_result") resultIds.add(b.tool_use_id);
+      }
+    }
+    expect(useIds.sort()).toEqual(["A", "B"]);
+    for (const id of useIds) expect(resultIds.has(id)).toBe(true);
   });
 
   test("unknown tool", async () => {

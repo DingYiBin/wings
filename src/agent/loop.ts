@@ -515,12 +515,28 @@ export class AgentLoop {
           );
         }
 
+        // Guarantee a tool_result for every tool_use in this assistant message,
+        // in block order. If we stopped early (permission denied or abort), the
+        // remaining tool_use blocks would otherwise dangle with no result, which
+        // providers reject on the next request ("tool_use ids were found without
+        // tool_result blocks").
+        const resultById = new Map(toolResults.map((r) => [r.tool_use_id, r]));
+        const completeResults: ToolResultBlock[] = toolUseBlocks.map(
+          (block) =>
+            resultById.get(block.id) ?? {
+              type: "tool_result",
+              tool_use_id: block.id,
+              content: "Tool not executed: a preceding tool call in this turn was denied or interrupted.",
+              is_error: true,
+            },
+        );
+
         // Apply per-message aggregate tool result budget.
-        await AgentLoop._applyToolResultBudget(toolResults, toolResultOutputs);
+        await AgentLoop._applyToolResultBudget(completeResults, toolResultOutputs);
 
         this._messages.push({
           role: "user",
-          content: toolResults,
+          content: completeResults,
         });
 
         // Log tool execution cycle.
@@ -532,7 +548,7 @@ export class AgentLoop {
             input_summary: `[tool results: ${cycleToolCalls.join(", ")}]`,
             response: { content: toolUseBlocks },
             tool_calls: cycleToolCalls,
-            tool_results: toolResults.map((tr) => tr.content),
+            tool_results: completeResults.map((tr) => tr.content),
           });
         }
 
