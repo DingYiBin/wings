@@ -17,6 +17,11 @@ import stringWidth from "string-width";
 
 const COL_MIN = 3;
 const COL_PAD = 1;
+/** Extra headroom kept between the table and the terminal edge. Without it the
+ * table sizes to nearly the full width, and a line Ink measures even slightly
+ * wider (e.g. an emoji cell) overflows the layout box and gets re-wrapped,
+ * breaking border alignment. Matches claude-code's SAFETY_MARGIN. */
+const SAFETY_MARGIN = 4;
 
 /** Render inline tokens to a plain string (no ANSI), for display and measurement. */
 function inlineText(tokens: Token[]): string {
@@ -38,6 +43,43 @@ function inlineText(tokens: Token[]): string {
   return out;
 }
 
+/** Wrap text to a display width, breaking on spaces and hard-breaking overly
+ * long words. Width-aware so CJK / wide characters count as 2 columns. */
+function wrapCell(text: string, width: number): string[] {
+  const w = Math.max(1, width);
+  if (stringWidth(text) <= w) return [text]; // fits — keep verbatim
+  const lines: string[] = [];
+  let cur = "";
+  const flush = () => { lines.push(cur); cur = ""; };
+  for (let word of text.split(/\s+/).filter((x) => x.length > 0)) {
+    // Hard-break a single word that is wider than the column.
+    while (stringWidth(word) > w) {
+      let take = "";
+      for (const ch of word) {
+        if (take === "") { take = ch; continue; } // always advance ≥1 char
+        if (stringWidth(take + ch) > w) break;
+        take += ch;
+      }
+      if (cur !== "") flush();
+      lines.push(take);
+      word = word.slice(take.length);
+    }
+    if (cur === "") cur = word;
+    else if (stringWidth(cur + " " + word) <= w) cur += " " + word;
+    else { flush(); cur = word; }
+  }
+  if (cur !== "" || lines.length === 0) lines.push(cur);
+  return lines;
+}
+
+/** Width of the longest unbreakable word — the minimum a column can shrink to
+ * without breaking mid-word. CJK runs have no spaces, so they count whole. */
+function longestWord(text: string): number {
+  const words = text.split(/\s+/).filter((w) => w.length > 0);
+  if (words.length === 0) return COL_MIN;
+  return Math.max(...words.map((w) => stringWidth(w)));
+}
+
 function buildTableStr(table: Tokens.Table): string {
   // Resolve inline formatting to measure and display plain text.
   const headerTexts = table.header.map((c) => inlineText(c.tokens));
@@ -45,11 +87,36 @@ function buildTableStr(table: Tokens.Table): string {
 
   const allRows = [headerTexts, ...bodyTexts];
   const n = allRows[0]!.length;
-  const widths: number[] = Array<number>(n).fill(COL_MIN);
-  for (const row of allRows) {
-    for (let i = 0; i < Math.min(n, row.length); i++) {
-      widths[i] = Math.max(widths[i]!, stringWidth(row[i]!));
-    }
+  const colCells = (i: number) => allRows.map((r) => r[i] ?? "");
+  // Minimum column width = longest unbreakable word; ideal = full content.
+  const minWidths = Array.from({ length: n }, (_, i) =>
+    Math.max(COL_MIN, ...colCells(i).map(longestWord)),
+  );
+  const idealWidths = Array.from({ length: n }, (_, i) =>
+    Math.max(COL_MIN, ...colCells(i).map((t) => stringWidth(t))),
+  );
+
+  // Fit the table to the terminal, keeping SAFETY_MARGIN of headroom. Narrow
+  // columns keep their ideal width; the overflow is taken from wide columns.
+  const term = Math.max(20, process.stdout.columns ?? 80);
+  const overhead = n + 1 + n * COL_PAD * 2; // │ borders + per-cell padding
+  const available = Math.max(n * COL_MIN, term - overhead - SAFETY_MARGIN);
+  const totalMin = minWidths.reduce((a, b) => a + b, 0);
+  const totalIdeal = idealWidths.reduce((a, b) => a + b, 0);
+
+  let widths: number[];
+  if (totalIdeal <= available) {
+    widths = idealWidths;
+  } else if (totalMin <= available) {
+    const extra = available - totalMin;
+    const overflow = idealWidths.map((w, i) => w - minWidths[i]!);
+    const totalOverflow = overflow.reduce((a, b) => a + b, 0);
+    widths = minWidths.map((m, i) =>
+      totalOverflow === 0 ? m : m + Math.floor((overflow[i]! / totalOverflow) * extra),
+    );
+  } else {
+    const scale = available / totalMin;
+    widths = minWidths.map((m) => Math.max(COL_MIN, Math.floor(m * scale)));
   }
 
   const fill = (w: number, ch: string) => ch.repeat(w + COL_PAD * 2);
@@ -59,34 +126,37 @@ function buildTableStr(table: Tokens.Table): string {
   const sep = "├" + join("┼") + "┤";
   const bot = "└" + join("┴") + "┘";
 
-  function rowStr(texts: string[], cells: Tokens.TableCell[]): string {
-    return (
-      "│" +
-      texts
-        .map((text, i) => {
-          const w = widths[i] ?? COL_MIN;
-          const pad = Math.max(0, w - stringWidth(text));
-          const align = cells[i]?.align;
-          const padded =
-            align === "right"
-              ? " ".repeat(pad) + text
-              : align === "center"
-                ? " ".repeat(Math.floor(pad / 2)) +
-                  text +
-                  " ".repeat(pad - Math.floor(pad / 2))
-                : text + " ".repeat(pad);
-          return " " + padded + " ";
-        })
-        .join("│") +
-      "│"
-    );
+  function rowLines(texts: string[], cells: Tokens.TableCell[]): string[] {
+    const wrapped = texts.map((t, i) => wrapCell(t, widths[i] ?? COL_MIN));
+    const height = Math.max(1, ...wrapped.map((c) => c.length));
+    const out: string[] = [];
+    for (let r = 0; r < height; r++) {
+      let line = "│";
+      for (let i = 0; i < n; i++) {
+        const w = widths[i] ?? COL_MIN;
+        const text = wrapped[i]?.[r] ?? "";
+        const pad = Math.max(0, w - stringWidth(text));
+        const align = cells[i]?.align;
+        const padded =
+          align === "right"
+            ? " ".repeat(pad) + text
+            : align === "center"
+              ? " ".repeat(Math.floor(pad / 2)) +
+                text +
+                " ".repeat(pad - Math.floor(pad / 2))
+              : text + " ".repeat(pad);
+        line += " " + padded + " │";
+      }
+      out.push(line);
+    }
+    return out;
   }
 
   return [
     top,
-    rowStr(headerTexts, table.header),
+    ...rowLines(headerTexts, table.header),
     sep,
-    ...table.rows.map((row, i) => rowStr(bodyTexts[i]!, row)),
+    ...table.rows.flatMap((row, i) => rowLines(bodyTexts[i]!, row)),
     bot,
     "",
   ].join("\n");
@@ -162,13 +232,16 @@ function hasMarkdown(s: string): boolean {
 // ---------------------------------------------------------------------------
 
 export function Markdown({ content }: { content: string }) {
-  if (!hasMarkdown(content)) {
-    return <Text>{content}</Text>;
+  // Drop trailing newlines so a text block doesn't render an extra blank line
+  // below it — spacing between blocks is controlled by the callers' margins.
+  const c = content.replace(/\n+$/, "");
+  if (!hasMarkdown(c)) {
+    return <Text>{c}</Text>;
   }
   try {
-    const text = marked.parse(content) as string;
+    const text = (marked.parse(c) as string).replace(/\n+$/, "");
     return <Text>{text}</Text>;
   } catch {
-    return <Text>{content}</Text>;
+    return <Text>{c}</Text>;
   }
 }
