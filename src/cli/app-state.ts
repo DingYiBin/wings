@@ -40,6 +40,10 @@ export interface AppState {
   outputChars: number;
   /** Total output characters across all turns. */
   totalOutputChars: number;
+  /** Cumulative ms spent waiting for the API (time in the "running" state). */
+  totalWaitMs: number;
+  /** Timestamp (ms) the current running segment began, or null when not running. */
+  runStartMs: number | null;
   output: OutputLine[];
   /** Current input buffer text. */
   input: string;
@@ -58,6 +62,8 @@ export const INITIAL_STATE: AppState = {
   totalInputChars: 0,
   outputChars: 0,
   totalOutputChars: 0,
+  totalWaitMs: 0,
+  runStartMs: null,
   output: [],
   input: "",
   mode: "ready",
@@ -159,11 +165,25 @@ export function addTotalInputChars(n: number) { appStore.setState((s) => ({ ...s
 export function setOutputChars(n: number) { appStore.setState((s) => ({ ...s, outputChars: n })); }
 export function addTotalOutputChars(n: number) { appStore.setState((s) => ({ ...s, totalOutputChars: s.totalOutputChars + n })); }
 /** Restore cumulative stats when resuming a session (0 if not recorded). */
-export function setSessionTotals(totalInputChars: number, totalOutputChars: number) {
-  appStore.setState((s) => ({ ...s, totalInputChars, totalOutputChars }));
+export function setSessionTotals(totalInputChars: number, totalOutputChars: number, totalWaitMs: number) {
+  appStore.setState((s) => ({ ...s, totalInputChars, totalOutputChars, totalWaitMs }));
 }
+
+/** Accumulate wait time across mode transitions: the clock runs only while in
+ * the "running" state, so tool execution counts but idle/permission waits do not. */
+function modeTiming(s: AppState, nextMode: AppState["mode"]): { totalWaitMs: number; runStartMs: number | null } {
+  const now = Date.now();
+  const wasRunning = s.mode === "running";
+  const willRun = nextMode === "running";
+  if (!wasRunning && willRun) return { totalWaitMs: s.totalWaitMs, runStartMs: now };
+  if (wasRunning && !willRun) {
+    return { totalWaitMs: s.totalWaitMs + (s.runStartMs != null ? now - s.runStartMs : 0), runStartMs: null };
+  }
+  return { totalWaitMs: s.totalWaitMs, runStartMs: s.runStartMs };
+}
+
 export function setMode(mode: AppState["mode"]) {
-  appStore.setState((s) => ({ ...s, mode }));
+  appStore.setState((s) => ({ ...s, mode, ...modeTiming(s, mode) }));
 }
 
 export function setInput(input: string) {
@@ -171,7 +191,10 @@ export function setInput(input: string) {
 }
 
 export function setPermission(permission: PermissionPrompt | null) {
-  appStore.setState((s) => ({ ...s, permission, mode: permission ? "permission" : "running" }));
+  appStore.setState((s) => {
+    const mode = permission ? "permission" : "running";
+    return { ...s, permission, mode, ...modeTiming(s, mode) };
+  });
 }
 
 export function setPoolInfo(info: AppState["poolInfo"]) {

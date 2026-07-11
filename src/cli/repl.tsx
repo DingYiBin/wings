@@ -20,6 +20,8 @@ export function REPL() {
   const totalInput = useStore((s) => s.totalInputChars);
   const outputChars = useStore((s) => s.outputChars);
   const totalOutput = useStore((s) => s.totalOutputChars);
+  const totalWaitMs = useStore((s) => s.totalWaitMs);
+  const runStartMs = useStore((s) => s.runStartMs);
   const permission = useStore((s) => s.permission);
   const { initialized, runTurn } = useAgent();
   const [exitHint, setExitHint] = useState(false);
@@ -48,7 +50,7 @@ export function REPL() {
         <Messages lines={output} />
       </Box>
       <Box flexDirection="column" paddingX={1}>
-        <WorkingIndicator totalInput={totalInput} outputChars={outputChars} totalOutput={totalOutput} mode={mode} />
+        <WorkingIndicator totalInput={totalInput} outputChars={outputChars} totalOutput={totalOutput} totalWaitMs={totalWaitMs} runStartMs={runStartMs} mode={mode} />
         <Text> </Text>
         <Text dimColor>{"─".repeat(divWidth)}</Text>
         {mode === "permission" && permission ? (

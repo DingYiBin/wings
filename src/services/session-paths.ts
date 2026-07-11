@@ -78,9 +78,11 @@ export interface SessionMeta {
   totalInputChars?: number;
   /** Cumulative output chars. Optional for backward compat (absent → 0). */
   totalOutputChars?: number;
+  /** Cumulative ms spent waiting for the API. Optional for backward compat (absent → 0). */
+  totalWaitMs?: number;
 }
 
-export function saveSessionMeta(hash: string, cwd: string, turnCount: number, totalInputChars = 0, totalOutputChars = 0) {
+export function saveSessionMeta(hash: string, cwd: string, turnCount: number, totalInputChars = 0, totalOutputChars = 0, totalWaitMs = 0) {
   const meta: SessionMeta = {
     hash, cwd,
     created: new Date().toISOString(),
@@ -88,13 +90,14 @@ export function saveSessionMeta(hash: string, cwd: string, turnCount: number, to
     turnCount,
     totalInputChars,
     totalOutputChars,
+    totalWaitMs,
   };
   const dir = getSessionDir(hash);
   mkdirSync(dir, { recursive: true });
   writeFileSync(getSessionMetaPath(hash), JSON.stringify(meta, null, 2));
 }
 
-export function updateSessionMeta(hash: string, turnCount: number, totalInputChars?: number, totalOutputChars?: number) {
+export function updateSessionMeta(hash: string, turnCount: number, totalInputChars?: number, totalOutputChars?: number, totalWaitMs?: number) {
   const path = getSessionMetaPath(hash);
   try {
     const meta = JSON.parse(readFileSync(path, "utf-8")) as SessionMeta;
@@ -102,6 +105,7 @@ export function updateSessionMeta(hash: string, turnCount: number, totalInputCha
     meta.turnCount = turnCount;
     if (totalInputChars !== undefined) meta.totalInputChars = totalInputChars;
     if (totalOutputChars !== undefined) meta.totalOutputChars = totalOutputChars;
+    if (totalWaitMs !== undefined) meta.totalWaitMs = totalWaitMs;
     writeFileSync(path, JSON.stringify(meta, null, 2));
   } catch {}
 }

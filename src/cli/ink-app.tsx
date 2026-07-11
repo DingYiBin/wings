@@ -23,7 +23,7 @@ function ensureStdin(): NodeJS.ReadStream {
   }) as unknown as NodeJS.ReadStream;
 }
 
-export function runInkApp(opts: { resumeMessages?: Array<{ role: string; content: unknown[] }> | null; resumeStats?: { input: number; output: number } | null } = {}) {
+export function runInkApp(opts: { resumeMessages?: Array<{ role: string; content: unknown[] }> | null; resumeStats?: { input: number; output: number; wait: number } | null } = {}) {
   if (opts.resumeMessages) {
     (globalThis as any).__resumeMessages = opts.resumeMessages;
   }

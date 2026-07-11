@@ -51,10 +51,14 @@ if (!command || command === "chat") {
   initSessionHash(sessionHash ?? undefined);
 
   // Restore cumulative stats for resumed sessions (0 if not recorded).
-  let resumeStats: { input: number; output: number } | null = null;
+  let resumeStats: { input: number; output: number; wait: number } | null = null;
   if (sessionHash) {
     const meta = loadSessionMeta(sessionHash);
-    resumeStats = { input: meta?.totalInputChars ?? 0, output: meta?.totalOutputChars ?? 0 };
+    resumeStats = {
+      input: meta?.totalInputChars ?? 0,
+      output: meta?.totalOutputChars ?? 0,
+      wait: meta?.totalWaitMs ?? 0,
+    };
   }
 
   if (typeof (process.stdin as any).setRawMode === "function") {

@@ -66,8 +66,8 @@ export function useAgent() {
         // Rebuild the visible transcript so the prior conversation is shown.
         initialOutput.push(...messagesToOutputLines(resumeMsgs));
         // Restore cumulative stats (0 if the session predates stat tracking).
-        const stats = (globalThis as any).__resumeStats as { input: number; output: number } | undefined;
-        if (stats) setSessionTotals(stats.input, stats.output);
+        const stats = (globalThis as any).__resumeStats as { input: number; output: number; wait: number } | undefined;
+        if (stats) setSessionTotals(stats.input, stats.output, stats.wait);
       }
       appStore.setState((s) => ({ ...s, output: [...s.output, ...initialOutput] }));
       setInitialized();
@@ -193,6 +193,8 @@ export function useAgent() {
     appendOutput({ type: "separator" });
     // Restore DECCKM so terminal scrolling works (WSL may disable it).
     process.stdout.write("\x1b[?1l");
+    // Finalize the wait timer (accumulate this turn's running time) before saving.
+    setMode("ready");
     // Save session state for --resume / --continue.
     const hash = getSessionHash();
     const msgs = loop.messages as Array<{ role: string; content: unknown[] }>;
@@ -200,15 +202,14 @@ export function useAgent() {
       saveNewMessages(hash, msgs);
       const stats = appStore.getState();
       if (firstSaveRef.current) {
-        saveSessionMeta(hash, process.cwd(), turnCountRef.current, stats.totalInputChars, stats.totalOutputChars);
+        saveSessionMeta(hash, process.cwd(), turnCountRef.current, stats.totalInputChars, stats.totalOutputChars, stats.totalWaitMs);
         updateSessionIndex(process.cwd(), hash);
         firstSaveRef.current = false;
       } else {
-        updateSessionMeta(hash, turnCountRef.current, stats.totalInputChars, stats.totalOutputChars);
+        updateSessionMeta(hash, turnCountRef.current, stats.totalInputChars, stats.totalOutputChars, stats.totalWaitMs);
       }
     }
     turnCountRef.current++;
-    setMode("ready");
     runningRef.current = false;
   }, []);
 
