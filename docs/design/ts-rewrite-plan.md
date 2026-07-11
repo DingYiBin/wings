@@ -12,7 +12,10 @@
 - 架构：**移植当前扁平 agent loop**（不做 orchestrator-worker）
 - 仓库布局：**完全替换 `src/wings/` Python 代码**
 
-## 依赖链
+## 依赖
+
+`@anthropic-ai/sdk`, `openai`, `@modelcontextprotocol/sdk`, `zod`, `ink` (v7), `react`, `yaml`, `html-to-text`, `zod-to-json-schema`。devDeps: `typescript`, `@types/react`。
+链
 
 `messages/routing` (无依赖) → `models` → `tools` → `query/permissions` → `agent` → `config/skills/memory/hooks/mcp` → `cli`
 
@@ -40,6 +43,9 @@ tests/*.test.ts
 ```
 
 ## 依赖
+
+`@anthropic-ai/sdk`, `openai`, `@modelcontextprotocol/sdk`, `zod`, `ink` (v7), `react`, `yaml`, `html-to-text`, `zod-to-json-schema`。devDeps: `typescript`, `@types/react`。
+
 
 `@anthropic-ai/sdk`, `openai`, `@modelcontextprotocol/sdk`, `zod`, `ink`, `react`, `yaml`, `html-to-text`, `zod-to-json-schema`。devDeps: `typescript`, `@types/react`。
 
@@ -127,7 +133,7 @@ async *run(user_input, context, config?): AsyncGenerator<StreamEvent> {
 - **[done]** 195 total tests
 
 ### Phase 7: CLI (Ink v7 React TUI) ✅ `22a7615`
-- **[done]** Ink v7.1.0 (3rdparty/ink submodule), React 19
+- **[done]** Ink v7.1.0 (npm ink v7), React 19
 - **[done]** Components: App → REPL → Messages + PermissionDialog + PromptInput + StatusBar + WorkingIndicator
 - **[done]** Full keybindings: arrows, Ctrl+A/E/W/K/U, history up/down, grapheme cursor
 - **[done]** ESC/Ctrl+C interrupt (shared abort flag), double-press Ctrl+C exit
@@ -192,7 +198,7 @@ wings 作为 MCP server 暴露给其他 agent。
 3. **APIPoolManager 无锁** — JS 单线程
 4. **配置兼容** — 同样的 `~/.wings/config.json` + `.wings/config.json` JSON schema
 5. **文件格式兼容** — SKILL.md / MEMORY.md / agents/*.md 格式不变
-6. **CLI: Ink v7** — 3rdparty/ink submodule，React 19，组件树架构
+6. **CLI: Ink v7** — npm ink v7，React 19，组件树架构
 
 ## 验证
 

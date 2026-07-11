@@ -42,7 +42,7 @@
 
 ### CLI (Ink v7, 3rdparty/ink)
 
-- **Ink v7.1.0** as git submodule at `3rdparty/ink`
+- **Ink v7.1.0** as git submodule 
 - React 19 + Ink v7 with `useInput` for keyboard handling
 - Component tree: `App → REPL → Messages + PermissionDialog + PromptInput + StatusBar`
 - Contextual status bar (Esc/Ctrl+C to stop, Ctrl+C twice to exit)

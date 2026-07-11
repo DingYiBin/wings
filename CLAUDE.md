@@ -48,7 +48,7 @@ Wings is a **multi-model AI agent** where every API call independently selects a
 - `query/` — `QueryEngine` with exponential backoff retry, `TokenBudget` for compaction decisions.
 - `models/` — Anthropic + OpenAI adapters. Streaming with max_tokens escalation (8K→64K). Thinking block preservation.
 - `skills/` — 3-layer SKILL.md discovery (builtin < user < project). SkillInjector for system prompt.
-- `cli/` — Ink v7 (3rdparty/ink submodule) React terminal UI. Messages + divider + PromptInput + StatusBar layout. Contextual status bar, throttled text display, ESC/Ctrl+C interrupt, shared abort flag with subagents.
+- `cli/` — Ink v7 (npm ink v7) React terminal UI. Messages + divider + PromptInput + StatusBar layout. Contextual status bar, throttled text display, ESC/Ctrl+C interrupt, shared abort flag with subagents.
 
 **Configuration** (single schema, two files):
 - `~/.wings/config.json` — global defaults

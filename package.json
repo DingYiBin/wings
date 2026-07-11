@@ -18,7 +18,7 @@
     "@anthropic-ai/sdk": "^0.39.0",
     "@modelcontextprotocol/sdk": "^1.12.1",
     "html-to-text": "^9.0.5",
-    "ink": "file:./3rdparty/ink",
+    "ink": "^7.1.0",
     "openai": "^4.77.0",
     "react": "^19.2.0",
     "tsx": "^4.19.0",
