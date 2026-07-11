@@ -3,6 +3,7 @@
 import { z } from "zod";
 
 import { buildTool } from "../types.ts";
+import { getBundledSkillByName } from "../../skills/bundledSkills.ts";
 
 export const skillViewTool = buildTool({
   name: "skill_view",
@@ -16,6 +17,14 @@ export const skillViewTool = buildTool({
     name: z.string().describe("Name of the skill to view, e.g. 'commit'"),
   }),
   async call(input, context) {
+    // Check bundled skills first.
+    const bundled = getBundledSkillByName(input.name);
+    if (bundled) {
+      const blocks = await bundled.getPromptForCommand("");
+      return blocks.map((b) => b.text).join("\n");
+    }
+
+    // Check file-based skills.
     const skills = context.available_skills ?? {};
     const content = skills[input.name];
     if (content === undefined) {

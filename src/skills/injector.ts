@@ -1,31 +1,30 @@
 /**
  * Skill injector — adds available skills to the system prompt.
  *
- * The model sees an <available_skills> XML block it can use to decide
- * whether to call skill_view() for a particular skill.
- *
- * Mirrors src/wings/skills/injector.py.
+ * Handles both bundled skills (TypeScript) and file-based skills (SKILL.md).
  */
 
 import type { SkillSpec } from "./types.ts";
+import { getBundledSkills, type BundledSkillDefinition } from "./bundledSkills.ts";
 
-/** Escape a string for safe inclusion in XML element text. */
 function xmlEscape(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 export class SkillInjector {
-  /** Append an <available_skills> block to the system prompt. */
-  injectSkills(systemPrompt: string, skills: SkillSpec[]): string {
-    const visible = skills.filter((s) => !s.disable_model_invocation);
-    if (visible.length === 0) return systemPrompt;
-    return `${systemPrompt}\n\n${this._buildSkillsBlock(visible)}`;
+  /** Append an <available_skills> block to the system prompt.
+   *  Includes both bundled skills and file-based skills. */
+  injectSkills(systemPrompt: string, fileSkills: SkillSpec[]): string {
+    const bundled = getBundledSkills().filter((s) => !s.disableModelInvocation);
+    const fileVisible = fileSkills.filter((s) => !s.disable_model_invocation);
+    if (bundled.length === 0 && fileVisible.length === 0) return systemPrompt;
+    return `${systemPrompt}\n\n${this._buildBlock(bundled, fileVisible)}`;
   }
 
-  private _buildSkillsBlock(skills: SkillSpec[]): string {
+  private _buildBlock(
+    bundled: BundledSkillDefinition[],
+    fileSkills: SkillSpec[],
+  ): string {
     const lines: string[] = [
       "## Skills",
       "Skills are optional task playbooks. Use them only when a listed entry",
@@ -36,7 +35,13 @@ export class SkillInjector {
       "",
       "<available_skills>",
     ];
-    for (const s of skills) {
+    for (const s of bundled) {
+      lines.push("  <skill>");
+      lines.push(`    <name>${xmlEscape(s.name)}</name>`);
+      lines.push(`    <description>${xmlEscape(s.description)}</description>`);
+      lines.push("  </skill>");
+    }
+    for (const s of fileSkills) {
       lines.push("  <skill>");
       lines.push(`    <name>${xmlEscape(s.name)}</name>`);
       lines.push(`    <description>${xmlEscape(s.description)}</description>`);
@@ -46,3 +51,4 @@ export class SkillInjector {
     return lines.join("\n");
   }
 }
+

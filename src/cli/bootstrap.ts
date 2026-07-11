@@ -30,6 +30,8 @@ import { PermissionRules } from "../permissions/rules.ts";
 import { QueryEngine } from "../query/engine.ts";
 import { APIPoolManager } from "../routing/manager.ts";
 import type { ModelSelector } from "../routing/protocol.ts";
+import { registerAllBundledSkills } from "../skills/bundled/index.ts";
+import { getBundledSkills } from "../skills/bundledSkills.ts";
 import { SkillLoader } from "../skills/loader.ts";
 import { SkillInjector } from "../skills/injector.ts";
 import type { SkillSpec } from "../skills/types.ts";
@@ -97,19 +99,26 @@ export async function createSession(
   }
 
   // -- Skills --
+  // Register bundled (TypeScript-hardcoded) skills first.
+  registerAllBundledSkills();
+
   const userSkillsDir = join(homedir(), ".wings", "skills");
   const projectSkillsDir = join(wd, ".wings", "skills");
-  // builtin skills — look relative to this file's package.
-  const builtinDir = join(import.meta.dirname!, "..", "..", "skills", "builtin");
+  // File-based skills (SKILL.md) — user and project only. Bundled skills
+  // replace the old builtinDir since they are compiled into the CLI.
   const loader = new SkillLoader({
     userDir: userSkillsDir,
     projectDir: projectSkillsDir,
-    builtinDir,
   });
   const skillsList = loader.loadAll();
   const availableSkills: Record<string, string> = {};
   for (const s of skillsList) {
     availableSkills[s.name] = s.content;
+  }
+  // Add bundled skill prompts so skill_view can return them.
+  for (const bundled of getBundledSkills()) {
+    const blocks = await bundled.getPromptForCommand("");
+    availableSkills[bundled.name] = blocks.map((b) => b.text).join("\n");
   }
 
   // Fork API pool per skill.
