@@ -8,6 +8,7 @@
 import React from "react";
 import { Box, Text, Static } from "ink";
 import type { OutputLine } from "../app-state.ts";
+import { Markdown } from "./Markdown.tsx";
 
 const MAX_RESULT_LINES = 3;
 
@@ -41,7 +42,7 @@ function renderLine(line: OutputLine, key?: number) {
   const k = key != null ? String(key) : undefined;
   switch (line.type) {
     case "text":
-      return <Text key={k}>{line.text}</Text>;
+      return <Markdown key={k} content={line.text} />;
     case "tool_use":
       return (
         <Box key={k} flexDirection="row" marginTop={1}>
