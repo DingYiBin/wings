@@ -203,6 +203,15 @@ describe("read tool", () => {
     expect(result.output).toContain("Error: path is a directory");
   });
 
+  test("non-UTF-8 bytes reported as binary (not silently replaced)", async () => {
+    const f = join(tmpDir, "bad_utf8.txt");
+    // 0xff/0xfe: invalid UTF-8 start sequence, no NUL byte, so it passes the
+    // binary-by-content check and reaches the decoder, which must reject it.
+    writeFileSync(f, Buffer.from([0xff, 0xfe, 0x53, 0x54, 0x55]));
+    const result = await call(readTool, { file_path: f }, ctx());
+    expect(result.output).toContain("Error: cannot read binary file");
+  });
+
   test("attrs", () => {
     expect(readTool.name).toBe("read");
     expect(readTool.isReadOnly()).toBe(true);
