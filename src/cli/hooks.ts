@@ -48,7 +48,7 @@ export function useAgent() {
         addInputChars(line.content.length);
       }
     };
-    createSession(process.cwd()).then(({ loop, config, poolMgr }) => {
+    createSession((globalThis as any).__workingDir ?? process.cwd()).then(({ loop, config, poolMgr }) => {
       loopRef.current = loop;
       configRef.current = config;
       (globalThis as any).__poolMgr = poolMgr;
