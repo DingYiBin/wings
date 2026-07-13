@@ -6,7 +6,7 @@ import React, { useCallback, useState } from "react";
 import { Box, Text, useWindowSize } from "ink";
 import { useStore, useAgent } from "./hooks.ts";
 import { getSessionHash } from "../services/session-paths.ts";
-import { setInput, setPermission, setPoolInfo, appendOutput } from "./app-state.ts";
+import { setInput, setPermission, appendOutput } from "./app-state.ts";
 import { Messages } from "./components/Messages.tsx";
 import { PromptInput } from "./components/PromptInput.tsx";
 import { PermissionDialog } from "./components/PermissionDialog.tsx";
@@ -82,10 +82,68 @@ function handleSlashCommand(cmd: string) {
   const poolMgr = (globalThis as any).__poolMgr;
   if (n === "/help" || n === "/h") appendOutput({ type: "text", text: "Commands: /help, /pool, /pool up|down <api>, Ctrl+C twice to exit" });
   else if (n === "/pool" && poolMgr) {
-    if (p.length === 1) setPoolInfo(poolMgr.getPoolInfo("main"));
-    else if (p.length === 3 && (p[1] === "up" || p[1] === "down")) {
-      p[1] === "up" ? poolMgr.upvote("main", p[2]!) : poolMgr.downvote("main", p[2]!);
-      appendOutput({ type: "text", text: `  ${p[1] === "up" ? "↑" : "↓"} ${p[2]}` });
-    }
+    handlePoolCommand(p, poolMgr);
   } else appendOutput({ type: "text", text: `Unknown command: ${n}. Type /help.` });
+}
+
+/** Format a signed fixed-point number, leading + for non-negatives (Python `:+.1f`). */
+function fmtSigned(n: number): string {
+  return (n >= 0 ? `+${n.toFixed(1)}` : n.toFixed(1));
+}
+
+/** Handle /pool — view and adjust API candidate pools. Mirrors Python _handle_pool. */
+function handlePoolCommand(parts: string[], poolMgr: any) {
+  const SUBS = new Set(["up", "down", "disable", "enable"]);
+  let taskType = "main";
+
+  if (parts.length > 1 && SUBS.has(parts[1]!)) {
+    if (parts.length < 3) {
+      appendOutput({ type: "text", text: "  Usage: /pool up|down|disable|enable <api_id> [--task=<type>]" });
+      return;
+    }
+    // --task=<type> may appear anywhere after the subcommand; remaining
+    // tokens join (with spaces) into the api_id.
+    const apiParts: string[] = [];
+    for (const tok of parts.slice(2)) {
+      if (tok.startsWith("--task=")) taskType = tok.slice("--task=".length);
+      else apiParts.push(tok);
+    }
+    const apiId = apiParts.join(" ");
+    const sub = parts[1]!;
+    if (sub === "up") { poolMgr.upvote(taskType, apiId); appendOutput({ type: "text", text: `  +0.5 for ${apiId} in ${taskType}` }); }
+    else if (sub === "down") { poolMgr.downvote(taskType, apiId); appendOutput({ type: "text", text: `  -0.5 for ${apiId} in ${taskType}` }); }
+    else if (sub === "disable") { poolMgr.disable(taskType, apiId); appendOutput({ type: "text", text: `  Disabled ${apiId} for ${taskType}` }); }
+    else if (sub === "enable") { poolMgr.enable(taskType, apiId); appendOutput({ type: "text", text: `  Enabled ${apiId} for ${taskType}` }); }
+    return;
+  } else if (parts.length > 1) {
+    // /pool <task_type> — view another task type's pool.
+    taskType = parts[1]!;
+  }
+
+  const info = poolMgr.getPoolInfo(taskType) as Record<string, { base: number; delta: number; effective: number }> | null;
+  const lines: string[] = [``, `  Pool: ${taskType}`];
+  if (!info || Object.keys(info).length === 0) {
+    lines.push("    (no APIs registered)");
+  } else {
+    for (const [apiId, s] of Object.entries(info)) {
+      const eff = s.effective;
+      if (eff <= -1e9) {
+        lines.push(`    ${apiId.padEnd(45)} [DISABLED]`);
+      } else if (s.delta !== 0) {
+        const dStr = s.delta > 0 ? `+${s.delta}` : `${s.delta}`;
+        lines.push(`    ${apiId.padEnd(45)} eff=${fmtSigned(eff)}  (base=${s.base.toFixed(1)} ${dStr})`);
+      } else {
+        lines.push(`    ${apiId.padEnd(45)} eff=${fmtSigned(eff)}`);
+      }
+    }
+    const customTypes: string[] = (poolMgr.listTaskTypes() as string[]).filter((t) => t !== "main" && t !== taskType);
+    if (customTypes.length > 0) {
+      const sorted = customTypes.sort();
+      const shown = sorted.slice(0, 8).join(", ");
+      const more = sorted.length > 8 ? `, +${sorted.length - 8} more` : "";
+      lines.push(``, `  Types with custom masks: ${shown}${more}`);
+    }
+  }
+  lines.push(``, `  /pool up|down|disable|enable <api_id> [--task=<type>]`, `  /pool <task_type>  — view another task type's pool`);
+  appendOutput({ type: "text", text: lines.join("\n") });
 }
