@@ -190,6 +190,13 @@ export function useAgent() {
       appendOutput({ type: "text", text: `Error: ${(e as Error).message}` });
     }
     appendOutput({ type: "text", text: "" });
+    // Per-turn model tag: show the provider of the model that answered
+    // (mirrors Python's `[{nickname}]` line at end of turn).
+    const lastModel = loop.lastModel;
+    if (lastModel) {
+      const provider = lastModel.split("/")[0];
+      appendOutput({ type: "text", text: `  [${provider}]` });
+    }
     appendOutput({ type: "separator" });
     // Restore DECCKM so terminal scrolling works (WSL may disable it).
     process.stdout.write("\x1b[?1l");
