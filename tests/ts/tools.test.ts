@@ -317,6 +317,15 @@ describe("glob tool", () => {
     expect(result.output.toLowerCase()).toMatch(/matches|no files matched/);
   });
 
+  test("matches hidden/dotfiles (does not skip them)", async () => {
+    writeFileSync(join(tmpDir, ".gitignore"), "");
+    mkdirSync(join(tmpDir, ".wings"), { recursive: true });
+    writeFileSync(join(tmpDir, ".wings", "config.json"), "");
+    const result = await call(globTool, { pattern: "**/*" }, ctx());
+    expect(result.output).toContain(".gitignore");
+    expect(result.output).toContain("config.json");
+  });
+
   test("attrs", () => {
     expect(globTool.name).toBe("glob");
     expect(globTool.isReadOnly()).toBe(true);
