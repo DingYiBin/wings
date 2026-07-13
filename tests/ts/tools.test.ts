@@ -356,4 +356,22 @@ describe("grep tool", () => {
     const result = await call(grepTool, { pattern: "[invalid", path: tmpDir }, ctx());
     expect(result.output).toContain("Error: invalid regex");
   });
+
+  test("**/*.py glob matches files in subdirectories", async () => {
+    mkdirSync(join(tmpDir, "sub"), { recursive: true });
+    writeFileSync(join(tmpDir, "sub", "deep.py"), "target line\n");
+    writeFileSync(join(tmpDir, "top.txt"), "target line\n");
+    const result = await call(grepTool, { pattern: "target", path: tmpDir, glob: "**/*.py" }, ctx());
+    expect(result.output).toContain("deep.py");
+    expect(result.output).not.toContain("top.txt");
+  });
+
+  test("*.py glob matches only top level (not subdirectories)", async () => {
+    mkdirSync(join(tmpDir, "lvl2"), { recursive: true });
+    writeFileSync(join(tmpDir, "root.py"), "target line\n");
+    writeFileSync(join(tmpDir, "lvl2", "nested.py"), "target line\n");
+    const result = await call(grepTool, { pattern: "target", path: tmpDir, glob: "*.py" }, ctx());
+    expect(result.output).toContain("root.py");
+    expect(result.output).not.toContain("nested.py");
+  });
 });

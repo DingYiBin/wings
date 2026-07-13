@@ -7,8 +7,9 @@ import { z } from "zod";
 
 import { buildTool } from "../types.ts";
 
-/** Convert a glob pattern to a regex. Supports *, **, ?, {a,b}, [abc]. */
-function globToRegex(pattern: string): RegExp {
+/** Convert a glob pattern to a regex. Supports *, **, ?, {a,b}, [abc].
+ *  Matched against forward-slash-relative paths (e.g. "foo/bar.py"). */
+export function globToRegex(pattern: string): RegExp {
   // Normalize separators.
   pattern = pattern.replace(/\\/g, "/");
   let rx = "^";
