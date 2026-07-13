@@ -4,7 +4,7 @@
 
 import { useSyncExternalStore, useCallback, useEffect, useRef } from "react";
 import { appStore, type AppState, type OutputLine } from "./app-state.ts";
-import { appendOutput, setMode, setPermission, setInitialized, setInputChars, setOutputChars, addTotalOutputChars, addInputChars, addTotalInputChars, setSessionTotals, messagesToOutputLines } from "./app-state.ts";
+import { appendOutput, setMode, setPermission, setInitialized, setInputChars, setOutputChars, addTotalOutputChars, addInputChars, addTotalInputChars, setSessionTotals, messagesToOutputLines, clearTruncatedResults, pushTruncatedResult } from "./app-state.ts";
 import { createSession, makeAgentContext } from "./bootstrap.ts";
 import { saveNewMessages, updateSessionIndex, saveSessionMeta, updateSessionMeta, getSessionHash, setSaveIndex } from "../services/session-paths.ts";
 
@@ -81,6 +81,7 @@ export function useAgent() {
     runningRef.current = true;
 
     _subBuf = "";
+    clearTruncatedResults();
     setMode("running");
     setInputChars(userInput.length);
     addTotalInputChars(userInput.length);
@@ -155,9 +156,13 @@ export function useAgent() {
           case "tool_result": {
             finalizeStream();
             const tr = event as any;
-            appendOutput({ type: "tool_result", content: tr.content, isError: tr.is_error });
+            const content: string = tr.content ?? "";
+            appendOutput({ type: "tool_result", content, isError: tr.is_error });
             // Tool results are sent to the API as input — count them.
-            addInputChars((tr.content ?? "").length);
+            addInputChars(content.length);
+            // Stash multiline results for ctrl+o expansion (mirrors Python:
+            // only >1 line is eligible; single-line results aren't truncated).
+            if (content.split("\n").length > 1) pushTruncatedResult("Tool result", content);
             break;
           }
           case "permission_request": {

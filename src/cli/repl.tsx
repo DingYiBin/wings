@@ -4,9 +4,13 @@
 
 import React, { useCallback, useState } from "react";
 import { Box, Text, useWindowSize } from "ink";
+import { spawnSync } from "node:child_process";
+import { writeFileSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { useStore, useAgent } from "./hooks.ts";
 import { getSessionHash } from "../services/session-paths.ts";
-import { setInput, setPermission, appendOutput } from "./app-state.ts";
+import { setInput, setPermission, appendOutput, lastTruncatedResult } from "./app-state.ts";
 import { Messages } from "./components/Messages.tsx";
 import { PromptInput } from "./components/PromptInput.tsx";
 import { PermissionDialog } from "./components/PermissionDialog.tsx";
@@ -35,6 +39,30 @@ export function REPL() {
   const handleInterrupt = useCallback(() => {
     const loop = (globalThis as any).__loop;
     if (loop) loop._aborted = true;
+  }, []);
+
+  /** Ctrl+O: open the most recent truncated tool result in $PAGER (default less).
+   *  Mirrors Python's _expand_last_result — write a temp file, run the pager
+   *  synchronously, then clean up. Ink's raw mode is paused so the pager owns
+   *  the terminal while it runs. */
+  const handleCtrlO = useCallback(() => {
+    const entry = lastTruncatedResult();
+    if (!entry) return;
+    const pager = process.env["PAGER"] || "less -R";
+    const path = join(tmpdir(), `wings-tool-${process.pid}-${Date.now()}.txt`);
+    try {
+      writeFileSync(path, `# ${entry.label}\n\n${entry.content}`);
+      // Relinquish raw mode so the pager can read keys directly.
+      const stdin = process.stdin as any;
+      const wasRaw = typeof stdin.isRaw === "boolean" ? stdin.isRaw : false;
+      try { stdin.setRawMode?.(false); } catch {}
+      spawnSync(pager, [path], { stdio: "inherit" });
+      try { stdin.setRawMode?.(wasRaw); } catch {}
+    } catch {
+      // best-effort; never crash the REPL over a pager failure
+    } finally {
+      try { unlinkSync(path); } catch {}
+    }
   }, []);
 
   const handleSubmit = useCallback((text: string) => {
@@ -69,6 +97,7 @@ export function REPL() {
             onSubmit={handleSubmit}
             onExit={handleExit}
             onInterrupt={handleInterrupt}
+            onCtrlO={handleCtrlO}
             onExitHint={setExitHint}
             isLoading={mode === "running"}
           />
