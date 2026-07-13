@@ -27,11 +27,12 @@ export function useAgent() {
   const turnCountRef = useRef(0);
   const firstSaveRef = useRef(true);
 
-  // Centralized output: buffers text from any source (main loop or subagent),
-  // flushes only on non-text events or after turn completes. Subagent text gets
-  // the same "● " marker as main-agent text for visual consistency.
+  // Centralized output: buffers subagent text (fed live via __appendOutput and
+  // replayed via subagent_delta events), flushes on non-text events or turn end.
+  // Subagent text uses the "│ " box-drawing prefix to set it apart from the
+  // main agent's "● " marker — mirroring Python's framed subagent output.
   const flushText = (buf: string) => {
-    if (buf) { appendOutput({ type: "text", text: `● ${buf}` }); addTotalOutputChars(buf.length); }
+    if (buf) { appendOutput({ type: "text", text: `│ ${buf}` }); addTotalOutputChars(buf.length); }
   };
 
   useEffect(() => {
@@ -179,6 +180,12 @@ export function useAgent() {
             finalizeStream();
             _subBuf = "";
             appendOutput({ type: "subagent_start", agentType: (event as any).agent_type, description: (event as any).description ?? "" });
+            break;
+          }
+          case "subagent_delta": {
+            // Subagent text is already displayed live via the __appendOutput
+            // side-channel (set in loop.ts capture). The batched replay from
+            // loop.ts would duplicate it, so this event is a no-op here.
             break;
           }
           case "subagent_end": {
