@@ -4,7 +4,7 @@
 
 import { useSyncExternalStore, useCallback, useEffect, useRef } from "react";
 import { appStore, type AppState, type OutputLine } from "./app-state.ts";
-import { appendOutput, setMode, setPermission, setInitialized, setInputChars, setOutputChars, addTotalOutputChars, addInputChars, addTotalInputChars, setSessionTotals, messagesToOutputLines } from "./app-state.ts";
+import { appendOutput, setMode, setPermission, setInitialized, setInputChars, setOutputChars, addTotalOutputChars, addInputChars, addTotalInputChars, setSessionTotals, messagesToOutputLines, clearTruncatedResults, pushTruncatedResult } from "./app-state.ts";
 import { createSession, makeAgentContext } from "./bootstrap.ts";
 import { saveNewMessages, updateSessionIndex, saveSessionMeta, updateSessionMeta, getSessionHash, setSaveIndex } from "../services/session-paths.ts";
 
@@ -27,11 +27,12 @@ export function useAgent() {
   const turnCountRef = useRef(0);
   const firstSaveRef = useRef(true);
 
-  // Centralized output: buffers text from any source (main loop or subagent),
-  // flushes only on non-text events or after turn completes. Subagent text gets
-  // the same "● " marker as main-agent text for visual consistency.
+  // Centralized output: buffers subagent text (fed live via __appendOutput and
+  // replayed via subagent_delta events), flushes on non-text events or turn end.
+  // Subagent text uses the "│ " box-drawing prefix to set it apart from the
+  // main agent's "● " marker — mirroring Python's framed subagent output.
   const flushText = (buf: string) => {
-    if (buf) { appendOutput({ type: "text", text: `● ${buf}` }); addTotalOutputChars(buf.length); }
+    if (buf) { appendOutput({ type: "text", text: `│ ${buf}` }); addTotalOutputChars(buf.length); }
   };
 
   useEffect(() => {
@@ -48,7 +49,7 @@ export function useAgent() {
         addInputChars(line.content.length);
       }
     };
-    createSession(process.cwd()).then(({ loop, config, poolMgr }) => {
+    createSession((globalThis as any).__workingDir ?? process.cwd()).then(({ loop, config, poolMgr }) => {
       loopRef.current = loop;
       configRef.current = config;
       (globalThis as any).__poolMgr = poolMgr;
@@ -74,13 +75,14 @@ export function useAgent() {
     });
   }, []);
 
-  const runTurn = useCallback(async (userInput: string) => {
+  const runTurn = useCallback(async (userInput: string, opts: { taskType?: string } = {}) => {
     const loop = loopRef.current;
     const config = configRef.current;
     if (!loop || runningRef.current) return;
     runningRef.current = true;
 
     _subBuf = "";
+    clearTruncatedResults();
     setMode("running");
     setInputChars(userInput.length);
     addTotalInputChars(userInput.length);
@@ -93,6 +95,7 @@ export function useAgent() {
       modelOverride: config.model,
       customAgents: (loop as any).customAgents ?? null,
       skills: (loop as any).skillsList ?? [],
+      taskType: opts.taskType,
     });
 
     // Throttle: flush display every 100ms while running.
@@ -154,9 +157,13 @@ export function useAgent() {
           case "tool_result": {
             finalizeStream();
             const tr = event as any;
-            appendOutput({ type: "tool_result", content: tr.content, isError: tr.is_error });
+            const content: string = tr.content ?? "";
+            appendOutput({ type: "tool_result", content, isError: tr.is_error });
             // Tool results are sent to the API as input — count them.
-            addInputChars((tr.content ?? "").length);
+            addInputChars(content.length);
+            // Stash multiline results for ctrl+o expansion (mirrors Python:
+            // only >1 line is eligible; single-line results aren't truncated).
+            if (content.split("\n").length > 1) pushTruncatedResult("Tool result", content);
             break;
           }
           case "permission_request": {
@@ -175,6 +182,12 @@ export function useAgent() {
             appendOutput({ type: "subagent_start", agentType: (event as any).agent_type, description: (event as any).description ?? "" });
             break;
           }
+          case "subagent_delta": {
+            // Subagent text is already displayed live via the __appendOutput
+            // side-channel (set in loop.ts capture). The batched replay from
+            // loop.ts would duplicate it, so this event is a no-op here.
+            break;
+          }
           case "subagent_end": {
             // Flush subagent buffer as a finalized line.
             flushText(_subBuf); _subBuf = "";
@@ -190,6 +203,13 @@ export function useAgent() {
       appendOutput({ type: "text", text: `Error: ${(e as Error).message}` });
     }
     appendOutput({ type: "text", text: "" });
+    // Per-turn model tag: show the provider of the model that answered
+    // (mirrors Python's `[{nickname}]` line at end of turn).
+    const lastModel = loop.lastModel;
+    if (lastModel) {
+      const provider = lastModel.split("/")[0];
+      appendOutput({ type: "text", text: `  [${provider}]` });
+    }
     appendOutput({ type: "separator" });
     // Restore DECCKM so terminal scrolling works (WSL may disable it).
     process.stdout.write("\x1b[?1l");

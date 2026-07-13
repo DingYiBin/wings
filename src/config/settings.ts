@@ -14,12 +14,12 @@ import { makePoolConfig } from "../routing/types.ts";
 
 // -- Default system prompt --
 
-const DEFAULT_PERSONALITY = [
-  "You are Wings, a multi-model AI agent CLI.",
-  "",
-  "You are an interactive agent that helps users with software engineering tasks.",
-  "Use the instructions below and the tools available to you to assist the user.",
-].join("\n");
+const DEFAULT_PERSONALITY = `You are Wings, a multi-model AI agent CLI.
+
+You are an interactive agent that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user.
+
+IMPORTANT: Assist with authorized security testing, defensive security, CTF challenges, and educational contexts. Refuse requests for destructive techniques, DoS attacks, mass targeting, supply chain compromise, or detection evasion for malicious purposes. Dual-use security tools (C2 frameworks, credential testing, exploit development) require clear authorization context: pentesting engagements, CTF competitions, security research, or defensive use cases.
+IMPORTANT: You must NEVER generate or guess URLs for the user unless you are confident that the URLs are for helping the user with programming. You may use URLs provided by the user in their messages or local files.`;
 
 // -- Provider config --
 
@@ -136,13 +136,73 @@ export function loadSettings(
 
   // Walk up to find project config.
   const projectData = findProjectConfig(cwd);
+  let settings: GlobalSettingsData;
   if (projectData) {
     const merged = { ...global } as unknown as Record<string, unknown>;
     deepMerge(merged, projectData);
-    return merged as unknown as GlobalSettingsData;
+    settings = merged as unknown as GlobalSettingsData;
+  } else {
+    settings = global;
   }
 
-  return global;
+  // Environment variables (WINGS_ prefix, __ nested) take final precedence,
+  // mirroring pydantic's env_prefix="WINGS_" + env_nested_delimiter="__".
+  return applyEnvOverrides(settings);
+}
+
+// Fields whose env values need type coercion beyond a plain string.
+const NUMERIC_FIELDS = new Set([
+  "max_tokens",
+  "escalated_max_tokens",
+  "thinking_budget",
+  "context_window",
+]);
+const BOOLEAN_FIELDS = new Set(["thinking"]);
+const LIST_FIELDS = new Set(["allowed_tools", "denied_tools"]);
+
+function coerceValue(field: string, raw: string): unknown {
+  if (NUMERIC_FIELDS.has(field)) return Number(raw);
+  if (BOOLEAN_FIELDS.has(field)) return raw === "true" || raw === "1";
+  if (LIST_FIELDS.has(field)) {
+    const trimmed = raw.trim();
+    if (trimmed.startsWith("[")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) return parsed.map(String);
+      } catch {
+        // fall through to comma split
+      }
+    }
+    return trimmed ? trimmed.split(",").map((s) => s.trim()).filter(Boolean) : [];
+  }
+  return raw;
+}
+
+/** Apply WINGS_-prefixed environment variables over loaded settings.
+ *  `WINGS_THEME=light`, `WINGS_MODEL=…`, `WINGS_PROVIDERS__ANTHROPIC__API_KEY=…`,
+ *  `WINGS_ALLOWED_TOOLS=a,b`, etc. Nested keys use `__` as the separator. */
+export function applyEnvOverrides(settings: GlobalSettingsData): GlobalSettingsData {
+  const result: GlobalSettingsData = structuredClone(settings);
+  for (const [envKey, raw] of Object.entries(process.env)) {
+    if (!envKey.startsWith("WINGS_") || raw === undefined) continue;
+    const path = envKey.slice("WINGS_".length).toLowerCase().split("__");
+    if (path.length === 0 || path.some((p) => p === "")) continue;
+
+    // Walk to the parent, creating intermediate objects for nested dict
+    // fields (providers, routing, hooks, mcp_servers).
+    let node: Record<string, unknown> = result as unknown as Record<string, unknown>;
+    for (let i = 0; i < path.length - 1; i++) {
+      const key = path[i]!;
+      const child = node[key];
+      if (typeof child !== "object" || child === null || Array.isArray(child)) {
+        node[key] = {};
+      }
+      node = node[key] as Record<string, unknown>;
+    }
+    const leaf = path[path.length - 1]!;
+    node[leaf] = coerceValue(leaf, raw);
+  }
+  return result;
 }
 
 export function resolveApiKey(

@@ -203,6 +203,15 @@ describe("read tool", () => {
     expect(result.output).toContain("Error: path is a directory");
   });
 
+  test("non-UTF-8 bytes reported as binary (not silently replaced)", async () => {
+    const f = join(tmpDir, "bad_utf8.txt");
+    // 0xff/0xfe: invalid UTF-8 start sequence, no NUL byte, so it passes the
+    // binary-by-content check and reaches the decoder, which must reject it.
+    writeFileSync(f, Buffer.from([0xff, 0xfe, 0x53, 0x54, 0x55]));
+    const result = await call(readTool, { file_path: f }, ctx());
+    expect(result.output).toContain("Error: cannot read binary file");
+  });
+
   test("attrs", () => {
     expect(readTool.name).toBe("read");
     expect(readTool.isReadOnly()).toBe(true);
@@ -317,6 +326,15 @@ describe("glob tool", () => {
     expect(result.output.toLowerCase()).toMatch(/matches|no files matched/);
   });
 
+  test("matches hidden/dotfiles (does not skip them)", async () => {
+    writeFileSync(join(tmpDir, ".gitignore"), "");
+    mkdirSync(join(tmpDir, ".wings"), { recursive: true });
+    writeFileSync(join(tmpDir, ".wings", "config.json"), "");
+    const result = await call(globTool, { pattern: "**/*" }, ctx());
+    expect(result.output).toContain(".gitignore");
+    expect(result.output).toContain("config.json");
+  });
+
   test("attrs", () => {
     expect(globTool.name).toBe("glob");
     expect(globTool.isReadOnly()).toBe(true);
@@ -355,5 +373,23 @@ describe("grep tool", () => {
   test("invalid regex", async () => {
     const result = await call(grepTool, { pattern: "[invalid", path: tmpDir }, ctx());
     expect(result.output).toContain("Error: invalid regex");
+  });
+
+  test("**/*.py glob matches files in subdirectories", async () => {
+    mkdirSync(join(tmpDir, "sub"), { recursive: true });
+    writeFileSync(join(tmpDir, "sub", "deep.py"), "target line\n");
+    writeFileSync(join(tmpDir, "top.txt"), "target line\n");
+    const result = await call(grepTool, { pattern: "target", path: tmpDir, glob: "**/*.py" }, ctx());
+    expect(result.output).toContain("deep.py");
+    expect(result.output).not.toContain("top.txt");
+  });
+
+  test("*.py glob matches only top level (not subdirectories)", async () => {
+    mkdirSync(join(tmpDir, "lvl2"), { recursive: true });
+    writeFileSync(join(tmpDir, "root.py"), "target line\n");
+    writeFileSync(join(tmpDir, "lvl2", "nested.py"), "target line\n");
+    const result = await call(grepTool, { pattern: "target", path: tmpDir, glob: "*.py" }, ctx());
+    expect(result.output).toContain("root.py");
+    expect(result.output).not.toContain("nested.py");
   });
 });

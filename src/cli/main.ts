@@ -81,8 +81,8 @@ export async function runSingle(
 
 // -- Readline fallback for non-TTY environments --
 
-export async function runChatFallback(opts: { model?: string | null } = {}): Promise<void> {
-  const { loop, config, poolMgr } = await createSession(undefined);
+export async function runChatFallback(opts: { model?: string | null; workingDir?: string | null } = {}): Promise<void> {
+  const { loop, config, poolMgr } = await createSession(opts.workingDir ?? undefined);
   const ctx = makeAgentContext(config, { modelOverride: opts.model ?? null, customAgents: (loop as any).customAgents ?? null, skills: (loop as any).skillsList ?? [] });
 
   write(`\r\n${BOLD}Wings${RESET} ${dim("— each model is a wing")}\r\n\r\n`);

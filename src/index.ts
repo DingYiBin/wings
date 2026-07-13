@@ -8,6 +8,8 @@
  *   node --import tsx src/index.ts chat --log    # with logging to .wings/logs/
  */
 
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { runChatFallback, runSingle } from "./cli/main.ts";
 import { initSessionHash, getLatestSessionHash, loadSessionMessages, loadSessionMeta } from "./services/session-paths.ts";
 
@@ -15,12 +17,27 @@ const args = process.argv.slice(2);
 const command = args[0];
 const rest = args.slice(1);
 
+// --version / -v: print version and exit (before any command parsing).
+if (args.includes("-v") || args.includes("--version")) {
+  let version = "0.0.0";
+  try {
+    const pkgUrl = new URL("../package.json", import.meta.url);
+    version = JSON.parse(readFileSync(fileURLToPath(pkgUrl), "utf-8")).version ?? version;
+  } catch {
+    // fall back to placeholder
+  }
+  console.log(`wings ${version}`);
+  process.exit(0);
+}
+
 const hasResume = rest.includes("--resume");
 const hasContinue = rest.includes("--continue");
 const resumeIdx = rest.indexOf("--resume");
 const resumeHash = resumeIdx !== -1 ? rest[resumeIdx + 1] : null;
 const modelIdx = rest.indexOf("-m") !== -1 ? rest.indexOf("-m") : rest.indexOf("--model");
 const model = modelIdx !== -1 ? rest[modelIdx + 1] : null;
+const dirIdx = rest.indexOf("-d") !== -1 ? rest.indexOf("-d") : rest.indexOf("--dir");
+const workingDir = dirIdx !== -1 ? rest[dirIdx + 1] : null;
 
 if (!command || command === "chat") {
   let sessionHash: string | null = null;
@@ -64,26 +81,28 @@ if (!command || command === "chat") {
   if (typeof (process.stdin as any).setRawMode === "function") {
     try {
       const { runInkApp } = await import("./cli/ink-app.tsx");
-      await runInkApp({ resumeMessages, resumeStats });
+      await runInkApp({ resumeMessages, resumeStats, workingDir });
     } catch {
-      await runChatFallback({ model });
+      await runChatFallback({ model, workingDir });
     }
   } else {
-    await runChatFallback({ model });
+    await runChatFallback({ model, workingDir });
   }
 } else if (command === "run") {
   const prompt = rest
     .filter((a, i) => {
       if (a === "-m" || a === "--model") return false;
       if (i > 0 && (rest[i - 1] === "-m" || rest[i - 1] === "--model")) return false;
+      if (a === "-d" || a === "--dir") return false;
+      if (i > 0 && (rest[i - 1] === "-d" || rest[i - 1] === "--dir")) return false;
       return true;
     })
     .join(" ");
   if (!prompt.trim()) {
-    console.error("Usage: node --import tsx src/index.ts run [-m model] \"prompt\"");
+    console.error("Usage: node --import tsx src/index.ts run [-m model] [-d dir] \"prompt\"");
     process.exit(1);
   }
-  await runSingle(prompt.trim(), { model });
+  await runSingle(prompt.trim(), { model, workingDir: workingDir ?? undefined });
 } else {
   console.error(`Unknown command: ${command}`);
   console.error("Usage: node --import tsx src/index.ts chat | run \"prompt\"");

@@ -204,3 +204,24 @@ export function setPoolInfo(info: AppState["poolInfo"]) {
 export function setInitialized() {
   appStore.setState((s) => ({ ...s, initialized: true }));
 }
+
+// -- Truncated tool results (for ctrl+o expansion) --
+// Per-turn store of tool results whose display was truncated. ctrl+o opens
+// the most recent entry in $PAGER. Mirrors Python's _truncated_results list.
+export interface TruncatedResult { label: string; content: string }
+let _truncatedResults: TruncatedResult[] = [];
+
+/** Record a tool result eligible for ctrl+o expansion (multiline content). */
+export function pushTruncatedResult(label: string, content: string) {
+  _truncatedResults.push({ label, content });
+}
+
+/** Reset the per-turn truncated-result store (called at turn start). */
+export function clearTruncatedResults() {
+  _truncatedResults = [];
+}
+
+/** The most recent truncated tool result, or null if none this turn. */
+export function lastTruncatedResult(): TruncatedResult | null {
+  return _truncatedResults.length > 0 ? _truncatedResults[_truncatedResults.length - 1]! : null;
+}

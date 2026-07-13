@@ -1,11 +1,12 @@
 /** Regular expression content search. */
 
 import { existsSync, statSync, readFileSync, readdirSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 
 import { z } from "zod";
 
 import { buildTool } from "../types.ts";
+import { globToRegex } from "./glob.ts";
 
 // Directories to exclude from search
 const VCS_DIRS = new Set([".git", ".svn", ".hg", ".bzr", ".jj", ".sl"]);
@@ -19,9 +20,14 @@ interface GrepInput {
 }
 
 
-/** Recursively collect files under base, optionally filtered by glob pattern. */
+/** Recursively collect files under base, optionally filtered by glob pattern.
+ *  Glob semantics mirror pathlib: a bare pattern matches only the top level,
+ *  a pattern with `**` matches recursively. Matching is against the path
+ *  relative to base with forward slashes. */
 function collectFiles(base: string, globPattern: string | null): string[] {
   const result: string[] = [];
+  // A double-star-everything pattern matches everything; skip the regex.
+  const regex = globPattern && globPattern !== "**/*" ? globToRegex(globPattern) : null;
   function walk(dir: string) {
     let entries: import("node:fs").Dirent[];
     try {
@@ -35,8 +41,9 @@ function collectFiles(base: string, globPattern: string | null): string[] {
       if (entry.isDirectory()) {
         if (!VCS_DIRS.has(name)) walk(full);
       } else if (entry.isFile()) {
-        if (globPattern && globPattern !== "**/*") {
-          if (!matchSimpleGlob(name, globPattern)) continue;
+        if (regex) {
+          const rel = relative(base, full).replace(/\\/g, "/");
+          if (!regex.test(rel)) continue;
         }
         result.push(full);
       }
@@ -44,40 +51,6 @@ function collectFiles(base: string, globPattern: string | null): string[] {
   }
   walk(base);
   return result.sort();
-}
-
-function matchSimpleGlob(name: string, pattern: string): boolean {
-  // Convert simple glob to regex: *, ?, {a,b}
-  let regex = "^";
-  let i = 0;
-  while (i < pattern.length) {
-    const c = pattern[i];
-    if (c === "*") {
-      regex += ".*";
-    } else if (c === "?") {
-      regex += ".";
-    } else if (c === "{") {
-      const end = pattern.indexOf("}", i);
-      if (end === -1) {
-        regex += "\\{";
-      } else {
-        const options = pattern.slice(i + 1, end).split(",").map((s) => s.trim());
-        regex += `(?:${options.join("|")})`;
-        i = end;
-      }
-    } else if (c === "[") {
-      regex += "[";
-    } else if (c === "]") {
-      regex += "]";
-    } else if ("\\^$.|+()".includes(c)) {
-      regex += "\\" + c;
-    } else {
-      regex += c;
-    }
-    i++;
-  }
-  regex += "$";
-  return new RegExp(regex).test(name);
 }
 
 export const grepTool = buildTool({

@@ -23,12 +23,15 @@ function ensureStdin(): NodeJS.ReadStream {
   }) as unknown as NodeJS.ReadStream;
 }
 
-export function runInkApp(opts: { resumeMessages?: Array<{ role: string; content: unknown[] }> | null; resumeStats?: { input: number; output: number; wait: number } | null } = {}) {
+export function runInkApp(opts: { resumeMessages?: Array<{ role: string; content: unknown[] }> | null; resumeStats?: { input: number; output: number; wait: number } | null; workingDir?: string | null } = {}) {
   if (opts.resumeMessages) {
     (globalThis as any).__resumeMessages = opts.resumeMessages;
   }
   if (opts.resumeStats) {
     (globalThis as any).__resumeStats = opts.resumeStats;
+  }
+  if (opts.workingDir) {
+    (globalThis as any).__workingDir = opts.workingDir;
   }
   const { waitUntilExit } = render(React.createElement(App), {
     stdin: ensureStdin(),

@@ -29,10 +29,11 @@ function wordRight(s: string, p: number): number {
 }
 
 export function PromptInput({
-  value, onChange, onSubmit, onExit, onInterrupt, onExitHint, isLoading,
+  value, onChange, onSubmit, onExit, onInterrupt, onExitHint, onCtrlO, isLoading,
 }: {
   value: string; onChange: (v: string) => void; onSubmit: (v: string) => void;
   onExit: () => void; onInterrupt: () => void; onExitHint: (show: boolean) => void;
+  onCtrlO: () => void;
   isLoading: boolean;
 }) {
   const [cursor, setCursor] = useState(value.length);
@@ -81,6 +82,11 @@ export function PromptInput({
   }, [onSubmit, onChange]);
 
   useInput((input, key) => {
+    // ── Ctrl+O: expand the last truncated tool result in $PAGER ──
+    if (key.ctrl && input === "o") {
+      onCtrlO();
+      return;
+    }
     // ── ESC / Ctrl+C during loading: interrupt ──
     if (isLoading && (key.escape || (key.ctrl && input === "c"))) {
       onInterrupt();

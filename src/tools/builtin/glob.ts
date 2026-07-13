@@ -7,8 +7,14 @@ import { z } from "zod";
 
 import { buildTool } from "../types.ts";
 
-/** Convert a glob pattern to a regex. Supports *, **, ?, {a,b}, [abc]. */
-function globToRegex(pattern: string): RegExp {
+// VCS directories skipped during traversal (performance, mirrors grep).
+// Hidden files and other dot-directories (e.g. .wings/) are NOT skipped —
+// pathlib.glob traverses them, and so do we.
+const VCS_DIRS = new Set([".git", ".svn", ".hg", ".bzr", ".jj", ".sl"]);
+
+/** Convert a glob pattern to a regex. Supports *, **, ?, {a,b}, [abc].
+ *  Matched against forward-slash-relative paths (e.g. "foo/bar.py"). */
+export function globToRegex(pattern: string): RegExp {
   // Normalize separators.
   pattern = pattern.replace(/\\/g, "/");
   let rx = "^";
@@ -61,10 +67,9 @@ function walkAndMatch(base: string, pattern: string): string[] {
     catch { return; }
     for (const e of entries) {
       const name: string = e.name as any;
-      if (name.startsWith(".")) continue;
       const full = join(dir, name);
       if (e.isDirectory()) {
-        walk(full);
+        if (!VCS_DIRS.has(name)) walk(full);
       } else if (e.isFile()) {
         const rel = relative(base, full).replace(/\\/g, "/");
         if (regex.test(rel)) {

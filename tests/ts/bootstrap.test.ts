@@ -53,4 +53,13 @@ describe("makeAgentContext: agent listing", () => {
     // The <system-reminder> tag from memory should NOT appear.
     expect(ctx.system_prompt).not.toContain("MEMORY.md");
   });
+
+  test("environment block includes working dir, OS, and date", () => {
+    const wd = mkdtempSync(join(tmpdir(), "wings-bootstrap-env-"));
+    const ctx = makeAgentContext(minimalConfig(), { workingDir: wd });
+    expect(ctx.system_prompt).toContain("# Environment");
+    expect(ctx.system_prompt).toContain(`Working directory: ${wd}`);
+    expect(ctx.system_prompt).toMatch(/Operating system: .+/);
+    expect(ctx.system_prompt).toMatch(/Current date: \d{4}-\d{2}-\d{2}/);
+  });
 });

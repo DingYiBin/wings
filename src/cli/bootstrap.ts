@@ -6,7 +6,7 @@
 
 import { cwd } from "node:process";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { homedir, type as osType } from "node:os";
 import { randomUUID } from "node:crypto";
 
 import { AgentContext, AgentLoop } from "../agent/loop.ts";
@@ -249,6 +249,7 @@ export function makeAgentContext(
     "",
     "# Environment",
     `Working directory: ${wd}`,
+    `Operating system: ${osType()}`,
     `Current date: ${new Date().toISOString().slice(0, 10)}`,
   ].join("\n");
 
