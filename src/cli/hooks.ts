@@ -74,7 +74,7 @@ export function useAgent() {
     });
   }, []);
 
-  const runTurn = useCallback(async (userInput: string) => {
+  const runTurn = useCallback(async (userInput: string, opts: { taskType?: string } = {}) => {
     const loop = loopRef.current;
     const config = configRef.current;
     if (!loop || runningRef.current) return;
@@ -93,6 +93,7 @@ export function useAgent() {
       modelOverride: config.model,
       customAgents: (loop as any).customAgents ?? null,
       skills: (loop as any).skillsList ?? [],
+      taskType: opts.taskType,
     });
 
     // Throttle: flush display every 100ms while running.

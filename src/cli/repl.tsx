@@ -28,11 +28,6 @@ export function REPL() {
   const { columns } = useWindowSize();
   const divWidth = Math.max(1, (columns || 80) - 2);
 
-  const handleSubmit = useCallback((text: string) => {
-    if (text.startsWith("/")) { handleSlashCommand(text); return; }
-    runTurn(text);
-  }, [runTurn]);
-
   const handleExit = useCallback(() => {
     process.stderr.write(`\nSession: ${getSessionHash()}\n  node --import tsx src/index.ts chat --resume ${getSessionHash()}\n\n`);
     process.exit(0);
@@ -41,6 +36,14 @@ export function REPL() {
     const loop = (globalThis as any).__loop;
     if (loop) loop._aborted = true;
   }, []);
+
+  const handleSubmit = useCallback((text: string) => {
+    if (text.startsWith("/")) {
+      handleSlashCommand(text, { runTurn, onExit: handleExit });
+      return;
+    }
+    runTurn(text);
+  }, [runTurn, handleExit]);
 
   if (!initialized) return <Text dimColor>Initializing…</Text>;
 
@@ -77,13 +80,65 @@ export function REPL() {
   );
 }
 
-function handleSlashCommand(cmd: string) {
-  const p = cmd.split(/\s+/); const n = p[0]!;
+/** Slash-command dispatch. Lives inside the REPL closure so it can invoke
+ *  runTurn (for skill turns) and onExit. Mirrors Python's command handling
+ *  in main.py (exit/help/pool first, then skill fallback). */
+function handleSlashCommand(
+  cmd: string,
+  ctx: {
+    runTurn: (input: string, opts?: { taskType?: string }) => void;
+    onExit: () => void;
+  },
+) {
+  // cmd includes the leading "/". Split into name + remainder (maxsplit=1),
+  // matching Python's user_input[1:].split(maxsplit=1).
+  const parts = cmd.slice(1).split(/\s+/);
+  const name = parts[0]!;
+  const args = parts.length > 1 ? parts.slice(1).join(" ").trim() : "";
+
   const poolMgr = (globalThis as any).__poolMgr;
-  if (n === "/help" || n === "/h") appendOutput({ type: "text", text: "Commands: /help, /pool, /pool up|down <api>, Ctrl+C twice to exit" });
-  else if (n === "/pool" && poolMgr) {
-    handlePoolCommand(p, poolMgr);
-  } else appendOutput({ type: "text", text: `Unknown command: ${n}. Type /help.` });
+  const loop = (globalThis as any).__loop;
+
+  if (name === "exit") {
+    ctx.onExit();
+    return;
+  }
+  if (name === "help" || name === "h") {
+    showHelp(loop);
+    return;
+  }
+  if (name === "pool" && poolMgr) {
+    handlePoolCommand(["/pool", ...parts.slice(1)], poolMgr);
+    return;
+  }
+
+  // Fallback: skill lookup.
+  const loader = loop?.skillLoader;
+  const skill = loader?.getByName?.(name);
+  if (skill) {
+    const skillPrompt =
+      `[Skill: ${skill.name}]\n\n${skill.content}\n\n` +
+      `---\n\nUser request: ${args || "Run this skill"}`;
+    ctx.runTurn(skillPrompt, { taskType: `skill/${skill.name}` });
+    return;
+  }
+
+  appendOutput({ type: "text", text: `Unknown command or skill: /${name}` });
+}
+
+/** /help — list commands and dynamically discovered user-invocable skills. */
+function showHelp(loop: any) {
+  const lines: string[] = [``, `Commands:`, `  /exit          Quit the chat session`, `  /help          Show this help`, `  /pool          View/adjust API candidate pool`, `  ctrl+o         Expand last truncated tool result`];
+  const loader = loop?.skillLoader;
+  if (loader) {
+    const skills = loader.listUserInvocable?.() ?? [];
+    if (skills.length > 0) {
+      lines.push(``, `Skills:`);
+      for (const s of skills) lines.push(`  /${s.name.padEnd(15)} ${s.description}`);
+    }
+  }
+  lines.push(``);
+  appendOutput({ type: "text", text: lines.join("\n") });
 }
 
 /** Format a signed fixed-point number, leading + for non-negatives (Python `:+.1f`). */
