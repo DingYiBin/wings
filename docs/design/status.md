@@ -1,6 +1,6 @@
 # Wings 项目实现状态
 
-> 最后更新: 2026-07-11
+> 最后更新: 2026-07-20
 
 ## Python 实现（已完成）
 
@@ -93,16 +93,63 @@
 
 ## 下一步开发计划
 
-> 详见 [`docs/design/dev-plan.md`](dev-plan.md)
+> 详见 [`docs/reference/REFERENCE-SYNTHESIS.md`](../reference/REFERENCE-SYNTHESIS.md) — 12 个开源仓库的综合对照分析
 
-### 阶段 4: 功能增强 (待做)
-- [ ] web_search `allowed_domains` / `blocked_domains` 过滤
-- [ ] web_fetch 预批准域名列表
-- [ ] 更多内置 skills (从 opensquilla 的 ~70 个中挑选)
-- [ ] Plugin 系统（加载外部 Python 包提供 tools/hooks）
+### 阶段 4: 核心架构增强 (高优先级)
 
-### P5: 未来方向
-- [ ] Fork subagent（上下文继承, 最大化 prompt cache 命中）
-- [ ] 终端 TUI 升级（Rich 替代 Typer 的简单输出）
-- [ ] Summer 配置迁移工具（全局/项目配置管理）
-- [ ] MCP 传输扩展（SSE/HTTP transport, 不只是 stdio）
+#### 4a. 权限系统重构
+- [ ] **PermissionChain 分层模型**：Hook 预批准 > YOLO > 规则列表 > 会话持久 > 单次授权（参考 Crush）
+- [ ] **精细作用域划分**：read/write/delete-in/out-cwd, network, mcp, git-log（参考 Deep Code）
+- [ ] **sideEffects 声明**：模型执行 bash 前声明预期副作用（参考 Deep Code）
+- [ ] **审批姿势切换**：Suggest / Auto / Bypass / Never 四种模式热键切（参考 CodeWhale）
+- [ ] **bash 命令黑名单**：curl/wget/nc/telnet/ssh/kill/rm 等（参考 Crush）
+- [ ] **MCP 安全白名单**：stdio 命令严格白名单（参考 AstrBot）
+
+#### 4b. Agent Loop 状态机重构
+- [ ] **显式状态机**：将当前 AgentLoop 重构为 TurnState 枚举 + 每状态 handler（参考 nanobot）
+- [ ] **每会话异步锁 + 全局并发信号量**：同会话串行，跨会话并行
+- [ ] **手动上下文压缩 `/compact`**：用户主动触发，可选摘要或截断（参考 DeerFlow）
+- [ ] **Session Goals `--goal`**：结构化目标注入 system prompt + 达成检测（参考 DeerFlow）
+- [ ] **极简 MessageBus**：模块间 async 双队列解耦（参考 nanobot）
+
+#### 4c. 工具系统重构
+- [ ] **FunctionTool/ToolSet 统一抽象**：解耦工具定义与 Provider schema 格式（参考 AstrBot）
+- [ ] **工具并发安全标记**：concurrency_safe 标记 + RwLock 读写锁（参考 nanobot, CodeWhale）
+- [ ] **工具自文档化**：.ts + .md 配对，模板渲染（参考 Crush）
+
+#### 4d. LSP 集成
+- [ ] **新建 `src/lsp/` 模块**：懒加载 LSP 客户端管理器
+- [ ] **核心 LSP 工具**：lsp_definition / lsp_symbols / lsp_diagnostics（参考 Crush）
+
+#### 4e. 交互模式
+- [ ] **Plan / Act / Operate 三模式**：只读规划→多步执行→多任务编排，Tab 切换（参考 CodeWhale）
+
+### 阶段 5: 功能增强 (中优先级)
+- [ ] **Skills 元数据增强**：version / dependencies / tools / timeout / install / requires（参考 DeerFlow, OpenClaw）
+- [ ] **DeepSeek V4 专属优化**：reasoning_effort 参数、差异化 compact 阈值（参考 Deep Code）
+- [ ] **Provider Fallback 退路链**：主失败自动切备用（参考 nanobot）
+- [ ] **路由别名系统**：模型别名解析 + 多 provider 同名路由（参考 CodeWhale）
+- [ ] **Dream 记忆幻觉防护**：git diff 差异检查 + 自动回滚（参考 nanobot）
+- [ ] **上下文压缩策略组合**：LLM 摘要 + 按轮次截断，不同模型不同阈值（参考 AstrBot, Deep Code）
+- [ ] **动态 Prompt 组装**：角色指令/工具约束/记忆排序动态组合（参考 DeerFlow）
+- [ ] **Hook 系统增强**：PreToolUse exit code 语义约定 + 多 Sink 可观测性（参考 Crush, CodeWhale）
+- [ ] **Agent 工作空间引导文件**：SOUL.md / TOOLS.md / BOOTSTRAP.md / USER.md（参考 OpenClaw）
+- [ ] **会话中切换模型**：保持上下文，仅换 provider 引用（参考 Crush）
+- [ ] **Skills LLM 自动匹配**：低 temperature 判断哪些 skills 匹配意图（参考 Deep Code）
+- [ ] **Cron 自然语言配置**：自然语言描述定时任务（参考 Hermes）
+- [ ] **web_search `allowed_domains` / `blocked_domains` 过滤**
+- [ ] **web_fetch 预批准域名列表**
+- [ ] **更多内置 skills**（从 opensquilla 的 ~70 个中挑选）
+
+### P6: 未来方向 (低优先级)
+- [ ] **进程内 MCP 服务器**：将 wings 能力通过 MCP 暴露给其他工具（参考 Cherry Studio）
+- [ ] **Fork subagent**：上下文继承, 最大化 prompt cache 命中
+- [ ] **Plugin 系统**：加载外部包提供 tools/hooks，参考插件 SDK 契约设计（参考 OpenClaw）
+- [ ] **Gateway + WebSocket 控制面**：CLI/Web/App 统一接入（参考 OpenClaw）
+- [ ] **自主技能创建/改进闭环**：复杂任务后自动生成技能（参考 Hermes）
+- [ ] **子 Agent Handoff 委托**：transfer_to_<name>，独立 provider + tools（参考 AstrBot）
+- [ ] **Coordinator 双 Agent**：coder(large) + task(small) 分模型降成本（参考 Crush）
+- [ ] **Landlock + seccomp 沙箱**：Linux 下轻量进程沙箱（参考 CodeWhale）
+- [ ] **MCP 传输扩展**：SSE/HTTP transport, 不只是 stdio
+- [ ] **Op/Event 分离架构**：命令查询分离，适合复杂 UI（参考 CodeWhale）
+- [ ] **Summer 配置迁移工具**：全局/项目配置管理
