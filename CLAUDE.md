@@ -1,6 +1,7 @@
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+如果要进行feature的开发、调整，优先检索`reference/claude-code`，确定其中是否有类似功能，进行代码风格及实现上的模仿。
 
 ## Essential commands
 
