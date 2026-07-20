@@ -6,3 +6,11 @@ opensquilla https://github.com/opensquilla/opensquilla.git
 #no-update claude-code https://github.com/tanbiralam/claude-code.git
 deer-flow https://github.com/bytedance/deer-flow.git
 opencode https://github.com/anomalyco/opencode.git
+astrbot https://github.com/AstrBotDevs/AstrBot.git
+cherry-studio https://github.com/CherryHQ/cherry-studio.git
+crush https://github.com/charmbracelet/crush.git
+deepcode https://github.com/lessweb/deepcode-cli.git
+deepseek-tui https://github.com/Hmbown/DeepSeek-TUI.git
+hermes-agent https://github.com/NousResearch/hermes-agent.git
+nanobot https://github.com/HKUDS/nanobot.git
+openclaw https://github.com/openclaw/openclaw.git
